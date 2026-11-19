@@ -1,6 +1,10 @@
-streamlit>=1.40
+streamlit>=1.50
 pandas
+numpy
+scipy
+shapely>=2.0
 matplotlib
 ezdxf
+cadquery-ocp
 psycopg[binary]>=3.2
 pytest
