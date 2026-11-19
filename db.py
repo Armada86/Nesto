@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS parts (
     rotate BOOLEAN NOT NULL DEFAULT TRUE,
     outline JSONB
 );
+ALTER TABLE parts ADD COLUMN IF NOT EXISTS shape TEXT NOT NULL DEFAULT 'rectangle';
 CREATE TABLE IF NOT EXISTS nest_runs (
     id SERIAL PRIMARY KEY,
     project_id INT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -83,7 +84,7 @@ def delete_project(pid: int):
 def load_parts(pid: int):
     with connect() as c:
         return c.execute(
-            "SELECT name, width, height, qty, rotate, outline FROM parts WHERE project_id=%s ORDER BY id", (pid,)
+            "SELECT name, shape, width, height, qty, rotate, outline FROM parts WHERE project_id=%s ORDER BY id", (pid,)
         ).fetchall()
 
 
@@ -93,8 +94,8 @@ def save_parts(pid: int, parts: list[dict]):
         c.execute("DELETE FROM parts WHERE project_id=%s", (pid,))
         for p in parts:
             c.execute(
-                "INSERT INTO parts(project_id,name,width,height,qty,rotate,outline) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                (pid, p["name"], p["width"], p["height"], p["qty"], p["rotate"],
+                "INSERT INTO parts(project_id,name,shape,width,height,qty,rotate,outline) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                (pid, p["name"], p.get("shape", "rectangle"), p["width"], p["height"], p["qty"], p["rotate"],
                  json.dumps(p["outline"]) if p.get("outline") else None),
             )
 

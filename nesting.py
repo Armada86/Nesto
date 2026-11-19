@@ -1,7 +1,6 @@
 """2D rectangular nesting engine (MaxRects, multi-sheet, optional rotation).
 
-Parts are nested by their bounding box. Each part may carry an `outline`
-(list of (x, y) points, bbox-origin at 0,0) that is only used for drawing.
+Fast exact engine for rectangular parts. Irregular shapes use nesting_poly.py.
 """
 from __future__ import annotations
 
@@ -18,7 +17,6 @@ class Part:
     height: float
     qty: int = 1
     rotate: bool = True
-    outline: list | None = None  # list of polylines [[(x,y),...], ...]
 
 
 @dataclass
@@ -29,7 +27,9 @@ class Placement:
     w: float  # placed width (after rotation)
     h: float
     rotated: bool
-    outline: list | None = None
+    angle: float = 0.0
+    area: float | None = None  # real area for non-rectangular parts
+    polys: list | None = None  # absolute outline on the sheet (see shapes.geom_to_json)
 
 
 @dataclass
@@ -40,7 +40,7 @@ class Sheet:
 
     @property
     def used_area(self) -> float:
-        return sum(p.w * p.h for p in self.placements)
+        return sum(p.area if p.area is not None else p.w * p.h for p in self.placements)
 
     @property
     def utilization(self) -> float:
@@ -108,11 +108,6 @@ class _MaxRectsBin:
         self.free = keep
 
 
-def _rotate_outline(outline, w, h):
-    """Rotate polylines 90 deg CCW inside a w x h box -> (h x w) box."""
-    return [[(h - y, x) for x, y in pl] for pl in outline]
-
-
 def _pack(items, sheet_w, sheet_h, heuristic, spacing):
     """items: list of (part, w, h). Returns list[Sheet] or raises if a part never fits."""
     sheets: list[tuple[Sheet, _MaxRectsBin]] = []
@@ -139,10 +134,7 @@ def _pack(items, sheet_w, sheet_h, heuristic, spacing):
 
 def _add(sheet, part, r, w, h, spacing):
     x, y, pw, ph, rot = r
-    outline = part.outline
-    if outline and rot:
-        outline = _rotate_outline(outline, w, h)
-    sheet.placements.append(Placement(part.name, x, y, pw - spacing, ph - spacing, rot, outline))
+    sheet.placements.append(Placement(part.name, x, y, pw - spacing, ph - spacing, rot, 90.0 if rot else 0.0))
 
 
 def nest(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0):
