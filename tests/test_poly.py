@@ -84,3 +84,14 @@ def test_speed_typical_job():
     print("time", dt, summary(s))
     check(s, 2500, 1250, 10, 5)
     assert dt < 60
+
+
+def test_right_triangles_with_slot_pair_hypotenuse_to_hypotenuse():
+    """Regression: triangles used to be placed in a sawtooth (5+5) instead of mated pairs (6+4)."""
+    tri = Polygon([(0, 0), (815, 0), (815, 800)]).difference(box(660, 700, 700, 810))
+    from shapes import normalize
+    s = nest_polygons([PolyPart("H", normalize(tri), 10)], 2500, 1250, margin=5, spacing=3, rot_step=90)
+    check(s, 2500, 1250, 5, 3)
+    assert [len(x.placements) for x in s] == [6, 4]
+    # pairs form near-rectangles: the first sheet is used up to ~2450 mm in length
+    assert max(p.x + p.w for p in s[0].placements) < 2480

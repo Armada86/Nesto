@@ -11,6 +11,10 @@ How it works
   minimises the used length (then height) wins. Parts go into pockets and holes
   of earlier parts automatically.
 * Parts are placed largest first, first-fit over the sheets, new sheet when needed.
+* Pairing: for parts with qty >= 2 the best "2-up" (the part plus a rotated copy,
+  e.g. two right triangles hypotenuse to hypotenuse) is searched; if it is much
+  tighter than the single part, pairs are nested as rigid units. Both strategies
+  run and the one with fewer sheets wins.
 
 Precision is limited by the cell size: parts end up roughly 1-2 cells further
 apart than the requested spacing. Use a finer cell for a tighter result.
@@ -37,6 +41,7 @@ class PolyPart:
     geom: object  # shapely Polygon/MultiPolygon, bbox lower-left at (0, 0)
     qty: int = 1
     rotate: bool = True
+    members: list | None = None  # rigid cluster: [(name, geom in cluster coordinates)]
 
 
 def _polys(g):
@@ -118,14 +123,49 @@ class _Grid:
         self.occ[oy:oy + h, ox:ox + w][m] = 1.0
 
 
-def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.0, cell=None, progress=None):
-    """Nest PolyParts on identical sheets. Returns list[Sheet]."""
-    if sheet_w - 2 * margin <= 0 or sheet_h - 2 * margin <= 0:
-        raise ValueError("Margin is too large for the sheet")
-    cell = cell or max(sheet_w, sheet_h) / 800.0
-    pad = spacing / 2 + PAD_FACTOR * cell
-    jobs = sorted(parts, key=lambda p: -p.geom.area)
-    total = sum(int(p.qty) for p in jobs)
+def _best_pair(part: PolyPart, step, cell, pad):
+    """Tightest 2-up of a part: returns (cluster PolyPart for ONE pair, efficiency) or None."""
+    base = _variants(part, step, cell, pad)
+    a_ang, a_mask, (aminx, aminy), a_geom = base[0]
+    mb = max(max(m.shape) for _, m, _, _ in base)
+    ha, wa = a_mask.shape
+    gh, gw = ha + 2 * mb, wa + 2 * mb
+    ax0, ay0 = mb, mb
+    occ = np.zeros((gh, gw), dtype=np.float32)
+    occ[ay0:ay0 + ha, ax0:ax0 + wa][a_mask] = 1.0
+    best = None
+    for _, m, off, g in base:
+        h, w = m.shape
+        ov = fftconvolve(occ, m[::-1, ::-1].astype(np.float32), mode="valid")
+        feas = ov < 0.5
+        if not feas.any():
+            continue
+        ys, xs = np.nonzero(feas)
+        bw = np.maximum(ax0 + wa, xs + w) - np.minimum(ax0, xs)
+        bh = np.maximum(ay0 + ha, ys + h) - np.minimum(ay0, ys)
+        area = bw * bh
+        i = int(np.argmin(area))
+        if best is None or area[i] < best[0]:
+            best = (area[i], xs[i], ys[i], off, g)
+    if best is None:
+        return None
+    _, ox, oy, (bminx, bminy), b_geom = best
+    ga = affinity.translate(a_geom, -aminx + ax0 * cell, -aminy + ay0 * cell)
+    gb = affinity.translate(b_geom, -bminx + ox * cell, -bminy + oy * cell)
+    x0 = min(ga.bounds[0], gb.bounds[0]); y0 = min(ga.bounds[1], gb.bounds[1])
+    ga, gb = affinity.translate(ga, -x0, -y0), affinity.translate(gb, -x0, -y0)
+    union = ga.union(gb)
+    bx0, by0, bx1, by1 = union.bounds
+    eff_pair = (ga.area + gb.area) / ((bx1 - bx0) * (by1 - by0))
+    gx0, gy0, gx1, gy1 = part.geom.bounds
+    eff_single = part.geom.area / ((gx1 - gx0) * (gy1 - gy0))
+    cluster = PolyPart(part.name + " x2", union, 1, part.rotate, [(part.name, ga), (part.name, gb)])
+    return cluster, eff_pair, eff_single
+
+
+def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, progress):
+    jobs = sorted(jobs, key=lambda p: -p.geom.area)
+    total = sum(int(p.qty) * len(p.members or [1]) for p in jobs)
     grids: list[_Grid] = []
     done = 0
     for part in jobs:
@@ -146,12 +186,61 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
             k, ox, oy = placed
             ang, m, (minx, miny), g_rot = variants[k]
             grid.commit(m, ox, oy)
-            true_geom = affinity.translate(g_rot, -minx + ox * cell, -miny + oy * cell)
-            x0, y0, x1, y1 = true_geom.bounds
-            grid.sheet.placements.append(Placement(
-                part.name, x0, y0, x1 - x0, y1 - y0, ang % 360 != 0, float(ang),
-                float(true_geom.area), geom_to_json(true_geom)))
-            done += 1
-            if progress:
-                progress(done, total)
+            c = part.geom.centroid
+            members = part.members or [(part.name, part.geom)]
+            for name, mg in members:
+                if part.members:
+                    mg = affinity.rotate(mg, ang, origin=(c.x, c.y)) if ang else mg
+                else:
+                    mg = g_rot
+                tg = affinity.translate(mg, -minx + ox * cell, -miny + oy * cell)
+                x0, y0, x1, y1 = tg.bounds
+                grid.sheet.placements.append(Placement(
+                    name, x0, y0, x1 - x0, y1 - y0, ang % 360 != 0, float(ang),
+                    float(tg.area), geom_to_json(tg)))
+                done += 1
+                if progress:
+                    progress(done, total)
     return [g.sheet for g in grids]
+
+
+def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.0, cell=None, progress=None):
+    """Nest PolyParts on identical sheets. Returns list[Sheet] (best of the plain and the paired strategy)."""
+    if sheet_w - 2 * margin <= 0 or sheet_h - 2 * margin <= 0:
+        raise ValueError("Margin is too large for the sheet")
+    cell = cell or max(sheet_w, sheet_h) / 800.0
+    pad = spacing / 2 + PAD_FACTOR * cell
+
+    # strategy B: nest rigid pairs (only where a pair is clearly tighter than the single part)
+    paired, any_pair = [], False
+    for p in parts:
+        n_pairs = int(p.qty) // 2
+        found = None
+        if n_pairs and p.members is None:
+            try:
+                found = _best_pair(p, rot_step, cell, pad)
+            except Exception:  # noqa: BLE001  (pairing is an optimisation only)
+                found = None
+        if found and found[1] >= 1.15 * found[2]:
+            cluster = found[0]
+            cluster.qty = n_pairs
+            paired.append(cluster)
+            any_pair = True
+            if int(p.qty) % 2:
+                paired.append(PolyPart(p.name, p.geom, 1, p.rotate))
+        else:
+            paired.append(p)
+
+    strategies = [parts] + ([paired] if any_pair else [])
+    results, first_err = [], None
+    for i, jobs in enumerate(strategies):
+        def prog(d, t, i=i):
+            if progress:
+                progress(i * t + d, len(strategies) * t)
+        try:
+            results.append(_nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, prog))
+        except ValueError as e:
+            first_err = first_err or e
+    if not results:
+        raise first_err
+    return min(results, key=lambda sh: (len(sh), sh[-1].used_area))
