@@ -5,5 +5,6 @@ scipy
 shapely>=2.0
 matplotlib
 ezdxf
+cadquery-ocp
 psycopg[binary]>=3.2
 pytest

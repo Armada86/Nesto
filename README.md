@@ -11,7 +11,7 @@ python -m pytest tests
 ```
 
 ## Features
-- **Any shape**: rectangle, circle, ellipse, triangle, right triangle, obround from the table, or **any closed outline from DXF** (lines, arcs, circles, polylines, splines; inner contours become holes that other parts can fill).
+- **Any shape**: rectangle, circle, ellipse, triangle, right triangle, obround from the table, **STEP files of flat parts** (largest flat face -> outline + holes), or **any closed outline from DXF** (lines, arcs, circles, polylines, splines; inner contours become holes that other parts can fill).
 - **True-shape nesting** (raster/FFT based): rotations in 90/45/30/15 degree steps, edge margin, part spacing, multi-sheet. Pure-rectangle jobs use an exact, instant MaxRects engine.
 - Neon tables: `projects`, `parts`, `nest_runs` (created/migrated automatically).
 

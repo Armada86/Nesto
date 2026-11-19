@@ -8,6 +8,7 @@ from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
 from nesting_poly import PolyPart, nest_polygons
 from render import draw_sheet
+from step_io import read_step
 from shapes import SHAPES, geom_to_json, part_geometry, stored_geometry
 
 st.set_page_config(page_title="Nesto – 2D Nesting", layout="wide")
@@ -63,7 +64,7 @@ if st.session_state.get("loaded_pid") != pid:
 parts_state: list[dict] = st.session_state.parts
 
 st.subheader("Parts")
-tab_table, tab_dxf = st.tabs(["Enter dimensions", "Import DXF drawings"])
+tab_table, tab_dxf = st.tabs(["Enter dimensions", "Import DXF / STEP"])
 
 with tab_table:
     st.caption("Size A = width (or diameter for a circle). Size B = height (ignored for circles). "
@@ -100,22 +101,31 @@ with tab_table:
                         "rotate": bool(r["rotate"]), "outline": outlines.get(nm)})
 
 with tab_dxf:
-    st.caption("Any closed outline made of LINE / ARC / CIRCLE / POLYLINE / SPLINE / ELLIPSE entities. "
-               "Inner closed contours become holes (other parts can nest inside them).")
-    files = st.file_uploader("DXF files", type=["dxf"], accept_multiple_files=True)
+    st.caption("**DXF**: any closed outline made of LINE / ARC / CIRCLE / POLYLINE / SPLINE / ELLIPSE entities; "
+               "inner closed contours become holes (other parts can nest inside them). "
+               "**STEP**: flat (plate-like) parts - the largest flat face gives the outline and holes, "
+               "any orientation, thickness ignored. One part per solid. Bent parts: export the flat pattern as DXF.")
+    files = st.file_uploader("DXF / STEP files", type=["dxf", "step", "stp"], accept_multiple_files=True)
     c_a, c_b, c_c = st.columns(3)
     dxf_qty = c_a.number_input("Quantity per part", min_value=1, value=1)
     dxf_scale = c_b.number_input("Scale (e.g. 25.4 for inch → mm)", min_value=0.0001, value=1.0, format="%.4f")
-    split = c_c.checkbox("One part per closed contour", help="Use for DXFs that contain many separate parts.")
-    if files and st.button("Add DXF parts"):
+    split = c_c.checkbox("DXF: one part per closed contour", help="Use for DXFs that contain many separate parts.")
+    if files and st.button("Add parts from files"):
         added = 0
         used = {p["name"] for p in parts_state}
         for f in files:
             try:
-                geoms = read_dxf(f.getvalue(), one_part=not split, scale=dxf_scale)
+                if f.name.lower().endswith((".step", ".stp")):
+                    found = read_step(f.getvalue(), scale=dxf_scale)
+                else:
+                    found = [(g, None) for g in read_dxf(f.getvalue(), one_part=not split, scale=dxf_scale)]
             except ValueError as e:
                 st.error(f"{f.name}: {e}")
                 continue
+            geoms = [g for g, _ in found]
+            for _, note in found:
+                if note:
+                    st.warning(f"{f.name}: {note}")
             base = f.name.rsplit(".", 1)[0]
             for k, g in enumerate(geoms, 1):
                 nm = base if len(geoms) == 1 else f"{base}_{k}"
