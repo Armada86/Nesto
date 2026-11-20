@@ -1,4 +1,5 @@
 import json
+import time
 
 import pandas as pd
 import streamlit as st
@@ -11,6 +12,20 @@ from nesting_poly import PolyPart, free_rectangles, nest_polygons
 from render import draw_sheet
 from step_io import read_step
 from shapes import SHAPES, geom_to_json, part_geometry, stored_geometry
+
+def fmt_time(sec):
+    """12.3 s / 1 min 49 s / 1 h 02 min"""
+    if sec is None:
+        return "–"
+    if sec < 1:
+        return "< 1 s"
+    if sec < 60:
+        return f"{sec:.0f} s" if sec >= 10 else f"{sec:.1f} s"
+    m, s = divmod(int(round(sec)), 60)
+    if m < 60:
+        return f"{m} min {s:02d} s"
+    return f"{m // 60} h {m % 60:02d} min"
+
 
 st.set_page_config(page_title="Nesto – 2D Nesting", layout="wide", page_icon="🧩")
 
@@ -267,18 +282,21 @@ if run:
     if not current:
         st.warning("Add at least one part.")
     else:
+        t_start = time.perf_counter()
         try:
             sheets = run_nesting(current)
         except ValueError as e:
             st.error(str(e))
             st.stop()
+        elapsed = time.perf_counter() - t_start
         s = summary(sheets)
         result = [{"width": sh.width, "height": sh.height,
                    "placements": [pl.__dict__ for pl in sh.placements]} for sh in sheets]
         db.save_parts(pid, current)
-        db.save_run(pid, sheet_w, sheet_h, margin, spacing, s["sheets"], s["utilization"], result)
+        db.save_run(pid, sheet_w, sheet_h, margin, spacing, s["sheets"], s["utilization"], result, elapsed)
         st.session_state.parts = current
         st.session_state.result = result
+        st.session_state.nest_seconds = elapsed
 
 
 def _sheets_from(result):
@@ -292,38 +310,50 @@ with st.sidebar:
     st.divider()
     st.subheader("History")
     runs = db.list_runs(pid)
-    labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.0%}": r["id"] for r in runs}
+    labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.0%}"
+              + (f" · {fmt_time(r.get('seconds'))}" if r.get("seconds") is not None else ""): r["id"] for r in runs}
     if labels:
         pick = st.selectbox("Past runs", list(labels))
         if st.button("Load run"):
-            st.session_state.result = db.load_run(labels[pick])["result"]
+            run_row = db.load_run(labels[pick])
+            st.session_state.result = run_row["result"]
+            st.session_state.nest_seconds = run_row.get("seconds")
+            st.session_state.pop("nest_info", None)
 
 if "result" in st.session_state:
     sheets = _sheets_from(st.session_state.result)
     s = summary(sheets)
     info = st.session_state.get("nest_info")
-    if info:
-        st.caption(f"Best of {info['runs']} layouts in {info['seconds']:.0f}s "
-                   f"({'paired parts' if info['set'] == 'paired' else 'single parts'}, placement rule: {info['rule']}"
-                   f"{', scrap-aware' if info.get('protect') else ''}). Green dashed boxes = usable scrap.")
-    m1, m2, m3 = st.columns(3)
+
+    # 1. headline numbers, including how long the nest took
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Sheets", s["sheets"])
     m2.metric("Parts placed", s["parts"])
     m3.metric("Utilization", f"{s['utilization']:.1%}")
+    m4.metric("Time taken", fmt_time(st.session_state.get("nest_seconds")))
+    if info:
+        st.caption(f"Best of {info['runs']} layouts "
+                   f"({'paired parts' if info['set'] == 'paired' else 'single parts'}, placement rule: {info['rule']}"
+                   f"{', scrap-aware' if info.get('protect') else ''}). Green dashed boxes = usable scrap.")
+
+    # 2. export, right above the nest
+    st.subheader("Export")
+    with_names = st.checkbox("Include part names as text (layer LABELS)", value=True)
+    d1, d2, d3 = st.columns(3)
+    if len(sheets) == 1:
+        d1.download_button("⬇ DXF (sheet 1)", sheet_dxf(sheets[0], with_names), "sheet_01.dxf", "application/dxf",
+                           width="stretch")
+    else:
+        d1.download_button(f"⬇ DXF – {len(sheets)} files (ZIP)", sheets_zip(sheets, labels=with_names),
+                           "nest_sheets.zip", "application/zip", width="stretch")
+        d2.download_button("⬇ DXF – all sheets in one file (stacked)", all_sheets_dxf(sheets, labels=with_names),
+                           "nest_all_sheets.dxf", "application/dxf", width="stretch")
+    d3.download_button("⬇ Layout (JSON)", json.dumps(st.session_state.result), "nest.json", width="stretch")
+
+    # 3. the sheets
     key = (hash(json.dumps(st.session_state.result)), margin)  # scrap analysis is cached per result
     if st.session_state.get("scrap_key") != key:
         st.session_state.scrap_key = key
         st.session_state.scrap = [free_rectangles(sh, margin) for sh in sheets]
     for i, sh in enumerate(sheets, 1):
         st.pyplot(draw_sheet(sh, f"Sheet {i}", st.session_state.scrap[i - 1]))
-    st.subheader("Export")
-    labels = st.checkbox("Include part names as text (layer LABELS)", value=True)
-    d1, d2, d3 = st.columns(3)
-    if len(sheets) == 1:
-        d1.download_button("⬇ DXF (sheet 1)", sheet_dxf(sheets[0], labels), "sheet_01.dxf", "application/dxf")
-    else:
-        d1.download_button(f"⬇ DXF – {len(sheets)} files (ZIP)", sheets_zip(sheets, labels=labels),
-                           "nest_sheets.zip", "application/zip")
-        d2.download_button("⬇ DXF – all sheets in one file (stacked)", all_sheets_dxf(sheets, labels=labels),
-                           "nest_all_sheets.dxf", "application/dxf")
-    d3.download_button("⬇ Layout (JSON)", json.dumps(st.session_state.result), "nest.json")
