@@ -105,6 +105,21 @@ def delete_project_dialog(pid: int, name: str):
         st.rerun()
 
 
+def settings_snapshot():
+    return {k: st.session_state[k] for k in DEFAULTS}
+
+
+def autosave_settings():
+    """Called the moment a sheet / nesting setting changes: store it with the open project right away."""
+    pid_ = st.session_state.get("pid")
+    if not pid_:
+        return
+    try:
+        db.save_settings(pid_, settings_snapshot())
+    except Exception as e:  # noqa: BLE001
+        st.toast(f"Could not save the settings: {e}", icon=":material/error:")
+
+
 # reopen the project from the page address after a browser reload
 if "pid" not in st.session_state:
     qp = st.query_params.get("project")
@@ -151,18 +166,20 @@ st.title(f"Nesto – {proj['name']}")
 
 with st.sidebar:
     st.divider()
+    st.caption("Sheet and nesting settings are saved with the project automatically.")
     st.subheader("Sheet")
-    sheet_w = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_w")
-    sheet_h = st.number_input("Height", min_value=1.0, step=10.0, key="sheet_h")
-    margin = st.number_input("Edge margin", min_value=0.0, step=1.0, key="margin")
-    spacing = st.number_input("Part spacing (kerf)", min_value=0.0, step=0.5, key="spacing")
+    sheet_w = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_w", on_change=autosave_settings)
+    sheet_h = st.number_input("Height", min_value=1.0, step=10.0, key="sheet_h", on_change=autosave_settings)
+    margin = st.number_input("Edge margin", min_value=0.0, step=1.0, key="margin", on_change=autosave_settings)
+    spacing = st.number_input("Part spacing (kerf)", min_value=0.0, step=0.5, key="spacing", on_change=autosave_settings)
 
     st.subheader("Nesting")
-    rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), key="rot_label",
+    rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), key="rot_label", on_change=autosave_settings,
                                  help="Finer steps pack irregular shapes better but take longer.")
-    prec_label = st.select_slider("Precision (irregular shapes)", list(PRECISION), key="prec_label",
+    prec_label = st.select_slider("Precision (irregular shapes)", list(PRECISION), key="prec_label", on_change=autosave_settings,
                                   help="Finer = tighter packing, slower.")
     effort_label = st.select_slider("Search effort (irregular shapes)", list(EFFORT), key="effort_label",
+                                    on_change=autosave_settings,
                                     help="Quick = one pass. Normal / Thorough keep trying many different layouts "
                                          "(pairing, placement rules, random restarts) for 15 / 60 seconds and keep the best.")
 
@@ -253,11 +270,27 @@ with tab_dxf:
 
 run = st.button("▶ Nest", type="primary")
 
-if save_clicked:  # sidebar Save: parts + sheet/nesting settings of the open project
-    st.session_state.parts = current
-    db.save_parts(pid, current)
-    db.save_settings(pid, {k: st.session_state[k] for k in DEFAULTS})
-    st.toast(f"Saved “{proj['name']}” – {len(current)} parts and settings", icon=":material/check_circle:")
+if save_clicked:  # sidebar Save: sheet/nesting settings first (small and safe), then the parts
+    snap = settings_snapshot()
+    try:
+        db.save_settings(pid, snap)
+        settings_msg = (f"sheet {snap['sheet_w']:g} × {snap['sheet_h']:g}, margin {snap['margin']:g}, "
+                        f"kerf {snap['spacing']:g}, rotation {snap['rot_label']}, precision {snap['prec_label']}, "
+                        f"effort {snap['effort_label']}")
+    except Exception as e:  # noqa: BLE001
+        settings_msg = None
+        st.error(f"Could not save the settings: {e}")
+    try:
+        st.session_state.parts = current
+        db.save_parts(pid, current)
+        parts_ok = True
+    except Exception as e:  # noqa: BLE001
+        parts_ok = False
+        st.error(f"Could not save the parts: {e}")
+    if settings_msg and parts_ok:
+        st.toast(f"Saved “{proj['name']}”: {len(current)} parts · {settings_msg}", icon=":material/check_circle:")
+    elif settings_msg:
+        st.toast(f"Settings saved ({settings_msg}), but the parts were NOT saved.", icon=":material/warning:")
 
 
 # ---------- nesting ----------

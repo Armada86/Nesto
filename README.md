@@ -16,7 +16,7 @@ python -m pytest tests
 - **Regular scrap**: sheet count always comes first; among layouts with the same number of sheets, the one that leaves the biggest clean free rectangle on each sheet wins. Small parts (relative to the sheet) are sent into gaps - on any sheet - instead of cutting into that rectangle. The usable offcuts are drawn as green dashed boxes.
 - **True-shape nesting** (raster/FFT based): rotations in 90/45/30/15 degree steps, edge margin, part spacing, multi-sheet. Pure-rectangle jobs use an exact, instant MaxRects engine.
 - **DXF export** of the nested sheets: ZIP with one DXF per sheet, or all sheets side by side in one DXF. Layers: `SHEET` (sheet outline), `CUT` (closed part outlines and holes), `LABELS` (part names, optional). Units: same as the sheet size you typed (mm).
-- **Project menu** (left sidebar): New / Load / Save / Delete. Save stores the parts *and* the sheet + nesting settings of the open project; Load restores both. The open project is kept in the page address, so a browser reload reopens it.
+- **Project menu** (left sidebar): New / Load / Save / Delete. Sheet and nesting settings are saved with the project automatically the moment you change them; Save also writes the parts (settings first, each step reported separately). Load restores both. The open project is kept in the page address, so a browser reload reopens it.
 - Neon tables: `projects`, `parts`, `nest_runs` (created/migrated automatically).
 
 ## Notes
