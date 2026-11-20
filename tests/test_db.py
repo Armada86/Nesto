@@ -64,3 +64,34 @@ def test_rename_project_keeps_everything_and_refuses_duplicates(db):
     finally:
         db.delete_project(a)
         db.delete_project(b)
+
+
+def test_parts_remember_the_flip_flag_and_default_to_on(db):
+    pid = db.create_project("flip-test")
+    try:
+        db.save_parts(pid, [
+            {"name": "a", "shape": "rectangle", "width": 10.0, "height": 5.0, "qty": 1, "rotate": True, "flip": False},
+            {"name": "b", "shape": "rectangle", "width": 10.0, "height": 5.0, "qty": 1, "rotate": True, "flip": True},
+            {"name": "c", "shape": "rectangle", "width": 10.0, "height": 5.0, "qty": 1, "rotate": True},   # no flip key: on
+        ])
+        got = {p["name"]: p["flip"] for p in db.load_parts(pid)}
+        assert got == {"a": False, "b": True, "c": True}
+        # rows that existed before the column was added get "on" from the column default
+        with db.connect() as c:
+            c.execute("INSERT INTO parts(project_id,name,width,height,qty) VALUES (%s,'old',1,1,1)", (pid,))
+        assert {p["name"]: p["flip"] for p in db.load_parts(pid)}["old"] is True
+    finally:
+        db.delete_project(pid)
+
+
+def test_migration_turns_flip_on_for_parts_saved_before_the_column_existed(db):
+    pid = db.create_project("flip-migration")
+    try:
+        with db.connect() as c:
+            c.execute("ALTER TABLE parts DROP COLUMN flip")                               # the table as it was before
+            c.execute("INSERT INTO parts(project_id,name,width,height,qty) VALUES (%s,'legacy',2,2,3)", (pid,))
+        db.init_db()                                                                      # what the app does on start
+        parts = db.load_parts(pid)
+        assert parts[0]["name"] == "legacy" and parts[0]["flip"] is True and parts[0]["qty"] == 3
+    finally:
+        db.delete_project(pid)

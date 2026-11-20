@@ -65,6 +65,7 @@ class PolyPart:
     rotate: bool = True
     members: list | None = None  # rigid cluster: [(name, geom in cluster coordinates)]
     _cache: dict = field(default_factory=dict, repr=False)
+    flip: bool = True  # may be turned over (mirrored): both sides of the sheet are the same
 
 
 @dataclass
@@ -75,6 +76,7 @@ class _Var:
     geom: object
     ring: np.ndarray | None = None
     ii: np.ndarray | None = None
+    mirror: bool = False  # this orientation is the part turned over
 
 
 def _polys(g):
@@ -139,8 +141,24 @@ def _min_width(geom):
     return best
 
 
+def _orient(g, mirror, ang, c):
+    """Put a geometry (given in the part's own frame) into an orientation: optionally turn it over (mirror about
+    the vertical line through the part's centroid c), then rotate by ang about c."""
+    if mirror:
+        g = affinity.scale(g, -1, 1, origin=(c.x, c.y))
+    return affinity.rotate(g, ang, origin=(c.x, c.y)) if ang else g
+
+
+def _same_shape(g, h):
+    """Do two geometries (in the same frame) coincide? Used to skip a mirror image that is just a rotation."""
+    if any(abs(p - q) > 1e-5 * max(1.0, abs(p)) for p, q in zip(g.bounds, h.bounds)):
+        return False
+    return g.symmetric_difference(h).area <= 1e-5 * g.area
+
+
 def _variants(part: PolyPart, step: float, cell: float, pad: float):
-    """Distinct rotations of a part (cached on the part).
+    """Distinct orientations of a part (cached on the part): rotations and, if part.flip, the same rotations of
+    its mirror image (skipped where the mirror image coincides with a rotation: symmetric shapes cost nothing).
 
     Fixed steps (multiples of `step`) plus edge-aligned angles, so that e.g. the hypotenuse
     of a triangle can lie exactly horizontal whatever the step is.
@@ -148,22 +166,26 @@ def _variants(part: PolyPart, step: float, cell: float, pad: float):
     key = (step, cell, pad)
     if key in part._cache:
         return part._cache[key]
-    angles = [0.0]
-    if part.rotate and step and step < 360:
-        angles = [a * step for a in range(int(round(360 / step)))]
-        for a in _aligned_angles(part.geom):
-            if all(min(abs(a - b), 360 - abs(a - b)) > 0.05 for b in angles):
-                angles.append(a)
     seen, out = set(), []
     c = part.geom.centroid
-    for ang in angles:
-        g = affinity.rotate(part.geom, ang, origin=(c.x, c.y)) if ang else part.geom
-        m, off = _mask(g, cell, pad)
-        k = (m.shape, np.packbits(m).tobytes())
-        if k in seen:
-            continue
-        seen.add(k)
-        out.append(_Var(ang, m, off, g))
+    for mirror in ((False, True) if part.flip else (False,)):
+        base = _orient(part.geom, mirror, 0.0, c)
+        angles = [0.0]
+        if part.rotate and step and step < 360:
+            angles = [a * step for a in range(int(round(360 / step)))]
+            for a in _aligned_angles(base):
+                if all(min(abs(a - b), 360 - abs(a - b)) > 0.05 for b in angles):
+                    angles.append(a)
+        for ang in angles:
+            g = affinity.rotate(base, ang, origin=(c.x, c.y)) if ang else base
+            if mirror and any(_same_shape(g, v.geom) for v in out):
+                continue  # the mirror image is identical to an orientation we already have
+            m, off = _mask(g, cell, pad)
+            k = (m.shape, np.packbits(m).tobytes())
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(_Var(ang, m, off, g, mirror=mirror))
     part._cache[key] = out
     return out
 
@@ -411,7 +433,7 @@ def _best_pair(part: PolyPart, step, cell, spacing):
     gx0, gy0, gx1, gy1 = part.geom.bounds
     pcell = min(cell, max(cell / 3.0, max(gx1 - gx0, gy1 - gy0) / 400.0))  # finer than the sheet grid
     pad = spacing / 2 + PAD_FACTOR * pcell
-    base = _variants(PolyPart(part.name, part.geom, 1, part.rotate), step, pcell, pad)
+    base = _variants(PolyPart(part.name, part.geom, 1, part.rotate, flip=part.flip), step, pcell, pad)
     a = base[0]
     (aminx, aminy) = a.off
     mb = max(max(v.mask.shape) for v in base)
@@ -448,12 +470,12 @@ def _best_pair(part: PolyPart, step, cell, spacing):
     mem_a, mem_b = [], []
     for nm, mg in _flat_members(part):
         mem_a.append((nm, affinity.translate(mg, -aminx + ax0 * pcell - x0, -aminy + ay0 * pcell - y0)))
-        rg = affinity.rotate(mg, v.ang, origin=(c.x, c.y)) if v.ang else mg
+        rg = _orient(mg, v.mirror, v.ang, c)
         mem_b.append((nm, affinity.translate(rg, -v.off[0] + ox * pcell - x0, -v.off[1] + oy * pcell - y0)))
     bx0, by0, bx1, by1 = union.bounds
     eff_pair = (ga.area + gb.area) / ((bx1 - bx0) * (by1 - by0))
     eff_single = part.geom.area / ((gx1 - gx0) * (gy1 - gy0))
-    return PolyPart(part.name + " x2", union, 1, part.rotate, mem_a + mem_b), eff_pair, eff_single
+    return PolyPart(part.name + " x2", union, 1, part.rotate, mem_a + mem_b, flip=part.flip), eff_pair, eff_single
 
 
 def _flat_members(part):
@@ -474,7 +496,7 @@ def _cluster_options(parts, step, cell, spacing):
                 o["pair"] = found[0]
                 if int(p.qty) >= 4:  # pair of pairs
                     try:
-                        q = _best_pair(PolyPart(found[0].name, found[0].geom, 2, found[0].rotate, found[0].members),
+                        q = _best_pair(PolyPart(found[0].name, found[0].geom, 2, found[0].rotate, found[0].members, flip=found[0].flip),
                                        step, cell, spacing)
                     except Exception:  # noqa: BLE001
                         q = None
@@ -584,14 +606,14 @@ def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rul
             grid.commit(v.mask, ox, oy)
             for name, mg in members:
                 if part.members:
-                    mg = affinity.rotate(mg, v.ang, origin=(c.x, c.y)) if v.ang else mg
+                    mg = _orient(mg, v.mirror, v.ang, c)
                 else:
                     mg = v.geom
                 tg = affinity.translate(mg, -v.off[0] + ox * cell, -v.off[1] + oy * cell)
                 x0, y0, x1, y1 = tg.bounds
                 grid.sheet.placements.append(Placement(
                     name, x0, y0, x1 - x0, y1 - y0, v.ang % 360 != 0, float(v.ang),
-                    float(tg.area), geom_to_json(tg)))
+                    float(tg.area), geom_to_json(tg), v.mirror))
     for g in grids:
         g.sheet.scrap = g.scrap_rects()
         g.sheet.free_edge = g.free_edge()

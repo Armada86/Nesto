@@ -30,6 +30,7 @@ class Placement:
     angle: float = 0.0
     area: float | None = None  # real area for non-rectangular parts
     polys: list | None = None  # absolute outline on the sheet (see shapes.geom_to_json)
+    mirrored: bool = False  # the part was turned over
 
 
 @dataclass
