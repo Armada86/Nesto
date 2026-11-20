@@ -300,6 +300,13 @@ class _Grid:
         cs = self.f * self.cell
         return [(a * cs, b * cs, (c - a) * cs, (d - b) * cs) for a, b, c, d in self._regular()]
 
+    def free_edge(self):
+        """Length of the boundary between free and occupied space (compact, connected free space = short)."""
+        free = self.occ == 0
+        solid = ~free
+        near = binary_dilation(solid, structure=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], bool))
+        return float((free & near).sum()) * self.cell
+
     def scrap_value(self, free=None):
         """Regular scrap of this sheet in cells, each piece weighted by its squareness."""
         return sum(scrap_score(c - a, d - b) for a, b, c, d in self._regular(free)) * self.f ** 2
@@ -317,7 +324,7 @@ class _Grid:
         With protect=True, positions that eat into the sheet's regular scrap are penalised
         (damage = cells taken from it); damage outranks the placement rule.
         """
-        if rule == "contact" and self.occ_pad is None:
+        if self.occ_pad is None:  # also needed to break ties by contact (see below)
             self.occ_pad = np.pad(self.occ, 1, constant_values=1.0)
         rects = self.protected() if protect else None
         cands = []
@@ -347,13 +354,17 @@ class _Grid:
                 score = score + BIG * dmg
             score = np.where(feas, score, np.inf)
             idx = np.unravel_index(np.argmin(score), score.shape)
-            cands.append((float(score[idx]), k, int(idx[1]), int(idx[0]), float(dmg[idx]) if dmg is not None else 0.0))
+            oy, ox = int(idx[0]), int(idx[1])
+            # equal scores (e.g. a triangle and its mirror image, same bounding box): the orientation that touches
+            # its neighbours / the sheet edge along more of its outline wins, so flat sides sit flush
+            touch = float((self.occ_pad[oy:oy + h + 2, ox:ox + w + 2] * _ring(v)).sum())
+            cands.append((float(score[idx]), -touch, k, ox, oy, float(dmg[idx]) if dmg is not None else 0.0))
         if not cands:
             return None
         cands.sort()
         if rng is not None and noise and len(cands) > 1 and rng.random() < noise:
-            return cands[1][1:]
-        return cands[0][1:]
+            return cands[1][2:]
+        return cands[0][2:]
 
     def commit(self, m, ox, oy):
         h, w = m.shape
@@ -530,6 +541,7 @@ def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rul
                     float(tg.area), geom_to_json(tg)))
     for g in grids:
         g.sheet.scrap = g.scrap_rects()
+        g.sheet.free_edge = g.free_edge()
     return [g.sheet for g in grids]
 
 
@@ -563,14 +575,17 @@ def free_rectangles(sheet, margin=0.0, k=MAX_SCRAP):
 def _fitness(sheets):
     """Smaller is better: fewest sheets; then the best scrap pieces (area x squareness, compared best piece first,
     then the next ...: one big square beats a long thin strip); then the biggest pieces by plain area, again biggest
-    first (keeps an unavoidable strip whole); then the emptiest last sheet; then the shortest nest."""
+    first (keeps an unavoidable strip whole); then the most compact free space (shortest free/occupied boundary:
+    flat sides flush against each other, scrap in one connected piece); then the emptiest last sheet; then the
+    shortest nest."""
     last = sheets[-1]
     sheet_area = last.width * last.height
     rects = [r for s in sheets for r in s.scrap]
     pieces = sorted((-round(scrap_score(r[2], r[3]) / sheet_area, 2) for r in rects))[:8]
     areas = sorted((-round(r[2] * r[3] / sheet_area, 2) for r in rects))[:8]
     extent = max((p.x + p.w) for p in last.placements)
-    return (len(sheets), tuple(pieces), tuple(areas), round(last.used_area / sheet_area, 3), extent)
+    edge = sum(s.free_edge for s in sheets)
+    return (len(sheets), tuple(pieces), tuple(areas), round(edge / 500.0), round(last.used_area / sheet_area, 3), extent)
 
 
 def _order(parts, how, rng=None):

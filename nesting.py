@@ -37,7 +37,8 @@ class Sheet:
     width: float
     height: float
     placements: list[Placement] = field(default_factory=list)
-    scrap: list = field(default_factory=list)  # largest clean free rectangles [(x, y, w, h)]
+    scrap: list = field(default_factory=list)  # regular scrap pieces [(x, y, w, h)]
+    free_edge: float = 0.0  # length of the free/occupied boundary (compactness of the free space)
 
     @property
     def used_area(self) -> float:
