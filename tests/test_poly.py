@@ -183,3 +183,32 @@ def test_scrap_never_costs_a_sheet():
     s = nest_polygons(parts, 900, 600, 5, 3, 90, time_limit=0)
     check(s, 900, 600, 5, 3)
     assert sum(len(x.placements) for x in s) == 26
+
+
+def test_small_parts_prefer_irregular_gaps_over_a_regular_strip():
+    """Regression (screenshot): small parts sat in the top-left corner of sheet 1, cutting its long strip,
+    although sheet 2 had a wedge (leftover of a diagonal-edged part) where they fit.
+    Regular scrap = rectangular, touches the sheet edge. The wedge is not regular, so smalls go there."""
+    from nesting_poly import free_rectangles
+    plate = box(0, 0, 580, 300)
+    wedge_maker = Polygon([(0, 0), (580, 0), (0, 300)])                       # right triangle: leaves a wedge
+    smalls = PolyPart("small", box(0, 0, 30, 30), 5, rotate=False)
+    s = nest_polygons([PolyPart("plate", plate, 1), PolyPart("tri", wedge_maker, 1, rotate=False), smalls],
+                      600, 400, margin=5, spacing=3, rot_step=90, time_limit=0)
+    check(s, 600, 400, 5, 3)
+    assert len(s) == 2
+    plate_sheet = next(i for i, sh in enumerate(s) if any(p.part == "plate" for p in sh.placements))
+    assert not any(p.part == "small" for p in s[plate_sheet].placements)       # the plate's sheet keeps its strip clean
+    (x, y, w, h), *_ = free_rectangles(s[plate_sheet], margin=5)
+    assert w > 570 and h >= 80                                                  # ... full length
+
+
+def test_enclosed_pocket_and_irregular_region_are_not_regular_scrap():
+    from nesting import Placement, Sheet
+    from nesting_poly import free_rectangles
+    # a frame leaves an enclosed hole (not scrap) but also an edge strip (scrap)
+    g = box(0, 0, 900, 300).difference(box(300, 80, 500, 220))
+    sh = Sheet(1000, 500, [Placement("frame", 5, 5, 900, 300, False, 0.0, g.area,
+                                      __import__("shapes").geom_to_json(__import__("shapely").affinity.translate(g, 5, 5)))])
+    rects = free_rectangles(sh, margin=5)
+    assert rects and all(not (300 < x < 520 and 80 < y < 240 and w < 250) for x, y, w, h in rects)   # hole is not offered
