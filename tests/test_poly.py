@@ -166,12 +166,8 @@ def test_small_parts_go_into_gaps_and_keep_the_big_strip_clean():
     names = [sorted(p.part for p in sh.placements) for sh in s]
     sheet_of = {n: i for i, ns in enumerate(names) for n in ns if n != "small"}
     small_sheet = [i for i, ns in enumerate(names) if "small" in ns]
-    assert small_sheet == [sheet_of["frame"]]                              # all 4 smalls beside the frame
-    # ... and they sit inside the frame's pocket
-    pocket = box(300, 100, 500, 300)
-    for p in s[sheet_of["frame"]].placements:
-        if p.part == "small":
-            assert pocket.contains(box(p.x, p.y, p.x + p.w, p.y + p.h))
+    assert small_sheet == [sheet_of["frame"]]                              # all 4 smalls on the frame's sheet
+    # (the frame's own 62 mm strip is thinner than 15 % of the sheet: waste, so the smalls may use it)
     # the plate's sheet keeps its full-length free strip
     (x, y, w, h), *_ = free_rectangles(s[sheet_of["plate"]], margin=5)
     assert w > 980 and h >= 75
@@ -212,3 +208,31 @@ def test_enclosed_pocket_and_irregular_region_are_not_regular_scrap():
                                       __import__("shapes").geom_to_json(__import__("shapely").affinity.translate(g, 5, 5)))])
     rects = free_rectangles(sh, margin=5)
     assert rects and all(not (300 < x < 520 and 80 < y < 240 and w < 250) for x, y, w, h in rects)   # hole is not offered
+
+
+def test_squarer_scrap_wins_over_bigger_thin_strip():
+    from nesting import Placement, Sheet
+    from nesting_poly import _fitness, scrap_score, squareness
+    assert squareness(400, 400) == 1.0 and squareness(1000, 100) == pytest.approx(0.1)
+    strip = Sheet(1000, 500, [Placement("p", 0, 0, 10, 10, False)]); strip.scrap = [(0, 0, 1000, 200)]    # 200k, ratio 5:1
+    block = Sheet(1000, 500, [Placement("p", 0, 0, 10, 10, False)]); block.scrap = [(0, 0, 400, 400)]     # 160k, square
+    assert scrap_score(400, 400) > scrap_score(1000, 200)
+    assert _fitness([block]) < _fitness([strip])              # smaller key = better: the square block wins
+
+
+def test_unavoidable_strip_is_kept_whole_as_tie_break():
+    """Same squareness class: the layout whose biggest strip is longer wins (the strip stays whole)."""
+    from nesting import Placement, Sheet
+    from nesting_poly import _fitness
+    whole = Sheet(1000, 500, [Placement("p", 0, 0, 10, 10, False)]); whole.scrap = [(0, 0, 1000, 100)]
+    cut = Sheet(1000, 500, [Placement("p", 0, 0, 10, 10, False)]); cut.scrap = [(0, 0, 700, 100)]
+    assert _fitness([whole]) < _fitness([cut])
+
+
+def test_pieces_thinner_than_15_percent_of_the_narrow_side_are_waste():
+    from nesting import Placement, Sheet
+    from nesting_poly import free_rectangles
+    thin = Sheet(1000, 500, [Placement("p", 0, 0, 1000, 430, False)])      # leaves a 70 mm strip (14 % of 500)
+    ok = Sheet(1000, 500, [Placement("p", 0, 0, 1000, 400, False)])        # leaves a 100 mm strip (20 %)
+    assert free_rectangles(thin, margin=0) == []
+    assert len(free_rectangles(ok, margin=0)) == 1

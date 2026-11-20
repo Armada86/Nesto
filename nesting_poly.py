@@ -19,8 +19,8 @@ Search (what makes it smart)
   nested as rigid units.
 * Placement rules: min length (x), min width (y), min bounding-box growth, and
   max contact with neighbours/edges - each packs differently.
-* Regular scrap: after the sheet count, layouts are ranked by how much free space ends up in
-  large clean rectangles (usable offcuts). Small parts are therefore sent into gaps between
+* Regular scrap: after the sheet count, layouts are ranked by the quality of the usable offcuts:
+  large, clean and SQUARE-ish rectangles (area x squareness) beat long thin strips. Small parts are therefore sent into gaps between
   parts - on any sheet - instead of cutting into the biggest free rectangle of a sheet.
 * Multi-start: deterministic baselines first, then randomised restarts (part
   order, rule, noisy choice of rotation) until the time budget is spent. The best
@@ -172,8 +172,19 @@ def _ring(v: _Var):
 
 
 def scrap_thresholds(sheet_w, sheet_h):
-    """(min side, min area) a free rectangle needs to count as usable scrap - relative to the sheet."""
-    return 0.08 * min(sheet_w, sheet_h), 0.02 * sheet_w * sheet_h
+    """(min side, min area) a free rectangle needs to count as usable scrap - relative to the sheet.
+    Pieces thinner than 15 % of the sheet's narrow side are waste."""
+    return 0.15 * min(sheet_w, sheet_h), 0.02 * sheet_w * sheet_h
+
+
+def squareness(w, h):
+    """1.0 for a square, towards 0 for a long thin strip."""
+    return min(w, h) / max(w, h) if max(w, h) > 0 else 0.0
+
+
+def scrap_score(w, h):
+    """Value of one scrap piece: its area weighted by how square it is."""
+    return w * h * squareness(w, h)
 
 
 def _largest_rect(free):
@@ -210,7 +221,7 @@ def _regular_rects(free, f, cell, sheet_w, sheet_h, bounds, max_n=MAX_SCRAP):
       * touches the usable sheet edge (enclosed pockets and holes in parts are not offcuts),
       * is at least as big as the size thresholds, and
       * is rectangular (its biggest rectangle fills >= REGULAR of it),
-    the biggest rectangle in it. Returns [(x0, y0, x1, y1)] in coarse cells, biggest first."""
+    the biggest rectangle in it. Returns [(x0, y0, x1, y1)] in coarse cells, best score (area x squareness) first."""
     min_side, min_area = scrap_thresholds(sheet_w, sheet_h)
     cs = f * cell
     min_side_c, min_cells = math.ceil(min_side / cs), math.ceil(min_area / (cs * cs))
@@ -229,7 +240,8 @@ def _regular_rects(free, f, cell, sheet_w, sheet_h, bounds, max_n=MAX_SCRAP):
         area, x0, y0, x1, y1 = _largest_rect(sub)
         if area < min_cells or min(x1 - x0, y1 - y0) < min_side_c or area / region < REGULAR:
             continue
-        out.append((area, sl[1].start + x0, sl[0].start + y0, sl[1].start + x1, sl[0].start + y1))
+        score = scrap_score(x1 - x0, y1 - y0)
+        out.append((score, sl[1].start + x0, sl[0].start + y0, sl[1].start + x1, sl[0].start + y1))
     out.sort(reverse=True)
     return [r[1:] for r in out[:max_n]]
 
@@ -289,7 +301,8 @@ class _Grid:
         return [(a * cs, b * cs, (c - a) * cs, (d - b) * cs) for a, b, c, d in self._regular()]
 
     def scrap_value(self, free=None):
-        return sum((c - a) * (d - b) for a, b, c, d in self._regular(free)) * self.f ** 2
+        """Regular scrap of this sheet in cells, each piece weighted by its squareness."""
+        return sum(scrap_score(c - a, d - b) for a, b, c, d in self._regular(free)) * self.f ** 2
 
     def loss_if_placed(self, mask, ox, oy):
         """Regular scrap (cells) this sheet would lose if the mask were placed at (ox, oy)."""
@@ -548,13 +561,16 @@ def free_rectangles(sheet, margin=0.0, k=MAX_SCRAP):
 
 
 def _fitness(sheets):
-    """Smaller is better: fewest sheets, then the BIGGEST regular scrap pieces (compared biggest first, then the
-    next biggest, ...: one long strip beats two shorter ones), then the emptiest last sheet, then the shortest nest."""
+    """Smaller is better: fewest sheets; then the best scrap pieces (area x squareness, compared best piece first,
+    then the next ...: one big square beats a long thin strip); then the biggest pieces by plain area, again biggest
+    first (keeps an unavoidable strip whole); then the emptiest last sheet; then the shortest nest."""
     last = sheets[-1]
     sheet_area = last.width * last.height
-    pieces = sorted((-round(r[2] * r[3] / sheet_area, 2) for s in sheets for r in s.scrap))[:8]
+    rects = [r for s in sheets for r in s.scrap]
+    pieces = sorted((-round(scrap_score(r[2], r[3]) / sheet_area, 2) for r in rects))[:8]
+    areas = sorted((-round(r[2] * r[3] / sheet_area, 2) for r in rects))[:8]
     extent = max((p.x + p.w) for p in last.placements)
-    return (len(sheets), tuple(pieces), round(last.used_area / sheet_area, 3), extent)
+    return (len(sheets), tuple(pieces), tuple(areas), round(last.used_area / sheet_area, 3), extent)
 
 
 def _order(parts, how, rng=None):
@@ -655,7 +671,7 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
                             protect=protect)
         if progress:
             frac = min(1.0, (time.monotonic() - t0) / max(time_limit, 1e-9)) if time_limit else min(1.0, i / n_base_min)
-            big = f" · biggest scrap piece {-best_fit[1][0]:.0%} of a sheet" if best_fit[1] else ""
+            big = f" · best scrap piece ≈ {-best_fit[1][0]:.0%} of a sheet" if best_fit[1] else ""
             progress(frac, f"layouts tried: {runs} · best: {best_fit[0]} sheet(s){big}")
     if best is None:
         raise errors[0]
