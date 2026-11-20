@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 import db
+from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
 from nesting_poly import PolyPart, nest_polygons
@@ -219,4 +220,14 @@ if "result" in st.session_state:
     m3.metric("Utilization", f"{s['utilization']:.1%}")
     for i, sh in enumerate(sheets, 1):
         st.pyplot(draw_sheet(sh, f"Sheet {i}"))
-    st.download_button("Download layout (JSON)", json.dumps(st.session_state.result), "nest.json")
+    st.subheader("Export")
+    labels = st.checkbox("Include part names as text (layer LABELS)", value=True)
+    d1, d2, d3 = st.columns(3)
+    if len(sheets) == 1:
+        d1.download_button("⬇ DXF (sheet 1)", sheet_dxf(sheets[0], labels), "sheet_01.dxf", "application/dxf")
+    else:
+        d1.download_button(f"⬇ DXF – {len(sheets)} files (ZIP)", sheets_zip(sheets, labels=labels),
+                           "nest_sheets.zip", "application/zip")
+        d2.download_button("⬇ DXF – all sheets in one file", all_sheets_dxf(sheets, labels=labels),
+                           "nest_all_sheets.dxf", "application/dxf")
+    d3.download_button("⬇ Layout (JSON)", json.dumps(st.session_state.result), "nest.json")
