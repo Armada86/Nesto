@@ -26,6 +26,7 @@ except Exception as e:  # noqa: BLE001
 
 ROT_STEPS = {"None": 0, "90°": 90, "45°": 45, "30°": 30, "15°": 15}
 PRECISION = {"Fast": 500, "Balanced": 800, "Fine": 1400}
+EFFORT = {"Quick": 0, "Normal": 15, "Thorough": 60}  # seconds of extra search for irregular parts
 
 # ---------- project selection ----------
 with st.sidebar:
@@ -56,6 +57,9 @@ with st.sidebar:
                                  help="Finer steps pack irregular shapes better but take longer.")
     prec_label = st.select_slider("Precision (irregular shapes)", list(PRECISION), value="Balanced",
                                   help="Finer = tighter packing, slower.")
+    effort_label = st.select_slider("Search effort (irregular shapes)", list(EFFORT), value="Normal",
+                                    help="Quick = one pass. Normal / Thorough keep trying many different layouts "
+                                         "(pairing, placement rules, random restarts) for 15 / 60 seconds and keep the best.")
 
 # ---------- parts ----------
 if st.session_state.get("loaded_pid") != pid:
@@ -159,9 +163,12 @@ def run_nesting(parts):
     bar = st.progress(0.0, text="Nesting…")
     pp = [PolyPart(p["name"], part_geometry(p), p["qty"], p["rotate"]) for p in parts]
     cell = max(sheet_w, sheet_h) / PRECISION[prec_label]
+    info = {}
     out = nest_polygons(pp, sheet_w, sheet_h, margin, spacing, ROT_STEPS[rot_label], cell,
-                        progress=lambda d, t: bar.progress(d / t, text=f"Nesting… {d}/{t}"))
+                        progress=lambda f, msg: bar.progress(min(max(f, 0.0), 1.0), text=f"Nesting… {msg}"),
+                        time_limit=EFFORT[effort_label], info=info)
     bar.empty()
+    st.session_state.nest_info = info
     return out
 
 
@@ -202,6 +209,10 @@ with st.sidebar:
 if "result" in st.session_state:
     sheets = _sheets_from(st.session_state.result)
     s = summary(sheets)
+    info = st.session_state.get("nest_info")
+    if info:
+        st.caption(f"Best of {info['runs']} layouts in {info['seconds']:.0f}s "
+                   f"({'paired parts' if info['set'] == 'paired' else 'single parts'}, placement rule: {info['rule']}).")
     m1, m2, m3 = st.columns(3)
     m1.metric("Sheets", s["sheets"])
     m2.metric("Parts placed", s["parts"])
