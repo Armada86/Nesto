@@ -409,3 +409,74 @@ def test_layout_with_scrap_beats_layout_without_and_more_pieces_are_not_worse():
     two = [sheet([(0, 0, 400, 400), (500, 0, 300, 300)])]
     assert _fitness(one) < _fitness(none)          # having scrap is better than having none
     assert _fitness(two) < _fitness(one)           # an extra piece never makes a layout worse
+
+
+# ------------------------------------------------------------------------------------------------ flipping
+def _chiral(seed=3, size=100.0):
+    """A random star-shaped polygon: no mirror symmetry (its mirror image is not a rotation of it)."""
+    import math, random
+    from shapes import normalize
+    rng = random.Random(seed)
+    n = 8
+    angs = sorted(rng.uniform(0, 2 * math.pi) for _ in range(n))
+    g = Polygon([(size * rng.uniform(0.35, 1.0) * math.cos(a), size * rng.uniform(0.35, 1.0) * math.sin(a)) for a in angs])
+    return normalize(g if g.is_valid else g.buffer(0))
+
+
+def test_chiral_helper_really_is_chiral():
+    from shapely import affinity
+    g = _chiral()
+    m = affinity.scale(g, -1, 1, origin=(0, 0))
+    # simpler and exact enough: after centring both on their centroid, no rotation makes the mirror image match
+    gc = affinity.translate(g, -g.centroid.x, -g.centroid.y)
+    mc = affinity.translate(m, -m.centroid.x, -m.centroid.y)
+    diffs = [affinity.rotate(mc, a, origin=(0, 0)).symmetric_difference(gc).area / g.area for a in range(0, 360, 2)]
+    assert min(diffs) > 0.15
+
+
+def test_flip_adds_mirrored_variants_only_for_shapes_without_mirror_symmetry():
+    import nesting_poly as npl
+    def count(geom, flip):
+        return len(npl._variants(PolyPart("p", geom, 1, True, flip=flip), 90, 1.0, 2.0))
+    chiral = _chiral()
+    assert count(chiral, True) > count(chiral, False)                     # mirror images are new orientations
+    assert all(not v.mirror for v in npl._variants(PolyPart("p", chiral, 1, True, flip=False), 90, 1.0, 2.0))
+    assert any(v.mirror for v in npl._variants(PolyPart("p", chiral, 1, True, flip=True), 90, 1.0, 2.0))
+    for symmetric in (box(0, 0, 80, 30), build_shape("isosceles", 1, 1) if False else Polygon([(0, 0), (60, 0), (30, 50)])):
+        assert count(symmetric, True) == count(symmetric, False)          # symmetric: flipping costs nothing
+
+
+def test_flipping_lets_a_part_into_a_pocket_shaped_like_its_mirror_image():
+    """A frame has a hole that is (slightly bigger than) the MIRROR image of the part. Turning the part over fits
+    it in the hole; without flipping it cannot enter and needs a second sheet."""
+    from shapely import affinity
+    part = _chiral()
+    mirror = affinity.scale(part, -1, 1, origin=(0, 0))
+    hole = mirror.buffer(3.5)                                                       # 3.5 mm clearance all round
+    hole = affinity.translate(hole, 200 - hole.centroid.x, 200 - hole.centroid.y)
+    frame = box(0, 0, 400, 400).difference(hole)
+    def run(flip):
+        parts = [PolyPart("frame", frame, 1, rotate=False, flip=False), PolyPart("part", part, 1, rotate=True, flip=flip)]
+        return nest_polygons(parts, 410, 410, margin=3, spacing=2, rot_step=15, time_limit=0)
+    with_flip, without = run(True), run(False)
+    check(with_flip, 410, 410, 3, 2)
+    assert len(with_flip) == 1 and len(without) == 2
+    assert any(p.mirrored for p in with_flip[0].placements if p.part == "part")
+
+
+def test_flip_off_never_mirrors():
+    parts = [PolyPart(f"p{i}", _chiral(i), 1, flip=False) for i in range(6)]
+    s = nest_polygons(parts, 700, 500, 5, 3, 30, time_limit=0)
+    check(s, 700, 500, 5, 3)
+    assert not any(p.mirrored for sh in s for p in sh.placements)
+
+
+def test_pairs_of_flipped_parts_stay_valid():
+    """Clusters (rigid pairs / quads) may contain a mirrored copy; unpacking them must give correct, disjoint parts."""
+    part = _chiral(5, 120)
+    s = nest_polygons([PolyPart("c", part, 8, flip=True)], 900, 600, 5, 3, 45, time_limit=0)
+    check(s, 900, 600, 5, 3)
+    assert sum(len(x.placements) for x in s) == 8
+    for sh in s:
+        for p in sh.placements:
+            assert p.area == pytest.approx(part.area, rel=1e-3)           # every placed part has the part's own area

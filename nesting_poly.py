@@ -65,6 +65,7 @@ class PolyPart:
     rotate: bool = True
     members: list | None = None  # rigid cluster: [(name, geom in cluster coordinates)]
     _cache: dict = field(default_factory=dict, repr=False)
+    flip: bool = True  # may be turned over (mirrored): both sides of the sheet are the same
 
 
 @dataclass
@@ -75,6 +76,7 @@ class _Var:
     geom: object
     ring: np.ndarray | None = None
     ii: np.ndarray | None = None
+    mirror: bool = False  # this orientation is the part turned over
 
 
 def _polys(g):
@@ -139,31 +141,57 @@ def _min_width(geom):
     return best
 
 
-def _variants(part: PolyPart, step: float, cell: float, pad: float):
-    """Distinct rotations of a part (cached on the part).
+def _orient(g, mirror, ang, c):
+    """Put a geometry (given in the part's own frame) into an orientation: optionally turn it over (mirror about
+    the vertical line through the part's centroid c), then rotate by ang about c."""
+    if mirror:
+        g = affinity.scale(g, -1, 1, origin=(c.x, c.y))
+    return affinity.rotate(g, ang, origin=(c.x, c.y)) if ang else g
+
+
+def _same_shape(g, h):
+    """Do two geometries (in the same frame) coincide? Used to skip a mirror image that is just a rotation."""
+    if any(abs(p - q) > 1e-5 * max(1.0, abs(p)) for p, q in zip(g.bounds, h.bounds)):
+        return False
+    return g.symmetric_difference(h).area <= 1e-5 * g.area
+
+
+def _variants(part: PolyPart, step: float, cell: float, pad: float, allow_flip: bool = True):
+    """Distinct orientations of a part (cached on the part): rotations and, if part.flip, its mirror image.
+    The mirror image is tried at the right-angle rotations and at the angles that lay a straight edge flat (that is
+    where a turned-over part sits flush against its neighbours), not at every fine rotation step: that keeps flipping
+    cheap. A mirror image that coincides with an orientation we already have (symmetric shapes) is skipped.
+    allow_flip=False: this layout run does not use mirror images at all (the search mixes both kinds of runs).
 
     Fixed steps (multiples of `step`) plus edge-aligned angles, so that e.g. the hypotenuse
     of a triangle can lie exactly horizontal whatever the step is.
     """
-    key = (step, cell, pad)
+    key = (step, cell, pad, allow_flip)
     if key in part._cache:
         return part._cache[key]
-    angles = [0.0]
-    if part.rotate and step and step < 360:
-        angles = [a * step for a in range(int(round(360 / step)))]
-        for a in _aligned_angles(part.geom):
-            if all(min(abs(a - b), 360 - abs(a - b)) > 0.05 for b in angles):
-                angles.append(a)
     seen, out = set(), []
     c = part.geom.centroid
-    for ang in angles:
-        g = affinity.rotate(part.geom, ang, origin=(c.x, c.y)) if ang else part.geom
-        m, off = _mask(g, cell, pad)
-        k = (m.shape, np.packbits(m).tobytes())
-        if k in seen:
-            continue
-        seen.add(k)
-        out.append(_Var(ang, m, off, g))
+    for mirror in ((False, True) if part.flip and allow_flip else (False,)):
+        base = _orient(part.geom, mirror, 0.0, c)
+        angles = [0.0]
+        if part.rotate and step and step < 360:
+            if mirror:   # coarse set only: right angles + edge-aligned angles
+                angles = [0.0, 90.0, 180.0, 270.0]
+            else:
+                angles = [a * step for a in range(int(round(360 / step)))]
+            for a in _aligned_angles(base):
+                if all(min(abs(a - b), 360 - abs(a - b)) > 0.05 for b in angles):
+                    angles.append(a)
+        for ang in angles:
+            g = affinity.rotate(base, ang, origin=(c.x, c.y)) if ang else base
+            if mirror and any(_same_shape(g, v.geom) for v in out):
+                continue  # the mirror image is identical to an orientation we already have
+            m, off = _mask(g, cell, pad)
+            k = (m.shape, np.packbits(m).tobytes())
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(_Var(ang, m, off, g, mirror=mirror))
     part._cache[key] = out
     return out
 
@@ -289,6 +317,7 @@ class _Grid:
         self.free_cells = self.free0 = int((self.occ == 0).sum())
         self._rect = None
         self._comps = None
+        self._origin = None
         self.gap_cache = {}  # per part type: best gap candidates, valid until this sheet changes
         self.sheet = Sheet(sheet_w, sheet_h)
 
@@ -325,12 +354,13 @@ class _Grid:
         free[oy:oy + h, ox:ox + w] &= ~mask
         return self.scrap_value() - self.scrap_value(free)
 
-    def best(self, variants, rule="xend", rng=None, noise=0.0, protect=False, window=None):
+    def best(self, variants, rule="xend", rng=None, noise=0.0, protect=False, window=None, zero_damage_only=False):
         """Best feasible (variant_index, ox, oy, damage) on this sheet, or None.
 
         With protect=True, positions that eat into the sheet's regular scrap are penalised
         (damage = cells taken from it); damage outranks the placement rule.
         window=(x0, y0, x1, y1) in fine cells restricts the search to that part of the sheet.
+        zero_damage_only=True (with protect) only considers positions that cost no regular scrap at all.
         """
         if self.occ_pad is None:  # also needed to break ties by contact (see below)
             self.occ_pad = np.pad(self.occ, 1, constant_values=1.0)
@@ -339,7 +369,22 @@ class _Grid:
         occ_pad = self.occ_pad[wy0:wy1 + 2, wx0:wx1 + 2]
         rects = [(a - wx0, b - wy0, c - wx0, d - wy0) for a, b, c, d in self.protected()] if protect else None
         cands = []
-        for k, v in enumerate(variants):
+        # Pruning (exact): for the xend / yend rules the score is at least (first free column + width) * (rows + 1),
+        # resp. the same with rows; a variant whose bound is already worse than the best score found so far cannot
+        # win, so its (expensive) search is skipped. Variants are visited best bound first.
+        ox0, oy0 = self.free_origin()
+        if rule == "xend":
+            bound = lambda v: (max(ox0, wx0) + v.mask.shape[1]) * (self.ny + 1.0)
+        elif rule == "yend":
+            bound = lambda v: (max(oy0, wy0) + v.mask.shape[0]) * (self.nx + 1.0)
+        else:
+            bound = None
+        order = sorted(range(len(variants)), key=lambda i: bound(variants[i])) if bound else range(len(variants))
+        best_score = float("inf")
+        for k in order:
+            v = variants[k]
+            if bound is not None and bound(v) > best_score:
+                break
             h, w = v.mask.shape
             if h > occ.shape[0] or w > occ.shape[1]:
                 continue
@@ -347,6 +392,11 @@ class _Grid:
             feas = ov < 0.5
             if not feas.any():
                 continue
+            dmg = sum(_overlap_map(v, r, *feas.shape) for r in rects) if rects else None
+            if zero_damage_only and dmg is not None:
+                feas = feas & (dmg == 0)
+                if not feas.any():
+                    continue
             xs = np.arange(feas.shape[1])[None, :] + wx0
             ys = np.arange(feas.shape[0])[:, None] + wy0
             if rule == "yend":
@@ -360,7 +410,6 @@ class _Grid:
             else:  # xend
                 score = (xs + w) * (self.ny + 1.0) + ys
             score = np.asarray(score, dtype=np.float64)
-            dmg = sum(_overlap_map(v, r, *feas.shape) for r in rects) if rects else None
             if dmg is not None:
                 score = score + BIG * dmg
             score = np.where(feas, score, np.inf)
@@ -371,12 +420,22 @@ class _Grid:
             touch = float((occ_pad[oy:oy + h + 2, ox:ox + w + 2] * _ring(v)).sum())
             cands.append((float(score[idx]), -touch, k, ox + wx0, oy + wy0,
                           float(dmg[idx]) if dmg is not None else 0.0))
+            best_score = min(best_score, float(score[idx]))
         if not cands:
             return None
         cands.sort()
         if rng is not None and noise and len(cands) > 1 and rng.random() < noise:
             return cands[1][2:]
         return cands[0][2:]
+
+    def free_origin(self):
+        """(first column, first row) that still contains a free cell - no part can start left of / below it
+        (minus 2 cells: the first mask column may be empty)."""
+        if self._origin is None:
+            free = self.occ == 0
+            cols, rows = np.flatnonzero(free.any(axis=0)), np.flatnonzero(free.any(axis=1))
+            self._origin = (max(0, int(cols[0]) - 2) if len(cols) else self.nx, max(0, int(rows[0]) - 2) if len(rows) else self.ny)
+        return self._origin
 
     def components(self, min_cells):
         """Free regions of this sheet that could hold a part of `min_cells` cells: [(area in cells, window)],
@@ -399,6 +458,7 @@ class _Grid:
         self.occ_pad = None
         self._rect = None
         self._comps = None
+        self._origin = None
         self.gap_cache = {}
         self.free_cells = int((self.occ == 0).sum())
         self.xc = max(self.xc, ox + w)
@@ -411,7 +471,7 @@ def _best_pair(part: PolyPart, step, cell, spacing):
     gx0, gy0, gx1, gy1 = part.geom.bounds
     pcell = min(cell, max(cell / 3.0, max(gx1 - gx0, gy1 - gy0) / 400.0))  # finer than the sheet grid
     pad = spacing / 2 + PAD_FACTOR * pcell
-    base = _variants(PolyPart(part.name, part.geom, 1, part.rotate), step, pcell, pad)
+    base = _variants(PolyPart(part.name, part.geom, 1, part.rotate, flip=part.flip), step, pcell, pad)
     a = base[0]
     (aminx, aminy) = a.off
     mb = max(max(v.mask.shape) for v in base)
@@ -448,12 +508,12 @@ def _best_pair(part: PolyPart, step, cell, spacing):
     mem_a, mem_b = [], []
     for nm, mg in _flat_members(part):
         mem_a.append((nm, affinity.translate(mg, -aminx + ax0 * pcell - x0, -aminy + ay0 * pcell - y0)))
-        rg = affinity.rotate(mg, v.ang, origin=(c.x, c.y)) if v.ang else mg
+        rg = _orient(mg, v.mirror, v.ang, c)
         mem_b.append((nm, affinity.translate(rg, -v.off[0] + ox * pcell - x0, -v.off[1] + oy * pcell - y0)))
     bx0, by0, bx1, by1 = union.bounds
     eff_pair = (ga.area + gb.area) / ((bx1 - bx0) * (by1 - by0))
     eff_single = part.geom.area / ((gx1 - gx0) * (gy1 - gy0))
-    return PolyPart(part.name + " x2", union, 1, part.rotate, mem_a + mem_b), eff_pair, eff_single
+    return PolyPart(part.name + " x2", union, 1, part.rotate, mem_a + mem_b, flip=part.flip), eff_pair, eff_single
 
 
 def _flat_members(part):
@@ -474,7 +534,7 @@ def _cluster_options(parts, step, cell, spacing):
                 o["pair"] = found[0]
                 if int(p.qty) >= 4:  # pair of pairs
                     try:
-                        q = _best_pair(PolyPart(found[0].name, found[0].geom, 2, found[0].rotate, found[0].members),
+                        q = _best_pair(PolyPart(found[0].name, found[0].geom, 2, found[0].rotate, found[0].members, flip=found[0].flip),
                                        step, cell, spacing)
                     except Exception:  # noqa: BLE001
                         q = None
@@ -518,27 +578,27 @@ def _compose(opts, mode):
 def _small_part_spot(grids, variants, min_cells, rule, rng, noise):
     """Where a SMALL part goes. Returns (grid, candidate) or None.
 
-    1. Free gaps first: every free region (connected free space) on every sheet where the part fits without
-       cutting into that sheet's regular scrap. The SMALLEST region wins - the tightest pocket, not the long
-       open strip - ties go to the earlier sheet.
+    1. Free gaps first: the free regions (connected free space) of all sheets are visited SMALLEST FIRST - the tightest
+       pocket, not the long open strip - ties go to the earlier sheet. The first region where the part fits without
+       cutting into that sheet's regular scrap wins (the larger regions never need to be searched).
     2. No such gap anywhere: the spot that costs the least regular scrap (by squareness-weighted area)."""
-    gaps, key = [], (id(variants), rule)
+    regions = []
     for gi, g in enumerate(grids):
-        if g.free_cells < min_cells:
-            continue
-        found = None if noise else g.gap_cache.get(key)   # valid until this sheet receives a part
-        if found is None:
-            found = []
-            for area, window in g.components(min_cells):
-                cand = g.best(variants, rule, rng, noise, protect=True, window=window)
-                if cand is not None and cand[3] == 0:
-                    found.append((area, cand))
+        if g.free_cells >= min_cells:
+            regions += [(area, gi, window) for area, window in g.components(min_cells)]
+    regions.sort(key=lambda r: (r[0], r[1]))
+    for area, gi, window in regions:
+        g = grids[gi]
+        key = (id(variants), rule, window)
+        if noise or key not in g.gap_cache:             # cached until this sheet receives a part
+            cand = g.best(variants, rule, rng, noise, protect=True, window=window, zero_damage_only=True)
+            cand = cand if cand is not None and cand[3] == 0 else None
             if not noise:
-                g.gap_cache[key] = found
-        gaps += [(area, gi, g, cand) for area, cand in found]
-    if gaps:
-        _, _, g, cand = min(gaps, key=lambda t: (t[0], t[1]))
-        return g, cand
+                g.gap_cache[key] = cand
+        else:
+            cand = g.gap_cache[key]
+        if cand is not None:
+            return g, cand
     options = []
     for g in grids:
         if g.free_cells < min_cells:
@@ -553,10 +613,10 @@ def _small_part_spot(grids, variants, min_cells, rule, rng, noise):
 
 # -------------------------------------------------------------------- decode
 def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rule, rng=None, noise=0.0,
-               protect=False):
+               protect=False, allow_flip=True):
     grids: list[_Grid] = []
     for part in jobs:
-        variants = _variants(part, rot_step, cell, pad)
+        variants = _variants(part, rot_step, cell, pad, allow_flip)
         c = part.geom.centroid
         members = _flat_members(part)
         min_cells = min(int(v.mask.sum()) for v in variants)
@@ -584,14 +644,14 @@ def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rul
             grid.commit(v.mask, ox, oy)
             for name, mg in members:
                 if part.members:
-                    mg = affinity.rotate(mg, v.ang, origin=(c.x, c.y)) if v.ang else mg
+                    mg = _orient(mg, v.mirror, v.ang, c)
                 else:
                     mg = v.geom
                 tg = affinity.translate(mg, -v.off[0] + ox * cell, -v.off[1] + oy * cell)
                 x0, y0, x1, y1 = tg.bounds
                 grid.sheet.placements.append(Placement(
                     name, x0, y0, x1 - x0, y1 - y0, v.ang % 360 != 0, float(v.ang),
-                    float(tg.area), geom_to_json(tg)))
+                    float(tg.area), geom_to_json(tg), v.mirror))
     for g in grids:
         g.sheet.scrap = g.scrap_rects()
         g.sheet.free_edge = g.free_edge()
@@ -798,10 +858,17 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
     if any_cluster:
         sets["paired"] = _compose(opts, "full")
 
-    plan = []  # deterministic baselines, most promising first: (mode, rule, order, noise, protect)
+    # does flipping change anything for this job at all? (symmetric parts have no distinct mirror image)
+    has_flip = any(p.flip and any(v.mirror for v in _variants(p, rot_step, cell, pad, True)) for p in parts)
+
+    plan = []  # deterministic baselines, most promising first: (mode, rule, order, noise, protect, allow_flip)
+    set_names = (["paired"] if any_cluster else []) + ["plain"]
     for protect in (False, True):
-        for name in (["paired"] if any_cluster else []) + ["plain"]:
-            plan.append((name, "xend", "area", 0.0, protect))
+        for name in set_names:
+            plan.append((name, "xend", "area", 0.0, protect, False))
+    flip_run = ("__best__", "xend", "area", 0.0, True, True)  # a layout that may turn parts over, built like the best so far
+    if has_flip and time_limit <= 0:  # quick mode: it is one of the layouts that always run
+        plan.append(flip_run)
     n_base_min = len(plan)  # always run at least these
     if any_cluster:  # mix of pairs and singles: k pairs for the biggest paired part, others full
         big = max(paired_idx, key=lambda i: opts[i]["part"].geom.area * int(opts[i]["part"].qty))
@@ -811,19 +878,23 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
             if 1 <= k < maxk:
                 mode = [int(o["part"].qty) // 2 if o["pair"] is not None else 0 for o in opts]
                 mode[big] = k
-                plan.append((tuple(mode), "xend", "area", 0.0, True))
-    for name in (["paired"] if any_cluster else []) + ["plain"]:
+                plan.append((tuple(mode), "xend", "area", 0.0, True, False))
+    if has_flip and time_limit > 0:  # with a time budget: after the layouts that were tried before flipping existed
+        plan.append(flip_run)
+    for name in set_names:
         for rule in ("env", "contact", "yend"):
-            plan.append((name, rule, "area", 0.0, True))
+            plan.append((name, rule, "area", 0.0, True, False))
 
-    best, best_fit, errors, runs = None, None, [], 0
+    best, best_fit, errors, runs, best_params = None, None, [], 0, None
     i = 0
     while True:
         elapsed = time.monotonic() - t0
         if i < len(plan):
             if i >= n_base_min and elapsed >= time_limit:
                 break
-            setname, rule, order, noise, protect = plan[i]
+            setname, rule, order, noise, protect, allow_flip = plan[i]
+            if setname == "__best__":
+                setname, rule, order, noise, protect = best_params or ("plain", "xend", "area", 0.0, True)
         else:
             if elapsed >= time_limit:
                 break
@@ -836,12 +907,13 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
             order = rng.choice(ORDERS + ("shuffle",))
             noise = rng.choice((0.0, 0.1, 0.25))
             protect = rng.random() < 0.65
+            allow_flip = has_flip and rng.random() < 0.5
         i += 1
         base_jobs = sets[setname] if isinstance(setname, str) else _compose(opts, list(setname))
         jobs = _order(base_jobs, order, rng)
         try:
             res = _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rule,
-                             rng if noise else None, noise, protect)
+                             rng if noise else None, noise, protect, allow_flip)
         except ValueError as e:
             errors.append(e)
             if len(errors) > 3 + len(plan) and best is None:
@@ -851,9 +923,10 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
         fit = _fitness(res)
         if best is None or fit < best_fit:
             best, best_fit = res, fit
+            best_params = (setname, rule, order, noise, protect)
             if info is not None:
                 info.update(set=setname if isinstance(setname, str) else "mixed", rule=rule, order=order, noise=noise,
-                            protect=protect)
+                            protect=protect, allow_flip=allow_flip)
         if progress:
             frac = min(1.0, (time.monotonic() - t0) / max(time_limit, 1e-9)) if time_limit else min(1.0, i / n_base_min)
             big = f" · best scrap piece ≈ {-best_fit[1][0]:.0%} of a sheet" if best_fit[1][0] else ""
@@ -864,5 +937,6 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
         progress(1.0, "settling parts onto the sheet edges…")
     moved, changed = settle_layout(best, margin, spacing, seconds=min(20.0, max(5.0, 0.3 * time_limit)))
     if info is not None:
-        info.update(runs=runs, seconds=time.monotonic() - t0, fitness=best_fit, settled_parts=moved, settled_sheets=changed)
+        info.update(runs=runs, seconds=time.monotonic() - t0, fitness=best_fit, settled_parts=moved, settled_sheets=changed,
+                    flipped_parts=sum(1 for sh in best for p in sh.placements if p.mirrored))
     return best
