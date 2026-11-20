@@ -228,6 +228,6 @@ if "result" in st.session_state:
     else:
         d1.download_button(f"⬇ DXF – {len(sheets)} files (ZIP)", sheets_zip(sheets, labels=labels),
                            "nest_sheets.zip", "application/zip")
-        d2.download_button("⬇ DXF – all sheets in one file", all_sheets_dxf(sheets, labels=labels),
+        d2.download_button("⬇ DXF – all sheets in one file (stacked)", all_sheets_dxf(sheets, labels=labels),
                            "nest_all_sheets.dxf", "application/dxf")
     d3.download_button("⬇ Layout (JSON)", json.dumps(st.session_state.result), "nest.json")

@@ -42,3 +42,22 @@ def test_rectangle_engine_export_and_zip():
     assert len(first) == len(sheets[0].placements)
     one = all_sheets_dxf(sheets)
     assert len(layer_polys(one, "SHEET")) == len(sheets)
+
+
+def test_combined_file_stacks_sheets_vertically_with_titles():
+    sheets = nest([Part("a", 100, 100, 30)], 300, 200)
+    assert len(sheets) >= 3
+    doc = ezdxf.read(io.StringIO(all_sheets_dxf(sheets).decode("utf-8")))
+    msp = doc.modelspace()
+    outlines = [e for e in msp if e.dxftype() == "LWPOLYLINE" and e.dxf.layer == "SHEET"]
+    xs = {round(min(p[0] for p in e.get_points()), 3) for e in outlines}
+    tops = [max(p[1] for p in e.get_points()) for e in outlines]
+    assert xs == {0.0}                                       # all in one column
+    assert tops == sorted(tops, reverse=True) and len(set(tops)) == len(tops)  # sheet 1 on top, going down
+    titles = {e.dxf.text: e.dxf.insert for e in msp if e.dxftype() == "TEXT" and e.dxf.layer == "SHEET"}
+    assert [f"Sheet {i}" for i in range(1, len(sheets) + 1)] == sorted(titles, key=lambda t: int(t.split()[1]))
+    assert all(p[0] < 0 for p in titles.values())             # beside (left of) the sheets
+    # each title is level with its own sheet
+    for i, top in enumerate(tops, 1):
+        y = titles[f"Sheet {i}"][1]
+        assert top - 200 <= y <= top
