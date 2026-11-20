@@ -37,6 +37,7 @@ class Sheet:
     width: float
     height: float
     placements: list[Placement] = field(default_factory=list)
+    scrap: list = field(default_factory=list)  # largest clean free rectangles [(x, y, w, h)]
 
     @property
     def used_area(self) -> float:

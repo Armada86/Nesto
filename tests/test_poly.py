@@ -134,3 +134,52 @@ def test_unfittable_part_fails_fast():
     with pytest.raises(ValueError):
         nest_polygons([PolyPart("big", build_shape("rectangle", 5000, 5000), 1)], 2500, 1250)
     assert time.time() - t < 2
+
+
+def test_largest_rect_finder():
+    import numpy as np
+    from nesting_poly import _largest_rect
+    free = np.ones((6, 10), dtype=bool)
+    free[2:4, 3:5] = False                       # a block in the middle
+    area, x0, y0, x1, y1 = _largest_rect(free)
+    assert area == 6 * 5 and (x0, x1) == (5, 10) and (y0, y1) == (0, 6)   # right-hand 5 x 6 block wins
+
+
+def test_free_rectangles_of_finished_sheet():
+    from nesting import Placement, Sheet
+    from nesting_poly import free_rectangles
+    sh = Sheet(1000, 500, [Placement("a", 0, 0, 600, 500, False)])      # 600 wide part: 400 x 500 free
+    (x, y, w, h), *_ = free_rectangles(sh, margin=0)
+    assert w == pytest.approx(400, abs=25) and h == pytest.approx(500, abs=25) and x == pytest.approx(600, abs=25)
+
+
+def test_small_parts_go_into_gaps_and_keep_the_big_strip_clean():
+    """Sheet 1 has a big plate and a free strip; sheet 2 has a frame with a pocket (hole).
+    The small parts must go into the pocket, not into sheet 1's strip."""
+    from nesting_poly import free_rectangles
+    plate = box(0, 0, 986, 400)                                              # nearly full width: no side column
+    frame = box(0, 0, 986, 420).difference(box(300, 100, 500, 300))      # 200 x 200 pocket
+    parts = [PolyPart("plate", plate, 1), PolyPart("frame", frame, 1), PolyPart("small", box(0, 0, 40, 40), 4, rotate=False)]
+    s = nest_polygons(parts, 1000, 500, margin=5, spacing=3, rot_step=90, time_limit=0)
+    check(s, 1000, 500, 5, 3)
+    assert len(s) == 2
+    names = [sorted(p.part for p in sh.placements) for sh in s]
+    sheet_of = {n: i for i, ns in enumerate(names) for n in ns if n != "small"}
+    small_sheet = [i for i, ns in enumerate(names) if "small" in ns]
+    assert small_sheet == [sheet_of["frame"]]                              # all 4 smalls beside the frame
+    # ... and they sit inside the frame's pocket
+    pocket = box(300, 100, 500, 300)
+    for p in s[sheet_of["frame"]].placements:
+        if p.part == "small":
+            assert pocket.contains(box(p.x, p.y, p.x + p.w, p.y + p.h))
+    # the plate's sheet keeps its full-length free strip
+    (x, y, w, h), *_ = free_rectangles(s[sheet_of["plate"]], margin=5)
+    assert w > 980 and h >= 75
+
+
+def test_scrap_never_costs_a_sheet():
+    parts = [PolyPart("c", build_shape("circle", 120), 10), PolyPart("t", build_shape("triangle", 200, 150), 10),
+             PolyPart("r", build_shape("rectangle", 300, 100), 6)]
+    s = nest_polygons(parts, 900, 600, 5, 3, 90, time_limit=0)
+    check(s, 900, 600, 5, 3)
+    assert sum(len(x.placements) for x in s) == 26

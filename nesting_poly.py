@@ -19,6 +19,9 @@ Search (what makes it smart)
   nested as rigid units.
 * Placement rules: min length (x), min width (y), min bounding-box growth, and
   max contact with neighbours/edges - each packs differently.
+* Regular scrap: after the sheet count, layouts are ranked by how much free space ends up in
+  large clean rectangles (usable offcuts). Small parts are therefore sent into gaps between
+  parts - on any sheet - instead of cutting into the biggest free rectangle of a sheet.
 * Multi-start: deterministic baselines first, then randomised restarts (part
   order, rule, noisy choice of rotation) until the time budget is spent. The best
   layout wins: fewest sheets, then the emptiest last sheet, then the shortest nest.
@@ -43,6 +46,10 @@ from shapes import geom_to_json
 PAD_FACTOR = 0.75  # > sqrt(2)/2: any cell touched by the part has its centre inside the padded part
 RULES = ("xend", "env", "contact", "yend")
 ORDERS = ("area", "long", "perimeter", "width", "height")
+SMALL_PART = 0.08  # a part smaller than this fraction of the usable sheet is "small": it hunts for gaps
+SCRAP_K = 1        # free rectangles per sheet that count for the ranking: the biggest one (holes/pockets do not)
+DISPLAY_K = 2      # rectangles shown to the user per sheet
+BIG = 1e9          # damage to the biggest free rectangle outranks the placement rule
 
 
 @dataclass
@@ -62,6 +69,7 @@ class _Var:
     off: tuple
     geom: object
     ring: np.ndarray | None = None
+    ii: np.ndarray | None = None
 
 
 def _polys(g):
@@ -163,6 +171,78 @@ def _ring(v: _Var):
     return v.ring
 
 
+def scrap_thresholds(sheet_w, sheet_h):
+    """(min side, min area) a free rectangle needs to count as usable scrap - relative to the sheet."""
+    return 0.08 * min(sheet_w, sheet_h), 0.02 * sheet_w * sheet_h
+
+
+def _largest_rect(free):
+    """Largest all-True axis-aligned rectangle of a boolean grid: (area, x0, y0, x1, y1), half-open."""
+    ny, nx = free.shape
+    heights = [0] * nx
+    best = (0, 0, 0, 0, 0)
+    for y in range(ny):
+        row = free[y].tolist()
+        heights = [h + 1 if f else 0 for h, f in zip(heights, row)]
+        stack = []  # (start index, height)
+        for x in range(nx + 1):
+            h = heights[x] if x < nx else 0
+            start = x
+            while stack and stack[-1][1] >= h:
+                st, hh = stack.pop()
+                area = hh * (x - st)
+                if area > best[0]:
+                    best = (area, st, y - hh + 1, x, y + 1)
+                start = st
+            stack.append((start, h))
+    return best
+
+
+def _coarsen(free, f):
+    """Free map at 1/f resolution: a coarse cell is free only if all its fine cells are free."""
+    ny, nx = free.shape
+    cy, cx = ny // f, nx // f
+    return free[:cy * f, :cx * f].reshape(cy, f, cx, f).all(axis=(1, 3))
+
+
+def _top_rects(free, f, cell, sheet_w, sheet_h, k=SCRAP_K):
+    """The k largest disjoint clean rectangles of a free map that pass the size thresholds
+    (real units: (x, y, w, h))."""
+    min_side, min_area = scrap_thresholds(sheet_w, sheet_h)
+    coarse = _coarsen(free, f).copy()
+    out = []
+    for _ in range(k):
+        area, x0, y0, x1, y1 = _largest_rect(coarse)
+        if not area:
+            break
+        w, h = (x1 - x0) * f * cell, (y1 - y0) * f * cell
+        if min(w, h) < min_side or w * h < min_area:
+            break
+        out.append((x0 * f * cell, y0 * f * cell, w, h))
+        coarse[y0:y1, x0:x1] = False
+    return out
+
+
+def _integral(v: _Var):
+    if v.ii is None:
+        h, w = v.mask.shape
+        ii = np.zeros((h + 1, w + 1), dtype=np.int32)
+        ii[1:, 1:] = v.mask.cumsum(0).cumsum(1)
+        v.ii = ii
+    return v.ii
+
+
+def _overlap_map(v: _Var, rect, ny, nx):
+    """Cells of the mask that would fall inside `rect` (fine cells) for every position (ny x nx)."""
+    rx0, ry0, rx1, ry1 = rect
+    h, w = v.mask.shape
+    ii = _integral(v)
+    ox, oy = np.arange(nx), np.arange(ny)
+    ax0, ax1 = np.clip(rx0 - ox, 0, w), np.clip(rx1 - ox, 0, w)
+    ay0, ay1 = np.clip(ry0 - oy, 0, h), np.clip(ry1 - oy, 0, h)
+    return (ii[np.ix_(ay1, ax1)] - ii[np.ix_(ay0, ax1)] - ii[np.ix_(ay1, ax0)] + ii[np.ix_(ay0, ax0)]).astype(np.float64)
+
+
 class _Grid:
     def __init__(self, sheet_w, sheet_h, margin, spacing, cell):
         self.nx = int(math.ceil(sheet_w / cell))
@@ -175,12 +255,31 @@ class _Grid:
             self.occ[y0:y1, x0:x1] = 0.0
         self.occ_pad = None
         self.xc = self.yc = 0  # extent of the nest so far (cells)
+        self.cell = cell
+        self.f = max(1, round(max(self.nx, self.ny) / 160))  # coarse factor for free-space analysis
+        self.free_cells = self.free0 = int((self.occ == 0).sum())
+        self._rect = None
         self.sheet = Sheet(sheet_w, sheet_h)
 
-    def best(self, variants, rule="xend", rng=None, noise=0.0):
-        """Best feasible (variant_index, ox, oy) on this sheet, or None."""
+    def largest_rect(self):
+        """Largest clean free rectangle in fine cells (x0, y0, x1, y1), or None (cached until the next commit)."""
+        if self._rect is None:
+            area, x0, y0, x1, y1 = _largest_rect(_coarsen(self.occ == 0, self.f))
+            self._rect = (x0 * self.f, y0 * self.f, x1 * self.f, y1 * self.f) if area else ()
+        return self._rect or None
+
+    def scrap_rects(self, k=SCRAP_K):
+        return _top_rects(self.occ == 0, self.f, self.cell, self.sheet.width, self.sheet.height, k)
+
+    def best(self, variants, rule="xend", rng=None, noise=0.0, protect=False):
+        """Best feasible (variant_index, ox, oy, damage) on this sheet, or None.
+
+        With protect=True, positions that eat into the sheet's largest free rectangle
+        are penalised (damage = cells taken from it); damage outranks the placement rule.
+        """
         if rule == "contact" and self.occ_pad is None:
             self.occ_pad = np.pad(self.occ, 1, constant_values=1.0)
+        rect = self.largest_rect() if protect else None
         cands = []
         for k, v in enumerate(variants):
             h, w = v.mask.shape
@@ -202,9 +301,13 @@ class _Grid:
                 score = -contact + 1e-3 * (xs + w) / self.nx + 1e-6 * ys / self.ny
             else:  # xend
                 score = (xs + w) * (self.ny + 1.0) + ys
+            score = np.asarray(score, dtype=np.float64)
+            dmg = _overlap_map(v, rect, *feas.shape) if rect else None
+            if dmg is not None:
+                score = score + BIG * dmg
             score = np.where(feas, score, np.inf)
             idx = np.unravel_index(np.argmin(score), score.shape)
-            cands.append((float(score[idx]), k, int(idx[1]), int(idx[0])))
+            cands.append((float(score[idx]), k, int(idx[1]), int(idx[0]), float(dmg[idx]) if dmg is not None else 0.0))
         if not cands:
             return None
         cands.sort()
@@ -216,6 +319,8 @@ class _Grid:
         h, w = m.shape
         self.occ[oy:oy + h, ox:ox + w][m] = 1.0
         self.occ_pad = None
+        self._rect = None
+        self.free_cells = int((self.occ == 0).sum())
         self.xc = max(self.xc, ox + w)
         self.yc = max(self.yc, oy + h)
 
@@ -331,26 +436,44 @@ def _compose(opts, mode):
 
 
 # -------------------------------------------------------------------- decode
-def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rule, rng=None, noise=0.0):
+def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rule, rng=None, noise=0.0,
+               protect=False):
     grids: list[_Grid] = []
     for part in jobs:
         variants = _variants(part, rot_step, cell, pad)
         c = part.geom.centroid
         members = _flat_members(part)
+        min_cells = min(int(v.mask.sum()) for v in variants)
         for _ in range(int(part.qty)):
             placed = None
-            for g in grids:
-                placed = g.best(variants, rule, rng, noise)
-                if placed:
-                    grid = g
-                    break
+            small = protect and grids and min_cells <= SMALL_PART * grids[0].free0
+            if small:  # hunt for a gap on ANY sheet that does not cut into that sheet's biggest free rectangle
+                found = None
+                for g in grids:
+                    if g.free_cells < min_cells:
+                        continue
+                    cand = g.best(variants, rule, rng, noise, protect=True)
+                    if cand is None:
+                        continue
+                    if found is None or cand[3] < found[1][3]:
+                        found = (g, cand)
+                    if cand[3] == 0:
+                        break
+                if found:
+                    grid, placed = found
+            else:
+                for g in grids:
+                    placed = g.best(variants, rule, rng, noise, protect=protect)
+                    if placed:
+                        grid = g
+                        break
             if not placed:
                 grid = _Grid(sheet_w, sheet_h, margin, spacing, cell)
-                placed = grid.best(variants, rule, rng, noise)
+                placed = grid.best(variants, rule, rng, noise, protect=protect)
                 if not placed:
                     raise ValueError(f"Part '{part.name}' does not fit on the sheet")
                 grids.append(grid)
-            k, ox, oy = placed
+            k, ox, oy = placed[:3]
             v = variants[k]
             grid.commit(v.mask, ox, oy)
             for name, mg in members:
@@ -363,13 +486,44 @@ def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rul
                 grid.sheet.placements.append(Placement(
                     name, x0, y0, x1 - x0, y1 - y0, v.ang % 360 != 0, float(v.ang),
                     float(tg.area), geom_to_json(tg)))
+    for g in grids:
+        g.sheet.scrap = g.scrap_rects()
     return [g.sheet for g in grids]
 
 
+def free_rectangles(sheet, margin=0.0, k=DISPLAY_K):
+    """The k largest clean (axis-aligned) free rectangles of a finished sheet, [(x, y, w, h)]."""
+    cell = max(sheet.width, sheet.height) / 700.0
+    nx, ny = int(math.ceil(sheet.width / cell)), int(math.ceil(sheet.height / cell))
+    occ = np.ones((ny, nx), dtype=bool)
+    x0, x1 = max(0, math.ceil(margin / cell)), min(nx, math.floor((sheet.width - margin) / cell))
+    y0, y1 = max(0, math.ceil(margin / cell)), min(ny, math.floor((sheet.height - margin) / cell))
+    if x1 <= x0 or y1 <= y0:
+        return []
+    occ[y0:y1, x0:x1] = False
+    from shapes import geom_from_json
+    from shapely.geometry import box
+    for p in sheet.placements:
+        g = geom_from_json(p.polys) if p.polys else box(p.x, p.y, p.x + p.w, p.y + p.h)
+        m, (minx, miny) = _mask(g, cell, 1.25 * cell)  # conservative: every touched cell is blocked
+        ox, oy = int(math.floor(minx / cell)), int(math.floor(miny / cell))
+        h, w = m.shape
+        sx0, sy0 = max(0, ox), max(0, oy)
+        sx1, sy1 = min(nx, ox + w), min(ny, oy + h)
+        if sx1 > sx0 and sy1 > sy0:
+            occ[sy0:sy1, sx0:sx1] |= m[sy0 - oy:sy1 - oy, sx0 - ox:sx1 - ox]
+    f = max(1, round(max(nx, ny) / 160))
+    return _top_rects(~occ, f, cell, sheet.width, sheet.height, k)
+
+
 def _fitness(sheets):
+    """Smaller is better: fewest sheets, then the most usable (regular) scrap, then the emptiest
+    last sheet, then the shortest nest."""
     last = sheets[-1]
+    sheet_area = last.width * last.height
+    scrap = sum(r[2] * r[3] for s in sheets for r in s.scrap) / sheet_area
     extent = max((p.x + p.w) for p in last.placements)
-    return (len(sheets), round(last.used_area / (last.width * last.height), 3), extent)
+    return (len(sheets), -round(scrap, 3), round(last.used_area / sheet_area, 3), extent)
 
 
 def _order(parts, how, rng=None):
@@ -412,9 +566,10 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
     if any_cluster:
         sets["paired"] = _compose(opts, "full")
 
-    plan = []  # deterministic baselines, most promising first: (mode, rule, order, noise)
-    for name in (["paired"] if any_cluster else []) + ["plain"]:
-        plan.append((name, "xend", "area", 0.0))
+    plan = []  # deterministic baselines, most promising first: (mode, rule, order, noise, protect)
+    for protect in (False, True):
+        for name in (["paired"] if any_cluster else []) + ["plain"]:
+            plan.append((name, "xend", "area", 0.0, protect))
     n_base_min = len(plan)  # always run at least these
     if any_cluster:  # mix of pairs and singles: k pairs for the biggest paired part, others full
         big = max(paired_idx, key=lambda i: opts[i]["part"].geom.area * int(opts[i]["part"].qty))
@@ -424,10 +579,10 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
             if 1 <= k < maxk:
                 mode = [int(o["part"].qty) // 2 if o["pair"] is not None else 0 for o in opts]
                 mode[big] = k
-                plan.append((tuple(mode), "xend", "area", 0.0))
+                plan.append((tuple(mode), "xend", "area", 0.0, True))
     for name in (["paired"] if any_cluster else []) + ["plain"]:
         for rule in ("env", "contact", "yend"):
-            plan.append((name, rule, "area", 0.0))
+            plan.append((name, rule, "area", 0.0, True))
 
     best, best_fit, errors, runs = None, None, [], 0
     i = 0
@@ -436,7 +591,7 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
         if i < len(plan):
             if i >= n_base_min and elapsed >= time_limit:
                 break
-            setname, rule, order, noise = plan[i]
+            setname, rule, order, noise, protect = plan[i]
         else:
             if elapsed >= time_limit:
                 break
@@ -448,12 +603,13 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
             rule = rng.choice(RULES)
             order = rng.choice(ORDERS + ("shuffle",))
             noise = rng.choice((0.0, 0.1, 0.25))
+            protect = rng.random() < 0.65
         i += 1
         base_jobs = sets[setname] if isinstance(setname, str) else _compose(opts, list(setname))
         jobs = _order(base_jobs, order, rng)
         try:
             res = _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rule,
-                             rng if noise else None, noise)
+                             rng if noise else None, noise, protect)
         except ValueError as e:
             errors.append(e)
             if len(errors) > 3 + len(plan) and best is None:
@@ -464,7 +620,8 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
         if best is None or fit < best_fit:
             best, best_fit = res, fit
             if info is not None:
-                info.update(set=setname if isinstance(setname, str) else "mixed", rule=rule, order=order, noise=noise)
+                info.update(set=setname if isinstance(setname, str) else "mixed", rule=rule, order=order, noise=noise,
+                            protect=protect)
         if progress:
             frac = min(1.0, (time.monotonic() - t0) / max(time_limit, 1e-9)) if time_limit else min(1.0, i / n_base_min)
             progress(frac, f"layouts tried: {runs} · best: {best_fit[0]} sheet(s), "
