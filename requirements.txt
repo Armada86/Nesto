@@ -1,5 +1,6 @@
 streamlit>=1.50
 pandas
+openpyxl
 numpy
 scipy
 shapely>=2.0
