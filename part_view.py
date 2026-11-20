@@ -1,6 +1,7 @@
 """Dimensioned drawing of a single part (outline, holes, overall size, edge lengths, diameters)."""
 from __future__ import annotations
 
+import io
 import math
 from collections import Counter
 
@@ -105,7 +106,8 @@ def draw_part(geom, title="", qty_text=""):
     minx, miny, maxx, maxy = geom.bounds
     W, H = maxx - minx, maxy - miny
     m = max(W, H)
-    fig, ax = plt.subplots(figsize=(7.5, 5.6))
+    fig = plt.figure(figsize=(7.5, 5.6))                       # one fixed canvas for every part
+    ax = fig.add_axes([0.02, 0.07, 0.96, 0.86])                 # equal aspect then scales the part to fit it
     for poly in geom_to_json(geom):
         ax.add_patch(_poly_patch(poly, facecolor="#cfe0f1", edgecolor="#1f2937", lw=1.6))
 
@@ -145,8 +147,21 @@ def draw_part(geom, title="", qty_text=""):
         fig.text(0.02, 0.02, "Holes: " + ",  ".join(summary), fontsize=10, color="#b45309")
     ax.set_xlim(minx - 0.12 * m, maxx + 0.30 * m)
     ax.set_ylim(miny - 0.30 * m, maxy + 0.12 * m)
-    ax.set_aspect("equal")
+    ax.set_aspect("equal", adjustable="box", anchor="C")
     ax.axis("off")
     if title:
         ax.set_title(title + (f"   {qty_text}" if qty_text else ""), fontsize=13, weight="bold")
     return fig
+
+
+PNG_SIZE = (825, 616)  # pixels of every part drawing (7.5 x 5.6 in at 110 dpi)
+
+
+def part_png(geom, title="", dpi=110) -> bytes:
+    """The drawing as a PNG of ALWAYS the same size - small and huge parts are scaled to the same box
+    (no tight cropping, which would stretch tall or wide parts to the full page width)."""
+    fig = draw_part(geom, title)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, facecolor="white")
+    plt.close(fig)
+    return buf.getvalue()

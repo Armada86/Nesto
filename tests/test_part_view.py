@@ -68,3 +68,28 @@ def test_l_shape_and_multipiece_do_not_crash():
     fig = draw_part(l); assert "200" in texts(fig) and "150" in texts(fig); plt.close(fig)
     two = unary_union([box(0, 0, 50, 50), box(100, 0, 150, 50)])
     fig = draw_part(two); plt.close(fig)
+
+
+def test_every_part_is_drawn_in_the_same_box():
+    """Tall/narrow, wide/flat, tiny and huge parts must all give a PNG of identical pixel size."""
+    import io
+    from PIL import Image
+    from shapely.geometry import Polygon
+    from part_view import PNG_SIZE, part_png
+    tall = Polygon([(0, 0), (150, 0), (110, 1320), (40, 1320)])          # like the part in the bug report
+    parts = [tall, box(0, 0, 2400, 12), box(0, 0, 3, 3), build_shape("circle", 60), build_shape("triangle", 5000, 4000)]
+    sizes = {Image.open(io.BytesIO(part_png(g, "x"))).size for g in parts}
+    assert sizes == {PNG_SIZE}
+
+
+def test_tall_part_is_scaled_down_not_cropped():
+    """The drawing of a very tall part keeps all its dimension labels inside the canvas."""
+    from shapely.geometry import Polygon
+    tall = Polygon([(0, 0), (150, 0), (110, 1320), (40, 1320)])
+    fig = draw_part(tall)
+    ax = fig.axes[0]
+    x0, x1 = ax.get_xlim(); y0, y1 = ax.get_ylim()
+    for t in ax.texts:
+        x, y = t.get_position()
+        assert x0 <= x <= x1 and y0 <= y <= y1
+    plt.close(fig)

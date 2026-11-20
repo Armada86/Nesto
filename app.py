@@ -1,7 +1,6 @@
 import json
 import time
 
-import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
@@ -10,7 +9,7 @@ from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
 from nesting_poly import PolyPart, free_rectangles, nest_polygons
-from part_view import draw_part, fmt as fmt_dim, part_stats
+from part_view import fmt as fmt_dim, part_png, part_stats
 from render import draw_sheet
 from step_io import read_step
 from shapes import SHAPES, geom_to_json, part_geometry, stored_geometry
@@ -297,17 +296,16 @@ with tab_lib:
             g = part_geometry(p)
             stats = part_stats(g)
             status = (f"{p['qty']} pcs in the nesting list" if p["qty"] > 0 else "not in the nesting list (quantity 0)")
-            fig = draw_part(g, p["name"])
-            st.pyplot(fig)
-            plt.close(fig)
+            st.image(part_png(g, p["name"]))                  # fixed-size box for every part
             st.caption(f"**{p['name']}** · {status} · "
                        + ("imported drawing" if p["shape"] == "dxf" else f"typed dimensions ({p['shape']})")
                        + (" · can be rotated" if p["rotate"] else " · fixed orientation"))
-            c1, c2, c3, c4 = st.columns([2.2, 1.3, 1.3, 0.9])
-            c1.metric("Overall size", f"{fmt_dim(stats['width'])} × {fmt_dim(stats['height'])}")
-            c2.metric("Area", f"{stats['area']:,.0f}")
-            c3.metric("Cut length", f"{stats['cut_length']:,.0f}")
-            c4.metric("Holes", len(stats["holes"]))
+            r1a, r1b = st.columns(2)
+            r2a, r2b = st.columns(2)
+            r1a.metric("Overall size", f"{fmt_dim(stats['width'])} × {fmt_dim(stats['height'])}")
+            r1b.metric("Area", f"{stats['area']:,.0f}")
+            r2a.metric("Cut length", f"{stats['cut_length']:,.0f}")
+            r2b.metric("Holes", len(stats["holes"]))
             st.caption("Sizes are in the units of your drawing / typed dimensions (usually mm).")
 
 run = st.button("▶ Nest", type="primary")
