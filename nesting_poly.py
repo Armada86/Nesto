@@ -53,6 +53,7 @@ ORDERS = ("area", "long", "perimeter", "width", "height")
 SMALL_PART = 0.08  # a part smaller than this fraction of the usable sheet is "small": it hunts for gaps
 REGULAR = 0.7      # a free region is "regular scrap" if its biggest rectangle fills >= 70 % of the region
 MAX_SCRAP = 4      # regular scrap rectangles tracked per sheet
+MIN_PIECE_SCORE = 0.02  # a scrap piece counts as squarish scrap in the ranking from 2 % of a sheet (area x squareness)
 BIG = 1e9          # damage to the biggest free rectangle outranks the placement rule
 
 
@@ -287,6 +288,8 @@ class _Grid:
         self.f = max(1, round(max(self.nx, self.ny) / 160))  # coarse factor for free-space analysis
         self.free_cells = self.free0 = int((self.occ == 0).sum())
         self._rect = None
+        self._comps = None
+        self.gap_cache = {}  # per part type: best gap candidates, valid until this sheet changes
         self.sheet = Sheet(sheet_w, sheet_h)
 
     def _regular(self, free=None):
@@ -322,33 +325,37 @@ class _Grid:
         free[oy:oy + h, ox:ox + w] &= ~mask
         return self.scrap_value() - self.scrap_value(free)
 
-    def best(self, variants, rule="xend", rng=None, noise=0.0, protect=False):
+    def best(self, variants, rule="xend", rng=None, noise=0.0, protect=False, window=None):
         """Best feasible (variant_index, ox, oy, damage) on this sheet, or None.
 
         With protect=True, positions that eat into the sheet's regular scrap are penalised
         (damage = cells taken from it); damage outranks the placement rule.
+        window=(x0, y0, x1, y1) in fine cells restricts the search to that part of the sheet.
         """
         if self.occ_pad is None:  # also needed to break ties by contact (see below)
             self.occ_pad = np.pad(self.occ, 1, constant_values=1.0)
-        rects = self.protected() if protect else None
+        wx0, wy0, wx1, wy1 = window if window else (0, 0, self.nx, self.ny)
+        occ = self.occ[wy0:wy1, wx0:wx1]
+        occ_pad = self.occ_pad[wy0:wy1 + 2, wx0:wx1 + 2]
+        rects = [(a - wx0, b - wy0, c - wx0, d - wy0) for a, b, c, d in self.protected()] if protect else None
         cands = []
         for k, v in enumerate(variants):
             h, w = v.mask.shape
-            if h > self.ny or w > self.nx:
+            if h > occ.shape[0] or w > occ.shape[1]:
                 continue
-            ov = fftconvolve(self.occ, v.mask[::-1, ::-1].astype(np.float32), mode="valid")
+            ov = fftconvolve(occ, v.mask[::-1, ::-1].astype(np.float32), mode="valid")
             feas = ov < 0.5
             if not feas.any():
                 continue
-            xs = np.arange(feas.shape[1])[None, :]
-            ys = np.arange(feas.shape[0])[:, None]
+            xs = np.arange(feas.shape[1])[None, :] + wx0
+            ys = np.arange(feas.shape[0])[:, None] + wy0
             if rule == "yend":
                 score = (ys + h) * (self.nx + 1.0) + xs
             elif rule == "env":
                 score = np.maximum(self.xc, xs + w) * np.maximum(self.yc, ys + h) + 1e-3 * (xs + ys)
             elif rule == "contact":
                 ring = _ring(v)
-                contact = fftconvolve(self.occ_pad, ring[::-1, ::-1], mode="valid")
+                contact = fftconvolve(occ_pad, ring[::-1, ::-1], mode="valid")
                 score = -contact + 1e-3 * (xs + w) / self.nx + 1e-6 * ys / self.ny
             else:  # xend
                 score = (xs + w) * (self.ny + 1.0) + ys
@@ -361,8 +368,9 @@ class _Grid:
             oy, ox = int(idx[0]), int(idx[1])
             # equal scores (e.g. a triangle and its mirror image, same bounding box): the orientation that touches
             # its neighbours / the sheet edge along more of its outline wins, so flat sides sit flush
-            touch = float((self.occ_pad[oy:oy + h + 2, ox:ox + w + 2] * _ring(v)).sum())
-            cands.append((float(score[idx]), -touch, k, ox, oy, float(dmg[idx]) if dmg is not None else 0.0))
+            touch = float((occ_pad[oy:oy + h + 2, ox:ox + w + 2] * _ring(v)).sum())
+            cands.append((float(score[idx]), -touch, k, ox + wx0, oy + wy0,
+                          float(dmg[idx]) if dmg is not None else 0.0))
         if not cands:
             return None
         cands.sort()
@@ -370,11 +378,28 @@ class _Grid:
             return cands[1][2:]
         return cands[0][2:]
 
+    def components(self, min_cells):
+        """Free regions of this sheet that could hold a part of `min_cells` cells: [(area in cells, window)],
+        smallest first. A region is a connected piece of free space (resolution: the coarse analysis grid)."""
+        if self._comps is None:
+            coarse = _coarsen(self.occ == 0, self.f)
+            lab, _ = label(coarse)
+            out = []
+            for k, sl in enumerate(find_objects(lab), 1):
+                area = int((lab[sl] == k).sum()) * self.f ** 2
+                x0, y0 = max(0, (sl[1].start - 1) * self.f), max(0, (sl[0].start - 1) * self.f)
+                x1, y1 = min(self.nx, (sl[1].stop + 1) * self.f), min(self.ny, (sl[0].stop + 1) * self.f)
+                out.append((area, (x0, y0, x1, y1)))
+            self._comps = sorted(out)
+        return [c for c in self._comps if c[0] >= min_cells]
+
     def commit(self, m, ox, oy):
         h, w = m.shape
         self.occ[oy:oy + h, ox:ox + w][m] = 1.0
         self.occ_pad = None
         self._rect = None
+        self._comps = None
+        self.gap_cache = {}
         self.free_cells = int((self.occ == 0).sum())
         self.xc = max(self.xc, ox + w)
         self.yc = max(self.yc, oy + h)
@@ -490,6 +515,42 @@ def _compose(opts, mode):
     return jobs
 
 
+def _small_part_spot(grids, variants, min_cells, rule, rng, noise):
+    """Where a SMALL part goes. Returns (grid, candidate) or None.
+
+    1. Free gaps first: every free region (connected free space) on every sheet where the part fits without
+       cutting into that sheet's regular scrap. The SMALLEST region wins - the tightest pocket, not the long
+       open strip - ties go to the earlier sheet.
+    2. No such gap anywhere: the spot that costs the least regular scrap (by squareness-weighted area)."""
+    gaps, key = [], (id(variants), rule)
+    for gi, g in enumerate(grids):
+        if g.free_cells < min_cells:
+            continue
+        found = None if noise else g.gap_cache.get(key)   # valid until this sheet receives a part
+        if found is None:
+            found = []
+            for area, window in g.components(min_cells):
+                cand = g.best(variants, rule, rng, noise, protect=True, window=window)
+                if cand is not None and cand[3] == 0:
+                    found.append((area, cand))
+            if not noise:
+                g.gap_cache[key] = found
+        gaps += [(area, gi, g, cand) for area, cand in found]
+    if gaps:
+        _, _, g, cand = min(gaps, key=lambda t: (t[0], t[1]))
+        return g, cand
+    options = []
+    for g in grids:
+        if g.free_cells < min_cells:
+            continue
+        cand = g.best(variants, rule, rng, noise, protect=True)
+        if cand is not None:
+            options.append((g, cand))
+    if not options:
+        return None
+    return min(options, key=lambda gc: gc[0].loss_if_placed(variants[gc[1][0]].mask, gc[1][1], gc[1][2]))
+
+
 # -------------------------------------------------------------------- decode
 def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rule, rng=None, noise=0.0,
                protect=False):
@@ -502,22 +563,10 @@ def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rul
         for _ in range(int(part.qty)):
             placed = None
             small = protect and grids and min_cells <= SMALL_PART * grids[0].free0
-            if small:  # hunt for a gap on ANY sheet that does not cut into that sheet's regular scrap
-                found, options = None, []
-                for g in grids:
-                    if g.free_cells < min_cells:
-                        continue
-                    cand = g.best(variants, rule, rng, noise, protect=True)
-                    if cand is None:
-                        continue
-                    if cand[3] == 0:        # a gap that costs no regular scrap at all
-                        found = (g, cand)
-                        break
-                    options.append((g, cand))
-                if not found and options:   # no free gap anywhere: take the spot that costs the least scrap
-                    found = min(options, key=lambda gc: gc[0].loss_if_placed(variants[gc[1][0]].mask, gc[1][1], gc[1][2]))
-                if found:
-                    grid, placed = found
+            if small:  # tuck it into the smallest gap on ANY sheet (see _small_part_spot)
+                spot = _small_part_spot(grids, variants, min_cells, rule, rng, noise)
+                if spot:
+                    grid, placed = spot
             else:
                 for g in grids:
                     placed = g.best(variants, rule, rng, noise, protect=protect)
@@ -697,8 +746,12 @@ def _fitness(sheets):
     last = sheets[-1]
     sheet_area = last.width * last.height
     rects = [r for s in sheets for r in s.scrap]
-    pieces = sorted((-round(scrap_score(r[2], r[3]) / sheet_area, 2) for r in rects))[:8]
-    areas = sorted((-round(r[2] * r[3] / sheet_area, 2) for r in rects))[:8]
+    # fixed length, padded with 0 = "no piece": a plain shorter tuple would compare as SMALLER (= better), so a
+    # layout without scrap would beat one with scrap
+    # only pieces worth something as squarish scrap count here (>= 2 % of a sheet); thin strips are ranked by length below
+    pieces = (sorted(-round(sc, 2) for sc in (scrap_score(r[2], r[3]) / sheet_area for r in rects)
+                     if sc >= MIN_PIECE_SCORE) + [0.0] * 8)[:8]
+    areas = (sorted(-round(r[2] * r[3] / sheet_area, 2) for r in rects) + [0.0] * 8)[:8]
     extent = max((p.x + p.w) for p in last.placements)
     edge = sum(s.free_edge for s in sheets)
     return (len(sheets), tuple(pieces), tuple(areas), round(edge / 500.0), round(_gravity(sheets), 2),
@@ -803,7 +856,7 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
                             protect=protect)
         if progress:
             frac = min(1.0, (time.monotonic() - t0) / max(time_limit, 1e-9)) if time_limit else min(1.0, i / n_base_min)
-            big = f" · best scrap piece ≈ {-best_fit[1][0]:.0%} of a sheet" if best_fit[1] else ""
+            big = f" · best scrap piece ≈ {-best_fit[1][0]:.0%} of a sheet" if best_fit[1][0] else ""
             progress(frac, f"layouts tried: {runs} · best: {best_fit[0]} sheet(s){big}")
     if best is None:
         raise errors[0]

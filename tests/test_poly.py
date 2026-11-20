@@ -350,3 +350,62 @@ def test_lower_layout_wins_a_tie():
     from nesting_poly import _fitness
     low = Sheet(1000, 500, [Placement("p", 0, 10, 100, 100, False)]); high = Sheet(1000, 500, [Placement("p", 0, 380, 100, 100, False)])
     assert _fitness([low]) < _fitness([high])
+
+
+def _grid_with(parts, w=1000, h=500, margin=5, spacing=3, cell=1.0):
+    """A _Grid with the given (polygon, x, y) parts committed at fixed positions."""
+    import nesting_poly as npl
+    g = npl._Grid(w, h, margin, spacing, cell)
+    pad = spacing / 2 + npl.PAD_FACTOR * cell
+    for geom, x, y in parts:
+        from shapes import normalize
+        v = npl._variants(PolyPart("p", normalize(geom), 1, rotate=False), 90, cell, pad)[0]
+        g.commit(v.mask, int(round((x - pad) / cell)), int(round((y - pad) / cell)))
+    return g
+
+
+def test_small_part_takes_the_smallest_gap_not_the_big_open_region():
+    """Rule: small parts go to the smallest scrap area (tight pocket), not into a big/long scrap region."""
+    import nesting_poly as npl
+    cell, pad = 1.0, 1.5 + 0.75
+    plate_sheet = _grid_with([(box(0, 0, 980, 380), 10, 10)])                       # sheet 1: leaves a regular strip on top
+    frame = box(0, 0, 300, 300).difference(box(100, 100, 200, 200))                 # sheet 2: a frame with a 100 x 100 hole ...
+    wedge = Polygon([(0, 0), (600, 0), (0, 300)])                                  # ... and a triangle (big irregular open region)
+    pocket_sheet = _grid_with([(frame, 10, 10), (wedge, 330, 10)])
+    small = PolyPart("s", box(0, 0, 30, 30), 1, rotate=False)
+    variants = npl._variants(small, 90, cell, pad)
+    min_cells = min(int(v.mask.sum()) for v in variants)
+    g, cand = npl._small_part_spot([plate_sheet, pocket_sheet], variants, min_cells, "xend", None, 0.0)
+    assert g is pocket_sheet
+    k, ox, oy, dmg = cand
+    assert dmg == 0
+    # ... and inside the 100 x 100 hole of the frame (x 110..210, y 110..210), the smallest region
+    assert 100 <= ox and ox + variants[k].mask.shape[1] <= 220 and 100 <= oy and oy + variants[k].mask.shape[0] <= 220
+
+
+def test_gap_cache_is_dropped_when_a_sheet_changes():
+    import nesting_poly as npl
+    g = _grid_with([(box(0, 0, 400, 300), 10, 10)])
+    small = PolyPart("s", box(0, 0, 30, 30), 1, rotate=False)
+    variants = npl._variants(small, 90, 1.0, 2.25)
+    mc = min(int(v.mask.sum()) for v in variants)
+    first = npl._small_part_spot([g], variants, mc, "xend", None, 0.0)
+    assert g.gap_cache                                            # cached for the next copy of the same part
+    k, ox, oy, _ = first[1]
+    g.commit(variants[k].mask, ox, oy)
+    assert not g.gap_cache                                        # sheet changed: stale candidates are gone
+    second = npl._small_part_spot([g], variants, mc, "xend", None, 0.0)
+    assert second[1][1:3] != (ox, oy)                             # the next copy goes to a different place
+
+
+def test_layout_with_scrap_beats_layout_without_and_more_pieces_are_not_worse():
+    """Regression: tuples of different length compared by prefix, so () beat (-0.2, ...) - 'no scrap' won."""
+    from nesting import Placement, Sheet
+    from nesting_poly import _fitness
+    def sheet(scrap):
+        s = Sheet(1000, 500, [Placement("p", 0, 0, 10, 10, False)]); s.scrap = scrap; return s
+    none = [sheet([])]
+    one = [sheet([(0, 0, 400, 400)])]
+    two = [sheet([(0, 0, 400, 400), (500, 0, 300, 300)])]
+    assert _fitness(one) < _fitness(none)          # having scrap is better than having none
+    assert _fitness(two) < _fitness(one)           # an extra piece never makes a layout worse
