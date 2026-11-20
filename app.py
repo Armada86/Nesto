@@ -7,7 +7,7 @@ import db
 from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
-from nesting_poly import PolyPart, nest_polygons
+from nesting_poly import PolyPart, free_rectangles, nest_polygons
 from render import draw_sheet
 from step_io import read_step
 from shapes import SHAPES, geom_to_json, part_geometry, stored_geometry
@@ -304,13 +304,18 @@ if "result" in st.session_state:
     info = st.session_state.get("nest_info")
     if info:
         st.caption(f"Best of {info['runs']} layouts in {info['seconds']:.0f}s "
-                   f"({'paired parts' if info['set'] == 'paired' else 'single parts'}, placement rule: {info['rule']}).")
+                   f"({'paired parts' if info['set'] == 'paired' else 'single parts'}, placement rule: {info['rule']}"
+                   f"{', scrap-aware' if info.get('protect') else ''}). Green dashed boxes = usable scrap.")
     m1, m2, m3 = st.columns(3)
     m1.metric("Sheets", s["sheets"])
     m2.metric("Parts placed", s["parts"])
     m3.metric("Utilization", f"{s['utilization']:.1%}")
+    key = (hash(json.dumps(st.session_state.result)), margin)  # scrap analysis is cached per result
+    if st.session_state.get("scrap_key") != key:
+        st.session_state.scrap_key = key
+        st.session_state.scrap = [free_rectangles(sh, margin) for sh in sheets]
     for i, sh in enumerate(sheets, 1):
-        st.pyplot(draw_sheet(sh, f"Sheet {i}"))
+        st.pyplot(draw_sheet(sh, f"Sheet {i}", st.session_state.scrap[i - 1]))
     st.subheader("Export")
     labels = st.checkbox("Include part names as text (layer LABELS)", value=True)
     d1, d2, d3 = st.columns(3)
