@@ -12,8 +12,7 @@ from render import draw_sheet
 from step_io import read_step
 from shapes import SHAPES, geom_to_json, part_geometry, stored_geometry
 
-st.set_page_config(page_title="Nesto – 2D Nesting", layout="wide")
-st.title("Nesto – 2D nesting")
+st.set_page_config(page_title="Nesto – 2D Nesting", layout="wide", page_icon="🧩")
 
 # ---------- database ----------
 if not db.get_url():
@@ -29,36 +28,126 @@ ROT_STEPS = {"None": 0, "90°": 90, "45°": 45, "30°": 30, "15°": 15}
 PRECISION = {"Fast": 500, "Balanced": 800, "Fine": 1400}
 EFFORT = {"Quick": 0, "Normal": 15, "Thorough": 60}  # seconds of extra search for irregular parts
 
-# ---------- project selection ----------
-with st.sidebar:
-    st.header("Project")
-    projects = db.list_projects()
-    names = {p["name"]: p["id"] for p in projects}
-    choice = st.selectbox("Open project", ["— new —"] + list(names))
-    if choice == "— new —":
-        new_name = st.text_input("New project name")
-        if st.button("Create") and new_name.strip():
-            db.create_project(new_name.strip())
+# settings stored with every project (widget keys)
+DEFAULTS = {"sheet_w": 2500.0, "sheet_h": 1250.0, "margin": 5.0, "spacing": 3.0,
+            "rot_label": "90°", "prec_label": "Balanced", "effort_label": "Normal"}
+for _k, _v in DEFAULTS.items():
+    st.session_state.setdefault(_k, _v)
+
+
+# ---------- project handling ----------
+def open_project(pid: int | None):
+    """Make `pid` the open project (None = close). Settings are applied before the widgets are drawn."""
+    for k in ("result", "nest_info", "parts", "loaded_pid"):
+        st.session_state.pop(k, None)
+    st.session_state.pid = pid
+    if pid is None:
+        st.query_params.clear()
+        st.session_state.pending_settings = {}
+        return
+    st.session_state.pending_settings = (db.get_project(pid) or {}).get("settings") or {}
+    st.query_params["project"] = str(pid)
+
+
+@st.dialog("New project")
+def new_project_dialog():
+    name = st.text_input("Project name", placeholder="e.g. Job 1042 – brackets")
+    if st.button("Create project", type="primary", width="stretch"):
+        name = name.strip()
+        if not name:
+            st.error("Please enter a name.")
+        elif db.project_exists(name):
+            st.error("A project with this name already exists.")
+        else:
+            open_project(db.create_project(name))
             st.rerun()
-        st.info("Create or select a project to start.")
-        st.stop()
-    pid = names[choice]
-    if st.button("Delete project"):
-        db.delete_project(pid)
+
+
+@st.dialog("Load project")
+def load_project_dialog():
+    projects = db.list_projects()
+    if not projects:
+        st.info("There are no projects yet. Create one with **New**.")
+        return
+    labels = {p["name"]: p["id"] for p in projects}
+    current_name = st.session_state.get("pid_name")
+    idx = list(labels).index(current_name) if current_name in labels else 0
+    choice = st.selectbox("Select a project", list(labels), index=idx)
+    if st.button("Open project", type="primary", width="stretch"):
+        open_project(labels[choice])
         st.rerun()
 
-    st.header("Sheet")
-    sheet_w = st.number_input("Width", min_value=1.0, value=2500.0, step=10.0)
-    sheet_h = st.number_input("Height", min_value=1.0, value=1250.0, step=10.0)
-    margin = st.number_input("Edge margin", min_value=0.0, value=5.0, step=1.0)
-    spacing = st.number_input("Part spacing (kerf)", min_value=0.0, value=3.0, step=0.5)
 
-    st.header("Nesting")
-    rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), value="90°",
+@st.dialog("Delete project")
+def delete_project_dialog(pid: int, name: str):
+    st.warning(f"Delete **{name}** with all its parts and nesting history? This cannot be undone.")
+    d1, d2 = st.columns(2)
+    if d1.button("Cancel", width="stretch"):
+        st.rerun()
+    if d2.button("Delete", type="primary", width="stretch"):
+        db.delete_project(pid)
+        open_project(None)
+        st.rerun()
+
+
+# reopen the project from the page address after a browser reload
+if "pid" not in st.session_state:
+    qp = st.query_params.get("project")
+    if qp and str(qp).isdigit() and db.get_project(int(qp)):
+        open_project(int(qp))
+    else:
+        st.session_state.pid = None
+if "pending_settings" in st.session_state:  # apply stored settings before the widgets exist
+    cfg = st.session_state.pop("pending_settings") or {}
+    for k, default in DEFAULTS.items():
+        st.session_state[k] = cfg.get(k, default)
+
+pid = st.session_state.pid
+proj = db.get_project(pid) if pid else None
+if pid and not proj:  # deleted elsewhere
+    open_project(None)
+    st.rerun()
+st.session_state.pid_name = proj["name"] if proj else None
+
+# ---------- sidebar ----------
+with st.sidebar:
+    st.markdown("## 🧩 Nesto")
+    st.caption("2D nesting")
+    if proj:
+        st.markdown(f"**{proj['name']}**")
+    else:
+        st.markdown("_No project open_")
+    r1a, r1b = st.columns(2)
+    r2a, r2b = st.columns(2)
+    if r1a.button("New", icon=":material/note_add:", width="stretch"):
+        new_project_dialog()
+    if r1b.button("Load", icon=":material/folder_open:", width="stretch"):
+        load_project_dialog()
+    save_clicked = r2a.button("Save", icon=":material/save:", type="primary", width="stretch", disabled=not proj)
+    if r2b.button("Delete", icon=":material/delete:", width="stretch", disabled=not proj):
+        delete_project_dialog(pid, proj["name"])
+
+if not proj:
+    st.title("Nesto – 2D nesting")
+    st.info("Start a new project with **New**, or open an existing one with **Load** (left menu).")
+    st.stop()
+
+st.title(f"Nesto – {proj['name']}")
+
+with st.sidebar:
+    st.divider()
+    st.subheader("Sheet")
+    sheet_w = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_w")
+    sheet_h = st.number_input("Height", min_value=1.0, step=10.0, key="sheet_h")
+    margin = st.number_input("Edge margin", min_value=0.0, step=1.0, key="margin")
+    spacing = st.number_input("Part spacing (kerf)", min_value=0.0, step=0.5, key="spacing")
+
+    st.subheader("Nesting")
+    rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), key="rot_label",
                                  help="Finer steps pack irregular shapes better but take longer.")
-    prec_label = st.select_slider("Precision (irregular shapes)", list(PRECISION), value="Balanced",
+    prec_label = st.select_slider("Precision (irregular shapes)", list(PRECISION), key="prec_label",
                                   help="Finer = tighter packing, slower.")
-    effort_label = st.select_slider("Search effort (irregular shapes)", list(EFFORT), value="Normal",
+    effort_label = st.select_slider("Search effort (irregular shapes)", list(EFFORT), key="effort_label",
                                     help="Quick = one pass. Normal / Thorough keep trying many different layouts "
                                          "(pairing, placement rules, random restarts) for 15 / 60 seconds and keep the best.")
 
@@ -147,12 +236,13 @@ with tab_dxf:
             db.save_parts(pid, parts_state)
             st.rerun()
 
-c1, c2 = st.columns(2)
-if c1.button("💾 Save parts"):
+run = st.button("▶ Nest", type="primary")
+
+if save_clicked:  # sidebar Save: parts + sheet/nesting settings of the open project
     st.session_state.parts = current
     db.save_parts(pid, current)
-    st.success(f"Saved {len(current)} parts")
-run = c2.button("▶ Nest", type="primary")
+    db.save_settings(pid, {k: st.session_state[k] for k in DEFAULTS})
+    st.toast(f"Saved “{proj['name']}” – {len(current)} parts and settings", icon=":material/check_circle:")
 
 
 # ---------- nesting ----------
@@ -199,7 +289,8 @@ def _sheets_from(result):
 
 
 with st.sidebar:
-    st.header("History")
+    st.divider()
+    st.subheader("History")
     runs = db.list_runs(pid)
     labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.0%}": r["id"] for r in runs}
     if labels:

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS parts (
     outline JSONB
 );
 ALTER TABLE parts ADD COLUMN IF NOT EXISTS shape TEXT NOT NULL DEFAULT 'rectangle';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS settings JSONB;
 CREATE TABLE IF NOT EXISTS nest_runs (
     id SERIAL PRIMARY KEY,
     project_id INT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -74,6 +75,22 @@ def create_project(name: str) -> int:
             (name,),
         ).fetchone()
         return row["id"]
+
+
+def project_exists(name: str) -> bool:
+    with connect() as c:
+        return c.execute("SELECT 1 FROM projects WHERE lower(name)=lower(%s)", (name,)).fetchone() is not None
+
+
+def get_project(pid: int):
+    """{"id", "name", "settings"} or None."""
+    with connect() as c:
+        return c.execute("SELECT id, name, settings FROM projects WHERE id=%s", (pid,)).fetchone()
+
+
+def save_settings(pid: int, settings: dict):
+    with connect() as c:
+        c.execute("UPDATE projects SET settings=%s WHERE id=%s", (json.dumps(settings), pid))
 
 
 def delete_project(pid: int):
