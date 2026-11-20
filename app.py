@@ -309,7 +309,18 @@ with tab_lib:
             st.caption("Sizes are in the units of your drawing / typed dimensions (usually mm).")
 
 with tab_table:
-    run = st.button("▶ Nest", type="primary")
+    st.markdown("""
+<style>
+/* big green Nest button, centred */
+.st-key-nest_btn { width: 100% !important; display: flex !important; justify-content: center !important; margin: 0.6rem 0 1.2rem; }
+.st-key-nest_btn [data-testid="stButton"] { width: auto !important; flex: 0 0 auto !important; }
+.st-key-nest_btn button { width: auto !important; background-color: #16a34a !important; border: 2px solid #15803d !important; color: #fff !important;
+    min-height: 5rem !important; padding: 0 2.6rem !important; border-radius: 0.9rem !important; }
+.st-key-nest_btn button p { font-size: 1.9rem !important; font-weight: 600 !important; }
+.st-key-nest_btn button:hover { background-color: #15803d !important; border-color: #166534 !important; }
+.st-key-nest_btn button:active { background-color: #166534 !important; }
+</style>""", unsafe_allow_html=True)
+    run = st.button("▶ Nest", key="nest_btn", type="primary")
 
 if save_clicked:  # sidebar Save: sheet/nesting settings first (small and safe), then the parts
     snap = settings_snapshot()
