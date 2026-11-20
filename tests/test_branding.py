@@ -6,7 +6,7 @@ import branding
 
 def test_header_has_logo_title_and_project_name_below():
     h = branding.header_html("2416-Cladding Above Canopy")
-    assert "<svg" in h and ">Nesto<" in h and "2416-Cladding Above Canopy" in h
+    assert "🧩" in h and ">Nesto<" in h and "2416-Cladding Above Canopy" in h
     assert h.index("nesto-title") < h.index("nesto-sub") < h.index("2416-Cladding")      # title first, project name below
 
 
@@ -20,9 +20,7 @@ def test_header_without_subtitle_and_small_variant():
     assert "nesto-head small" in branding.header_html("2D nesting", size="small")
 
 
-def test_favicon_is_a_64px_image_with_the_brand_colour():
-    img = branding.favicon()
-    assert img.size == (64, 64)
-    assert img.getpixel((32, 3))[:3] == (22, 163, 74)           # the green tile (top edge, between the white parts)
-    assert img.getpixel((0, 0))[3] == 0                         # rounded corner: transparent
-    assert img.getpixel((20, 20))[:3] == (255, 255, 255)        # a white nested part
+def test_the_logo_is_the_puzzle_piece_also_used_as_tab_icon():
+    assert branding.LOGO == "🧩" and branding.PAGE_ICON == "🧩"
+    h = branding.header_html("P")
+    assert "🧩" in h and "<svg" not in h and h.index("🧩") < h.index("nesto-title")      # logo first, then the title
