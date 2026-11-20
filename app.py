@@ -209,8 +209,10 @@ with st.sidebar:
     st.divider()
     st.caption("Sheet and nesting settings are saved with the project automatically.")
     st.subheader("Sheet")
-    sheet_w = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_w", on_change=autosave_settings)
-    sheet_h = st.number_input("Height", min_value=1.0, step=10.0, key="sheet_h", on_change=autosave_settings)
+    sheet_w = st.number_input("Length", min_value=1.0, step=10.0, key="sheet_w", on_change=autosave_settings,
+                              help="Sheet length: the horizontal side in the drawings.")
+    sheet_h = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_h", on_change=autosave_settings,
+                              help="Sheet width: the vertical side in the drawings.")
     margin = st.number_input("Edge margin", min_value=0.0, step=1.0, key="margin", on_change=autosave_settings)
     spacing = st.number_input("Part spacing (kerf)", min_value=0.0, step=0.5, key="spacing", on_change=autosave_settings)
 
