@@ -40,3 +40,27 @@ def test_delete_runs_only_touches_the_given_runs_of_that_project(db):
     finally:
         db.delete_project(a)
         db.delete_project(b)
+
+
+def test_rename_project_keeps_everything_and_refuses_duplicates(db):
+    a, b = db.create_project("ren-test-A"), db.create_project("ren-test-B")
+    try:
+        db.save_parts(a, [{"name": "p", "shape": "rectangle", "width": 10.0, "height": 5.0, "qty": 2, "rotate": True}])
+        db.save_settings(a, {"sheet_w": 3000.0})
+        _run(db, a, 1)
+        db.rename_project(a, "ren-test-A2")
+        got = db.get_project(a)
+        assert got["name"] == "ren-test-A2" and got["settings"] == {"sheet_w": 3000.0}      # settings kept
+        assert len(db.load_parts(a)) == 1 and len(db.list_runs(a)) == 1                     # parts and runs kept
+        # the duplicate check is case-insensitive and ignores the project being renamed
+        assert db.project_exists("REN-TEST-B")
+        assert db.project_exists("ren-test-b", exclude_id=a)
+        assert not db.project_exists("ren-test-b", exclude_id=b)                            # renaming B to its own name is fine
+        assert not db.project_exists("ren-test-A2", exclude_id=a)
+        # even if the app check were bypassed, the database refuses a duplicate name
+        with pytest.raises(Exception):
+            db.rename_project(a, "ren-test-B")
+        assert db.get_project(a)["name"] == "ren-test-A2"
+    finally:
+        db.delete_project(a)
+        db.delete_project(b)

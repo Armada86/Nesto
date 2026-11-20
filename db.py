@@ -78,9 +78,20 @@ def create_project(name: str) -> int:
         return row["id"]
 
 
-def project_exists(name: str) -> bool:
+def project_exists(name: str, exclude_id: int | None = None) -> bool:
+    """Is there a project with this name (case-insensitive)? exclude_id: ignore that project (for renaming)."""
     with connect() as c:
-        return c.execute("SELECT 1 FROM projects WHERE lower(name)=lower(%s)", (name,)).fetchone() is not None
+        if exclude_id is None:
+            row = c.execute("SELECT 1 FROM projects WHERE lower(name)=lower(%s)", (name,)).fetchone()
+        else:
+            row = c.execute("SELECT 1 FROM projects WHERE lower(name)=lower(%s) AND id<>%s", (name, exclude_id)).fetchone()
+        return row is not None
+
+
+def rename_project(pid: int, name: str):
+    """Give project `pid` a new name. Its parts, settings and runs are untouched."""
+    with connect() as c:
+        c.execute("UPDATE projects SET name=%s WHERE id=%s", (name, pid))
 
 
 def get_project(pid: int):

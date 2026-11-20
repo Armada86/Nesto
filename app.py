@@ -94,6 +94,27 @@ def load_project_dialog():
         st.rerun()
 
 
+@st.dialog("Rename project")
+def rename_project_dialog(pid: int, current: str):
+    name = st.text_input("New name", value=current)
+    if st.button("Rename project", type="primary", width="stretch"):
+        new = name.strip()
+        if not new:
+            st.error("Please enter a name.")
+        elif new == current:
+            st.info("That is already the name of this project.")
+        elif db.project_exists(new, exclude_id=pid):
+            st.error("Another project already has this name.")
+        else:
+            try:
+                db.rename_project(pid, new)
+            except Exception:  # noqa: BLE001  (e.g. a name that differs only in case from an existing one)
+                st.error("Another project already has this name.")
+                return
+            st.session_state.flash = (f"Renamed “{current}” to “{new}”.", ":material/edit:")
+            st.rerun()
+
+
 @st.dialog("Delete project")
 def delete_project_dialog(pid: int, name: str):
     st.warning(f"Delete **{name}** with all its parts and nesting history? This cannot be undone.")
@@ -134,7 +155,7 @@ def delete_runs_dialog(pid: int, options: dict):
     if c2.button(f"Delete {len(chosen)} run{'s' if len(chosen) != 1 else ''}", type="primary", width="stretch",
                  disabled=not chosen):
         n = db.delete_runs(pid, [options[l] for l in chosen])
-        st.session_state.flash = f"Deleted {n} run{'s' if n != 1 else ''} from the history."
+        st.session_state.flash = (f"Deleted {n} run{'s' if n != 1 else ''} from the history.", ":material/delete:")
         st.rerun()
 
 
@@ -172,7 +193,9 @@ with st.sidebar:
     if r1b.button("Load", icon=":material/folder_open:", width="stretch"):
         load_project_dialog()
     save_clicked = r2a.button("Save", icon=":material/save:", type="primary", width="stretch", disabled=not proj)
-    if r2b.button("Delete", icon=":material/delete:", width="stretch", disabled=not proj):
+    if r2b.button("Rename", icon=":material/edit:", width="stretch", disabled=not proj):
+        rename_project_dialog(pid, proj["name"])
+    if st.button("Delete", icon=":material/delete:", width="stretch", disabled=not proj):
         delete_project_dialog(pid, proj["name"])
 
 if not proj:
@@ -414,10 +437,11 @@ with st.sidebar:
     st.divider()
     st.subheader("History")
     runs = db.list_runs(pid)
-    labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.0%}"
+    labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.2%}"
               + (f" · {fmt_time(r.get('seconds'))}" if r.get("seconds") is not None else ""): r["id"] for r in runs}
     if "flash" in st.session_state:
-        st.toast(st.session_state.pop("flash"), icon=":material/delete:")
+        _msg, _icon = st.session_state.pop("flash")
+        st.toast(_msg, icon=_icon)
     if labels:
         pick = st.selectbox("Past runs", list(labels))
         b_load, b_del = st.columns(2)
@@ -443,7 +467,7 @@ with tab_table:
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Sheets", s["sheets"])
         m2.metric("Parts placed", s["parts"])
-        m3.metric("Utilization", f"{s['utilization']:.1%}")
+        m3.metric("Utilization", f"{s['utilization']:.2%}")
         m4.metric("Time taken", fmt_time(st.session_state.get("nest_seconds")))
         if info:
             st.caption(f"Best of {info['runs']} layouts "
