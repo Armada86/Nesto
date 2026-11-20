@@ -5,6 +5,7 @@ import time
 import pandas as pd
 import streamlit as st
 
+import branding
 import db
 from cutlist_export import cutlist_xlsx
 from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
@@ -30,7 +31,8 @@ def fmt_time(sec):
     return f"{m // 60} h {m % 60:02d} min"
 
 
-st.set_page_config(page_title="Nesto – 2D Nesting", layout="wide", page_icon="🧩")
+st.set_page_config(page_title="Nesto – 2D Nesting", layout="wide", page_icon=branding.favicon())
+st.markdown(branding.CSS, unsafe_allow_html=True)
 
 # ---------- database ----------
 if not db.get_url():
@@ -182,8 +184,7 @@ st.session_state.pid_name = proj["name"] if proj else None
 
 # ---------- sidebar ----------
 with st.sidebar:
-    st.markdown("## 🧩 Nesto")
-    st.caption("2D nesting")
+    st.markdown(branding.header_html("2D nesting", size="small"), unsafe_allow_html=True)
     if proj:
         st.markdown(f"**{proj['name']}**")
     else:
@@ -201,11 +202,11 @@ with st.sidebar:
         delete_project_dialog(pid, proj["name"])
 
 if not proj:
-    st.title("Nesto – 2D nesting")
+    st.markdown(branding.header_html("2D nesting"), unsafe_allow_html=True)
     st.info("Start a new project with **New**, or open an existing one with **Load** (left menu).")
     st.stop()
 
-st.title(f"Nesto – {proj['name']}")
+st.markdown(branding.header_html(proj["name"]), unsafe_allow_html=True)
 
 with st.sidebar:
     st.divider()
@@ -369,6 +370,11 @@ with tab_table:
 .st-key-nest_btn button p { font-size: 1.9rem !important; font-weight: 600 !important; }
 .st-key-nest_btn button:hover { background-color: #15803d !important; border-color: #166534 !important; }
 .st-key-nest_btn button:active { background-color: #166534 !important; }
+/* light blue export buttons */
+[class*="st-key-dl_"] button { background-color: #dbeafe !important; border: 1px solid #93c5fd !important; color: #1e3a8a !important; }
+[class*="st-key-dl_"] button p { color: #1e3a8a !important; }
+[class*="st-key-dl_"] button:hover { background-color: #bfdbfe !important; border-color: #60a5fa !important; }
+[class*="st-key-dl_"] button:active { background-color: #93c5fd !important; }
 </style>""", unsafe_allow_html=True)
     run = st.button("▶ Nest", key="nest_btn", type="primary")
 
@@ -505,17 +511,19 @@ with tab_table:
         d = st.columns(4)
         if len(sheets) == 1:
             d[0].download_button("⬇ DXF (sheet 1)", sheet_dxf(sheets[0], with_names), "sheet_01.dxf", "application/dxf",
-                                 width="stretch")
+                                 width="stretch", key="dl_dxf")
             slot = 1
         else:
             d[0].download_button(f"⬇ DXF – {len(sheets)} files (ZIP)", sheets_zip(sheets, labels=with_names),
-                                 "nest_sheets.zip", "application/zip", width="stretch")
+                                 "nest_sheets.zip", "application/zip", width="stretch", key="dl_dxf_zip")
             d[1].download_button("⬇ DXF – all sheets in one file (stacked)", all_sheets_dxf(sheets, labels=with_names),
-                                 "nest_all_sheets.dxf", "application/dxf", width="stretch")
+                                 "nest_all_sheets.dxf", "application/dxf", width="stretch", key="dl_dxf_all")
             slot = 2
         d[slot].download_button("⬇ Cut list (Excel)", xlsx, f"{safe}_cutlist.xlsx",
-                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
-        d[slot + 1].download_button("⬇ Layout (JSON)", json.dumps(st.session_state.result), "nest.json", width="stretch")
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch",
+                                key="dl_xlsx")
+        d[slot + 1].download_button("⬇ Layout (JSON)", json.dumps(st.session_state.result), "nest.json", width="stretch",
+                                key="dl_json")
 
         # 3. the sheets
         for i, sh in enumerate(sheets, 1):
