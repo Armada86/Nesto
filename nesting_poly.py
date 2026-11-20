@@ -39,6 +39,10 @@ from matplotlib.path import Path
 from scipy.ndimage import binary_dilation, find_objects, label
 from scipy.signal import fftconvolve
 from shapely import affinity
+from shapely.geometry import Polygon
+from shapely.geometry import box as _sbox
+from shapely.ops import unary_union
+from shapely.strtree import STRtree
 
 from nesting import Placement, Sheet
 from shapes import geom_to_json
@@ -572,12 +576,124 @@ def free_rectangles(sheet, margin=0.0, k=MAX_SCRAP):
     return [(a * cs, b * cs, (c - a) * cs, (d - b) * cs) for a, b, c, d in rects]
 
 
+# ------------------------------------------------------------------- settle pass
+def _sweep(geom, dx, dy):
+    """The region material covers while `geom` slides along (dx, dy) - exact, holes included."""
+    pieces = [geom, affinity.translate(geom, dx, dy)]
+    for poly in _polys(geom):
+        for ring in [poly.exterior, *poly.interiors]:
+            c = list(ring.coords)
+            for (x0, y0), (x1, y1) in zip(c, c[1:]):
+                q = Polygon([(x0, y0), (x1, y1), (x1 + dx, y1 + dy), (x0 + dx, y0 + dy)])
+                if q.is_valid and q.area > 1e-9:
+                    pieces.append(q)
+    return unary_union(pieces)
+
+
+def _max_slide(geom, tree, others, dx, dy, room, spacing, tol=0.5):
+    """How far `geom` can slide along the unit direction (dx, dy) before it comes closer than `spacing`
+    to another part (or `room` is used up). Binary search on the exact swept region, so it cannot tunnel."""
+    if room < tol:
+        return 0.0
+
+    def free(d):
+        sw = _sweep(geom, dx * d, dy * d)
+        x0, y0, x1, y1 = sw.bounds
+        near = tree.query(_sbox(x0 - spacing, y0 - spacing, x1 + spacing, y1 + spacing)) if tree is not None else []
+        return all(sw.distance(others[j]) >= spacing - 1e-6 for j in near)
+
+    probe = min(1.0, room)
+    if not free(probe):
+        return 0.0          # already tight (the usual case): costs one test
+    if free(room):
+        return room
+    lo, hi = probe, room
+    while hi - lo > tol:
+        mid = (lo + hi) / 2
+        if free(mid):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def _sheet_key(sheet, margin):
+    """Scrap quality of a finished sheet (smaller = better), the same ordering the search uses."""
+    area = sheet.width * sheet.height
+    rects = free_rectangles(sheet, margin)
+    return (tuple(sorted(-round(scrap_score(r[2], r[3]) / area, 2) for r in rects))[:8],
+            tuple(sorted(-round(r[2] * r[3] / area, 2) for r in rects))[:8])
+
+
+def settle_sheet(sheet, margin, spacing, deadline=None, max_rounds=3):
+    """Slide every part down, then left, as far as it goes (never closer than `spacing` to another part, never
+    inside the margin). Parts end up flush on the bottom/left edge and the free space collects at the top/right.
+    Modifies the sheet; returns the number of parts that moved."""
+    from shapes import geom_from_json
+    pl = [p for p in sheet.placements if p.polys]
+    if len(pl) != len(sheet.placements) or not pl:
+        return 0
+    geoms = [geom_from_json(p.polys) for p in pl]
+    moved_parts = set()
+    for _ in range(max_rounds):
+        moved = False
+        for i in sorted(range(len(pl)), key=lambda k: (geoms[k].bounds[1], geoms[k].bounds[0])):
+            for dx, dy in ((0.0, -1.0), (-1.0, 0.0)):
+                if deadline is not None and time.monotonic() > deadline:
+                    break
+                g = geoms[i]
+                others = [geoms[k] for k in range(len(pl)) if k != i]
+                tree = STRtree(others) if others else None
+                room = (g.bounds[1] if dy else g.bounds[0]) - margin
+                d = _max_slide(g, tree, others, dx, dy, room, spacing)
+                if d >= 0.5:
+                    geoms[i] = affinity.translate(g, dx * d, dy * d)
+                    moved, moved_parts = True, moved_parts | {i}
+        if not moved or (deadline is not None and time.monotonic() > deadline):
+            break
+    for i in moved_parts:
+        g = geoms[i]
+        x0, y0, x1, y1 = g.bounds
+        pl[i].x, pl[i].y, pl[i].w, pl[i].h = x0, y0, x1 - x0, y1 - y0
+        pl[i].polys = geom_to_json(g)
+    return len(moved_parts)
+
+
+def settle_layout(sheets, margin, spacing, seconds=10.0):
+    """Settle every sheet, but keep a sheet's settled version only if its scrap is not worse than before.
+    Returns (parts moved, sheets changed)."""
+    import copy
+    deadline = time.monotonic() + seconds
+    total, changed = 0, 0
+    for k, sh in enumerate(sheets):
+        if time.monotonic() > deadline:
+            break
+        trial = copy.deepcopy(sh)
+        n = settle_sheet(trial, margin, spacing, deadline)
+        if n and _sheet_key(trial, margin) <= _sheet_key(sh, margin):
+            sheets[k] = trial
+            trial.scrap = free_rectangles(trial, margin)
+            total, changed = total + n, changed + 1
+    return total, changed
+
+
+def _gravity(sheets):
+    """Area-weighted mean height of the material, 0 = everything on the bottom edge, 1 = on the top edge."""
+    num = den = 0.0
+    for sh in sheets:
+        for p in sh.placements:
+            a = p.area if p.area is not None else p.w * p.h
+            num += (p.y + p.h / 2) / sh.height * a
+            den += a
+    return num / den if den else 0.0
+
+
 def _fitness(sheets):
     """Smaller is better: fewest sheets; then the best scrap pieces (area x squareness, compared best piece first,
     then the next ...: one big square beats a long thin strip); then the biggest pieces by plain area, again biggest
     first (keeps an unavoidable strip whole); then the most compact free space (shortest free/occupied boundary:
-    flat sides flush against each other, scrap in one connected piece); then the emptiest last sheet; then the
-    shortest nest."""
+    flat sides flush against each other, scrap in one connected piece); then the lowest layout (parts sit on the
+    bottom edge, free space on top); then the emptiest last sheet; then the shortest nest."""
     last = sheets[-1]
     sheet_area = last.width * last.height
     rects = [r for s in sheets for r in s.scrap]
@@ -585,7 +701,8 @@ def _fitness(sheets):
     areas = sorted((-round(r[2] * r[3] / sheet_area, 2) for r in rects))[:8]
     extent = max((p.x + p.w) for p in last.placements)
     edge = sum(s.free_edge for s in sheets)
-    return (len(sheets), tuple(pieces), tuple(areas), round(edge / 500.0), round(last.used_area / sheet_area, 3), extent)
+    return (len(sheets), tuple(pieces), tuple(areas), round(edge / 500.0), round(_gravity(sheets), 2),
+            round(last.used_area / sheet_area, 3), extent)
 
 
 def _order(parts, how, rng=None):
@@ -690,6 +807,9 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
             progress(frac, f"layouts tried: {runs} · best: {best_fit[0]} sheet(s){big}")
     if best is None:
         raise errors[0]
+    if progress:
+        progress(1.0, "settling parts onto the sheet edges…")
+    moved, changed = settle_layout(best, margin, spacing, seconds=min(20.0, max(5.0, 0.3 * time_limit)))
     if info is not None:
-        info.update(runs=runs, seconds=time.monotonic() - t0, fitness=best_fit)
+        info.update(runs=runs, seconds=time.monotonic() - t0, fitness=best_fit, settled_parts=moved, settled_sheets=changed)
     return best
