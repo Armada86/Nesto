@@ -1,6 +1,7 @@
 import json
 import time
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
@@ -9,6 +10,7 @@ from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
 from nesting_poly import PolyPart, free_rectangles, nest_polygons
+from part_view import draw_part, fmt as fmt_dim, part_stats
 from render import draw_sheet
 from step_io import read_step
 from shapes import SHAPES, geom_to_json, part_geometry, stored_geometry
@@ -53,7 +55,7 @@ for _k, _v in DEFAULTS.items():
 # ---------- project handling ----------
 def open_project(pid: int | None):
     """Make `pid` the open project (None = close). Settings are applied before the widgets are drawn."""
-    for k in ("result", "nest_info", "parts", "loaded_pid"):
+    for k in ("result", "nest_info", "parts", "loaded_pid", "lib_idx", "lib_search"):
         st.session_state.pop(k, None)
     st.session_state.pid = pid
     if pid is None:
@@ -190,7 +192,7 @@ if st.session_state.get("loaded_pid") != pid:
 parts_state: list[dict] = st.session_state.parts
 
 st.subheader("Parts")
-tab_table, tab_dxf = st.tabs(["Enter dimensions", "Import DXF / STEP"])
+tab_table, tab_dxf, tab_lib = st.tabs(["Enter dimensions", "Import DXF / STEP", "All parts"])
 
 with tab_table:
     st.caption("Size A = width (or diameter for a circle). Size B = height (ignored for circles). "
@@ -207,7 +209,8 @@ with tab_table:
             "shape": st.column_config.SelectboxColumn("Shape", options=SHAPES, default="rectangle", required=True),
             "width": st.column_config.NumberColumn("Size A", min_value=0.0),
             "height": st.column_config.NumberColumn("Size B", min_value=0.0),
-            "qty": st.column_config.NumberColumn("Qty", min_value=1, step=1),
+            "qty": st.column_config.NumberColumn("Qty", min_value=0, step=1,
+                                                 help="Number of pieces to nest. 0 = keep the part in the project but do not nest it."),
             "rotate": st.column_config.CheckboxColumn("Can rotate"),
         },
     )
@@ -233,7 +236,7 @@ with tab_dxf:
                "any orientation, thickness ignored. One part per solid. Bent parts: export the flat pattern as DXF.")
     files = st.file_uploader("DXF / STEP files", type=["dxf", "step", "stp"], accept_multiple_files=True)
     c_a, c_b, c_c = st.columns(3)
-    dxf_qty = c_a.number_input("Quantity per part", min_value=1, value=1)
+    dxf_qty = c_a.number_input("Quantity per part", min_value=0, value=1, help="0 = add to the project but do not nest yet")
     dxf_scale = c_b.number_input("Scale (e.g. 25.4 for inch → mm)", min_value=0.0001, value=1.0, format="%.4f")
     split = c_c.checkbox("DXF: one part per closed contour", help="Use for DXFs that contain many separate parts.")
     if files and st.button("Add parts from files"):
@@ -267,6 +270,45 @@ with tab_dxf:
             st.session_state.parts = parts_state
             db.save_parts(pid, parts_state)
             st.rerun()
+
+
+with tab_lib:
+    if not current:
+        st.info("This project has no parts yet. Add them in **Enter dimensions** or **Import DXF / STEP**.")
+    else:
+        n_in = sum(1 for p in current if p["qty"] > 0)
+        st.caption(f"{len(current)} parts in this project · {n_in} in the nesting list · "
+                   f"{len(current) - n_in} not nested (quantity 0). Click a name to see its drawing.")
+        idx = min(st.session_state.get("lib_idx", 0), len(current) - 1)
+        left, right = st.columns([2, 3])
+        with left:
+            q = st.text_input("Search parts", placeholder="Search parts…", label_visibility="collapsed", key="lib_search")
+            with st.container(height=560, border=True):
+                shown = [i for i, p in enumerate(current) if q.strip().lower() in p["name"].lower()]
+                if not shown:
+                    st.caption("No part matches.")
+                for i in shown:
+                    p = current[i]
+                    st.button(f"{p['name']}   ·   " + (f"× {p['qty']}" if p["qty"] > 0 else "not nested"),
+                              key=f"lib_btn_{i}", width="stretch", type="primary" if i == idx else "secondary",
+                              on_click=lambda i=i: st.session_state.__setitem__("lib_idx", i))
+        with right:
+            p = current[idx]
+            g = part_geometry(p)
+            stats = part_stats(g)
+            status = (f"{p['qty']} pcs in the nesting list" if p["qty"] > 0 else "not in the nesting list (quantity 0)")
+            fig = draw_part(g, p["name"])
+            st.pyplot(fig)
+            plt.close(fig)
+            st.caption(f"**{p['name']}** · {status} · "
+                       + ("imported drawing" if p["shape"] == "dxf" else f"typed dimensions ({p['shape']})")
+                       + (" · can be rotated" if p["rotate"] else " · fixed orientation"))
+            c1, c2, c3, c4 = st.columns([2.2, 1.3, 1.3, 0.9])
+            c1.metric("Overall size", f"{fmt_dim(stats['width'])} × {fmt_dim(stats['height'])}")
+            c2.metric("Area", f"{stats['area']:,.0f}")
+            c3.metric("Cut length", f"{stats['cut_length']:,.0f}")
+            c4.metric("Holes", len(stats["holes"]))
+            st.caption("Sizes are in the units of your drawing / typed dimensions (usually mm).")
 
 run = st.button("▶ Nest", type="primary")
 
@@ -312,12 +354,13 @@ def run_nesting(parts):
 
 
 if run:
-    if not current:
-        st.warning("Add at least one part.")
+    to_nest = [p for p in current if p["qty"] > 0]
+    if not to_nest:
+        st.warning("Nothing to nest: add a part with a quantity of at least 1.")
     else:
         t_start = time.perf_counter()
         try:
-            sheets = run_nesting(current)
+            sheets = run_nesting(to_nest)
         except ValueError as e:
             st.error(str(e))
             st.stop()
