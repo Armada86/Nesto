@@ -54,3 +54,18 @@ def test_runs_list_and_result_show_two_decimals(fake_db):
     assert not at.exception
     util = next(m.value for m in at.metric if m.label == "Utilization")
     assert re.fullmatch(r"\d+\.\d{2}%", util), util
+
+
+def test_sheet_size_is_labelled_length_and_width(fake_db):
+    """The sheet is defined by its length (horizontal side) and its width (vertical side)."""
+    from streamlit.testing.v1 import AppTest
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.session_state["pending_settings"] = {"sheet_w": 3000.0, "sheet_h": 1500.0}
+    at.run()
+    assert not at.exception
+    assert at.number_input(key="sheet_w").label == "Length"
+    assert at.number_input(key="sheet_h").label == "Width"
+    assert "Height" not in [n.label for n in at.number_input]
+    assert at.number_input(key="sheet_w").value == 3000.0      # the horizontal side is the length
+    assert at.number_input(key="sheet_h").value == 1500.0      # the vertical side is the width
