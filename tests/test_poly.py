@@ -84,3 +84,36 @@ def test_speed_typical_job():
     print("time", dt, summary(s))
     check(s, 2500, 1250, 10, 5)
     assert dt < 60
+
+
+def test_right_triangles_with_slot_pair_hypotenuse_to_hypotenuse():
+    """Regression: triangles used to be placed in a sawtooth (5+5) instead of mated pairs (6+4)."""
+    tri = Polygon([(0, 0), (815, 0), (815, 800)]).difference(box(660, 700, 700, 810))
+    from shapes import normalize
+    s = nest_polygons([PolyPart("H", normalize(tri), 10)], 2500, 1250, margin=5, spacing=3, rot_step=90)
+    check(s, 2500, 1250, 5, 3)
+    assert [len(x.placements) for x in s] == [6, 4]
+    # pairs form near-rectangles: the first sheet is used up to ~2450 mm in length
+    assert max(p.x + p.w for p in s[0].placements) < 2480
+
+
+def test_pair_of_pairs_members_are_consistent():
+    """4-up clusters must unpack into correctly placed, non-overlapping parts of the right shape."""
+    tri = build_shape("right triangle", 300, 200)
+    s = nest_polygons([PolyPart("t", tri, 8)], 1000, 700, margin=5, spacing=3, rot_step=45)
+    check(s, 1000, 700, 5, 3)
+    assert sum(len(x.placements) for x in s) == 8
+    for sh in s:
+        for p in sh.placements:
+            assert p.area == pytest.approx(0.5 * 300 * 200, rel=0.01)
+
+
+def test_search_never_worse_than_baseline_and_valid():
+    parts = [PolyPart("c", build_shape("circle", 120), 8), PolyPart("t", build_shape("triangle", 200, 150), 8),
+             PolyPart("r", build_shape("rectangle", 300, 100), 6)]
+    base = nest_polygons(parts, 900, 600, 5, 3, 90, time_limit=0)
+    info = {}
+    better = nest_polygons(parts, 900, 600, 5, 3, 90, time_limit=4, info=info)
+    check(better, 900, 600, 5, 3)
+    assert info["runs"] >= 2
+    assert (len(better), better[-1].used_area) <= (len(base), base[-1].used_area)
