@@ -50,13 +50,18 @@ def sheet_dxf(sheet, labels=True) -> bytes:
     return _to_bytes(doc)
 
 
-def all_sheets_dxf(sheets, gap=200.0, labels=True) -> bytes:
-    """One DXF with the sheets laid out left to right."""
+def all_sheets_dxf(sheets, gap=300.0, labels=True) -> bytes:
+    """One DXF with the sheets stacked vertically (sheet 1 on top) and "Sheet N" beside each."""
     doc = _new_doc()
-    x = 0.0
-    for s in sheets:
-        _draw_sheet(doc.modelspace(), s, dx=x, labels=labels)
-        x += s.width + gap
+    msp = doc.modelspace()
+    y = 0.0
+    for i, s in enumerate(sheets, 1):
+        dy = y - s.height  # top edge of this sheet at y
+        _draw_sheet(msp, s, dy=dy, labels=labels)
+        title_h = min(150.0, max(40.0, s.height * 0.12))
+        msp.add_text(f"Sheet {i}", height=title_h, dxfattribs={"layer": SHEET_LAYER}).set_placement(
+            (-title_h, dy + s.height / 2), align=TextEntityAlignment.MIDDLE_RIGHT)
+        y = dy - gap
     return _to_bytes(doc)
 
 
