@@ -414,7 +414,7 @@ with st.sidebar:
     st.divider()
     st.subheader("History")
     runs = db.list_runs(pid)
-    labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.0%}"
+    labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.2%}"
               + (f" · {fmt_time(r.get('seconds'))}" if r.get("seconds") is not None else ""): r["id"] for r in runs}
     if "flash" in st.session_state:
         st.toast(st.session_state.pop("flash"), icon=":material/delete:")
@@ -443,7 +443,7 @@ with tab_table:
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Sheets", s["sheets"])
         m2.metric("Parts placed", s["parts"])
-        m3.metric("Utilization", f"{s['utilization']:.1%}")
+        m3.metric("Utilization", f"{s['utilization']:.2%}")
         m4.metric("Time taken", fmt_time(st.session_state.get("nest_seconds")))
         if info:
             st.caption(f"Best of {info['runs']} layouts "
