@@ -236,3 +236,32 @@ def test_pieces_thinner_than_15_percent_of_the_narrow_side_are_waste():
     ok = Sheet(1000, 500, [Placement("p", 0, 0, 1000, 400, False)])        # leaves a 100 mm strip (20 %)
     assert free_rectangles(thin, margin=0) == []
     assert len(free_rectangles(ok, margin=0)) == 1
+
+
+@pytest.mark.parametrize("tri_pts", [[(240, 0), (240, 480), (0, 240)],     # drawn point-first (hypotenuse on the right)
+                                      [(0, 0), (0, 480), (240, 240)]])      # drawn hypotenuse-first
+def test_triangle_sits_flush_against_the_neighbour_not_point_first(tri_pts):
+    """Regression (sheet 9): a right triangle (hypotenuse 480, vertical) after a row of tall plates must be
+    placed with its hypotenuse flush against the last plate, not with its point facing the plate
+    (both have the same length, the old engine picked one arbitrarily - the one drawn first)."""
+    from shapes import geom_from_json
+    plates = PolyPart("plate", box(0, 0, 200, 480), 4, rotate=False)
+    tri = PolyPart("tri", Polygon(tri_pts), 1)
+    s = nest_polygons([plates, tri], 1100, 500, margin=5, spacing=3, rot_step=90, time_limit=0)
+    check(s, 1100, 500, 5, 3)
+    assert len(s) == 1
+    g = geom_from_json(next(p for p in s[0].placements if p.part == "tri").polys)
+    x0, y0, x1, y1 = g.bounds
+    # flush = the triangle's left edge is a full-height vertical line: a thin band along it touches the outline
+    # near the top AND the bottom (point-first would only touch at the middle)
+    assert g.intersects(box(x0, y0, x0 + 6, y0 + 40)) and g.intersects(box(x0, y1 - 40, x0 + 6, y1))
+    last_plate = max((p for p in s[0].placements if p.part == "plate"), key=lambda p: p.x + p.w)
+    assert x0 - (last_plate.x + last_plate.w) < 12                            # and it touches that plate (spacing only)
+
+
+def test_compact_free_space_wins_a_tie():
+    from nesting import Placement, Sheet
+    from nesting_poly import _fitness
+    a = Sheet(1000, 500, [Placement("p", 0, 0, 10, 10, False)]); a.free_edge = 4000.0
+    b = Sheet(1000, 500, [Placement("p", 0, 0, 10, 10, False)]); b.free_edge = 6000.0
+    assert _fitness([a]) < _fitness([b])
