@@ -18,6 +18,7 @@ python -m pytest tests
 - **True-shape nesting** (raster/FFT based): rotations in 90/45/30/15 degree steps, edge margin, part spacing, multi-sheet. Pure-rectangle jobs use an exact, instant MaxRects engine.
 - **DXF export** of the nested sheets: ZIP with one DXF per sheet, or all sheets side by side in one DXF. Layers: `SHEET` (sheet outline), `CUT` (closed part outlines and holes), `LABELS` (part names, optional). Units: same as the sheet size you typed (mm).
 - **All parts** tab: every part of the project (nested or not - quantity 0 keeps a part in the project without nesting it) with a search box; click a name to see its dimensioned drawing (overall size, edge lengths, diameters, hole sizes) plus area and cut length.
+- **History**: the sidebar lists the open project's past runs (number, sheets, utilization, time). *Load run* shows one again; *Delete…* removes one or several runs (pick them in a list or *Select all*; it only ever deletes runs of the open project).
 - **Project menu** (left sidebar): New / Load / Save / Delete. Sheet and nesting settings are saved with the project automatically the moment you change them; Save also writes the parts (settings first, each step reported separately). Load restores both. The open project is kept in the page address, so a browser reload reopens it.
 - Neon tables: `projects`, `parts`, `nest_runs` (created/migrated automatically).
 

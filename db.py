@@ -135,6 +135,15 @@ def list_runs(pid: int):
         ).fetchall()
 
 
+def delete_runs(pid: int, run_ids) -> int:
+    """Delete the given runs of project `pid` (runs of other projects are never touched). Returns how many."""
+    ids = [int(i) for i in run_ids]
+    if not ids:
+        return 0
+    with connect() as c:
+        return c.execute("DELETE FROM nest_runs WHERE project_id=%s AND id = ANY(%s)", (pid, ids)).rowcount
+
+
 def load_run(run_id: int):
     with connect() as c:
         return c.execute("SELECT * FROM nest_runs WHERE id=%s", (run_id,)).fetchone()
