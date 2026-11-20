@@ -5,6 +5,7 @@ import time
 import pandas as pd
 import streamlit as st
 
+import branding
 import db
 from cutlist_export import cutlist_xlsx
 from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
@@ -30,7 +31,8 @@ def fmt_time(sec):
     return f"{m // 60} h {m % 60:02d} min"
 
 
-st.set_page_config(page_title="Nesto – 2D Nesting", layout="wide", page_icon="🧩")
+st.set_page_config(page_title="Nesto – 2D Nesting", layout="wide", page_icon=branding.favicon())
+st.markdown(branding.CSS, unsafe_allow_html=True)
 
 # ---------- database ----------
 if not db.get_url():
@@ -182,8 +184,7 @@ st.session_state.pid_name = proj["name"] if proj else None
 
 # ---------- sidebar ----------
 with st.sidebar:
-    st.markdown("## 🧩 Nesto")
-    st.caption("2D nesting")
+    st.markdown(branding.header_html("2D nesting", size="small"), unsafe_allow_html=True)
     if proj:
         st.markdown(f"**{proj['name']}**")
     else:
@@ -201,11 +202,11 @@ with st.sidebar:
         delete_project_dialog(pid, proj["name"])
 
 if not proj:
-    st.title("Nesto – 2D nesting")
+    st.markdown(branding.header_html("2D nesting"), unsafe_allow_html=True)
     st.info("Start a new project with **New**, or open an existing one with **Load** (left menu).")
     st.stop()
 
-st.title(f"Nesto – {proj['name']}")
+st.markdown(branding.header_html(proj["name"]), unsafe_allow_html=True)
 
 with st.sidebar:
     st.divider()
