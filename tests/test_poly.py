@@ -265,3 +265,88 @@ def test_compact_free_space_wins_a_tie():
     a = Sheet(1000, 500, [Placement("p", 0, 0, 10, 10, False)]); a.free_edge = 4000.0
     b = Sheet(1000, 500, [Placement("p", 0, 0, 10, 10, False)]); b.free_edge = 6000.0
     assert _fitness([a]) < _fitness([b])
+
+
+# ------------------------------------------------------------------ settle pass + bottom preference
+def _sheet_of(geoms, w=1000, h=600):
+    from nesting import Placement, Sheet
+    from shapes import geom_to_json
+    sh = Sheet(w, h)
+    for name, g in geoms:
+        x0, y0, x1, y1 = g.bounds
+        sh.placements.append(Placement(name, x0, y0, x1 - x0, y1 - y0, False, 0.0, g.area, geom_to_json(g)))
+    return sh
+
+
+def _geoms(sh):
+    from shapes import geom_from_json
+    return [geom_from_json(p.polys) for p in sh.placements]
+
+
+def _valid(sh, margin, spacing):
+    gs = _geoms(sh)
+    area = box(margin, margin, sh.width - margin, sh.height - margin).buffer(1e-6)
+    assert all(area.contains(g) for g in gs)
+    for i, a in enumerate(gs):
+        for b in gs[i + 1:]:
+            assert a.distance(b) >= spacing - 1e-6
+
+
+def test_settle_drops_a_floating_part_flush_to_the_corner():
+    from nesting_poly import settle_sheet
+    sh = _sheet_of([("p", box(400, 300, 500, 400))])               # floating in the middle of an empty sheet
+    assert settle_sheet(sh, margin=5, spacing=3) == 1
+    p = sh.placements[0]
+    assert (p.x, p.y) == pytest.approx((5, 5), abs=0.6)
+    _valid(sh, 5, 3)
+
+
+def test_settle_stops_at_the_spacing_and_leaves_tight_parts_alone():
+    from nesting_poly import settle_sheet
+    floor = box(5, 5, 995, 105)                                     # a plate on the bottom
+    top = box(300, 250, 400, 350)                                   # floating above it
+    sh = _sheet_of([("floor", floor), ("top", top)])
+    settle_sheet(sh, margin=5, spacing=3)
+    g = {p.part: gg for p, gg in zip(sh.placements, _geoms(sh))}
+    assert g["floor"].bounds == pytest.approx(floor.bounds)         # already tight: not moved
+    assert g["top"].bounds[1] == pytest.approx(108, abs=0.6)         # rests on the plate with the 3 mm gap
+    assert g["top"].bounds[0] == pytest.approx(5, abs=0.6)           # and slides left to the margin
+    _valid(sh, 5, 3)
+
+
+def test_settle_respects_a_part_nested_inside_a_hole():
+    from nesting_poly import settle_sheet
+    ring = box(300, 300, 600, 500).difference(box(380, 380, 520, 420))      # big plate with a slot-like hole
+    inner = box(430, 385, 470, 415)                                          # small part lying in the hole
+    sh = _sheet_of([("ring", ring), ("inner", inner)])
+    settle_sheet(sh, margin=5, spacing=3)
+    _valid(sh, 5, 3)                                                         # sweeping the ring never hits the inner part
+
+
+def test_settle_keeps_the_original_sheet_if_scrap_would_get_worse(monkeypatch):
+    import nesting_poly as npl
+    sh = _sheet_of([("p", box(400, 300, 500, 400))])
+    calls = []
+    def fake_key(sheet, margin):                     # pretend any moved sheet has worse scrap
+        calls.append(1)
+        return (0,) if len(calls) % 2 == 0 else (1,)   # 1st call = the settled trial (worse), 2nd = the original
+    monkeypatch.setattr(npl, "_sheet_key", fake_key)
+    sheets = [sh]
+    npl.settle_layout(sheets, 5, 3)
+    assert sheets[0] is sh and sheets[0].placements[0].x == pytest.approx(400)
+
+
+def test_nest_polygons_result_stays_valid_after_settling():
+    parts = [PolyPart("c", build_shape("circle", 120), 6), PolyPart("t", build_shape("triangle", 200, 150), 6),
+             PolyPart("r", build_shape("rectangle", 300, 100), 4)]
+    info = {}
+    s = nest_polygons(parts, 900, 600, 5, 3, 90, time_limit=0, info=info)
+    check(s, 900, 600, 5, 3)
+    assert sum(len(x.placements) for x in s) == 16 and "settled_parts" in info
+
+
+def test_lower_layout_wins_a_tie():
+    from nesting import Placement, Sheet
+    from nesting_poly import _fitness
+    low = Sheet(1000, 500, [Placement("p", 0, 10, 100, 100, False)]); high = Sheet(1000, 500, [Placement("p", 0, 380, 100, 100, False)])
+    assert _fitness([low]) < _fitness([high])
