@@ -121,6 +121,23 @@ def autosave_settings():
         st.toast(f"Could not save the settings: {e}", icon=":material/error:")
 
 
+@st.dialog("Delete runs from the history")
+def delete_runs_dialog(pid: int, options: dict):
+    """options: {label: run id} of this project's runs; the multiselect state is st.session_state.del_runs_sel."""
+    st.multiselect("Runs to delete", list(options), key="del_runs_sel", placeholder="Select the runs to delete…")
+    st.button("Select all", on_click=lambda: st.session_state.__setitem__("del_runs_sel", list(options)))
+    chosen = st.session_state.get("del_runs_sel", [])
+    st.caption("This cannot be undone. A result already shown on the screen stays until you nest again.")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", width="stretch"):
+        st.rerun()
+    if c2.button(f"Delete {len(chosen)} run{'s' if len(chosen) != 1 else ''}", type="primary", width="stretch",
+                 disabled=not chosen):
+        n = db.delete_runs(pid, [options[l] for l in chosen])
+        st.session_state.flash = f"Deleted {n} run{'s' if n != 1 else ''} from the history."
+        st.rerun()
+
+
 # reopen the project from the page address after a browser reload
 if "pid" not in st.session_state:
     qp = st.query_params.get("project")
@@ -399,13 +416,21 @@ with st.sidebar:
     runs = db.list_runs(pid)
     labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.0%}"
               + (f" · {fmt_time(r.get('seconds'))}" if r.get("seconds") is not None else ""): r["id"] for r in runs}
+    if "flash" in st.session_state:
+        st.toast(st.session_state.pop("flash"), icon=":material/delete:")
     if labels:
         pick = st.selectbox("Past runs", list(labels))
-        if st.button("Load run"):
+        b_load, b_del = st.columns(2)
+        if b_load.button("Load run", width="stretch"):
             run_row = db.load_run(labels[pick])
             st.session_state.result = run_row["result"]
             st.session_state.nest_seconds = run_row.get("seconds")
             st.session_state.pop("nest_info", None)
+        if b_del.button("Delete…", icon=":material/delete:", width="stretch"):
+            st.session_state.del_runs_sel = [pick]
+            delete_runs_dialog(pid, labels)
+    else:
+        st.caption("No runs yet.")
 
 # ---------- results: shown on the first tab only ----------
 with tab_table:
