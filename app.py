@@ -1,10 +1,12 @@
 import json
+import re
 import time
 
 import pandas as pd
 import streamlit as st
 
 import db
+from cutlist_export import cutlist_xlsx
 from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
@@ -432,6 +434,8 @@ with tab_table:
             st.session_state.parts = current
             st.session_state.result = result
             st.session_state.nest_seconds = elapsed
+            st.session_state.nest_parts = [{k: p[k] for k in ("name", "shape", "width", "height", "qty")} for p in to_nest]
+            st.session_state.run_meta = {"margin": margin, "spacing": spacing}
 
 
 def _sheets_from(result):
@@ -458,6 +462,8 @@ with st.sidebar:
             st.session_state.result = run_row["result"]
             st.session_state.nest_seconds = run_row.get("seconds")
             st.session_state.pop("nest_info", None)
+            st.session_state.pop("nest_parts", None)   # the part list of that old run is not stored
+            st.session_state.run_meta = {"margin": run_row.get("margin", margin), "spacing": run_row.get("spacing", spacing)}
         if b_del.button("Delete…", icon=":material/delete:", width="stretch"):
             st.session_state.del_runs_sel = [pick]
             delete_runs_dialog(pid, labels)
@@ -482,24 +488,35 @@ with tab_table:
                        f"({'paired parts' if info['set'] == 'paired' else 'single parts'}, placement rule: {info['rule']}"
                        f"{', scrap-aware' if info.get('protect') else ''}). Green dashed boxes = usable scrap.")
 
-        # 2. export, right above the nest
-        st.subheader("Export")
-        with_names = st.checkbox("Include part names as text (layer LABELS)", value=True)
-        d1, d2, d3 = st.columns(3)
-        if len(sheets) == 1:
-            d1.download_button("⬇ DXF (sheet 1)", sheet_dxf(sheets[0], with_names), "sheet_01.dxf", "application/dxf",
-                               width="stretch")
-        else:
-            d1.download_button(f"⬇ DXF – {len(sheets)} files (ZIP)", sheets_zip(sheets, labels=with_names),
-                               "nest_sheets.zip", "application/zip", width="stretch")
-            d2.download_button("⬇ DXF – all sheets in one file (stacked)", all_sheets_dxf(sheets, labels=with_names),
-                               "nest_all_sheets.dxf", "application/dxf", width="stretch")
-        d3.download_button("⬇ Layout (JSON)", json.dumps(st.session_state.result), "nest.json", width="stretch")
-
-        # 3. the sheets
-        key = (hash(json.dumps(st.session_state.result)), margin)  # scrap analysis is cached per result
+        # scrap analysis (cached per result): used by the drawings and by the Excel cut list
+        key = (hash(json.dumps(st.session_state.result)), margin)
         if st.session_state.get("scrap_key") != key:
             st.session_state.scrap_key = key
             st.session_state.scrap = [free_rectangles(sh, margin) for sh in sheets]
+
+        # 2. export, right above the nest
+        st.subheader("Export")
+        with_names = st.checkbox("Include part names as text (layer LABELS)", value=True)
+        meta = st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}
+        xlsx = cutlist_xlsx(sheets, project=proj["name"], margin=meta["margin"], spacing=meta["spacing"],
+                            seconds=st.session_state.get("nest_seconds"), parts=st.session_state.get("nest_parts"),
+                            offcuts=st.session_state.scrap)
+        safe = re.sub(r"[^A-Za-z0-9_-]+", "_", proj["name"]).strip("_") or "nest"
+        d = st.columns(4)
+        if len(sheets) == 1:
+            d[0].download_button("⬇ DXF (sheet 1)", sheet_dxf(sheets[0], with_names), "sheet_01.dxf", "application/dxf",
+                                 width="stretch")
+            slot = 1
+        else:
+            d[0].download_button(f"⬇ DXF – {len(sheets)} files (ZIP)", sheets_zip(sheets, labels=with_names),
+                                 "nest_sheets.zip", "application/zip", width="stretch")
+            d[1].download_button("⬇ DXF – all sheets in one file (stacked)", all_sheets_dxf(sheets, labels=with_names),
+                                 "nest_all_sheets.dxf", "application/dxf", width="stretch")
+            slot = 2
+        d[slot].download_button("⬇ Cut list (Excel)", xlsx, f"{safe}_cutlist.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
+        d[slot + 1].download_button("⬇ Layout (JSON)", json.dumps(st.session_state.result), "nest.json", width="stretch")
+
+        # 3. the sheets
         for i, sh in enumerate(sheets, 1):
             st.pyplot(draw_sheet(sh, f"Sheet {i}", st.session_state.scrap[i - 1]))
