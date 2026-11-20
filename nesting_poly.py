@@ -28,7 +28,7 @@ from __future__ import annotations
 import math
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import scipy.fft
@@ -87,14 +87,60 @@ def _mask(geom, cell, pad):
     return m.reshape(h, w), (minx, miny)
 
 
+def _aligned_angles(geom, max_edges=4):
+    """Rotations that lay the longest straight edges of the part flat (horizontal / vertical)."""
+    hull = geom.convex_hull
+    if hull.geom_type != "Polygon":
+        return []
+    pts = list(hull.exterior.coords)
+    edges = []
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        length = math.hypot(x1 - x0, y1 - y0)
+        if length > 0:
+            edges.append((length, math.degrees(math.atan2(y1 - y0, x1 - x0))))
+    edges.sort(reverse=True)
+    long_edges = [e for e in edges if e[0] >= 0.3 * edges[0][0]]
+    if len(long_edges) > max_edges:  # round / many-sided outline: no distinguished edge
+        return []
+    out = set()
+    for _, theta in long_edges:
+        for k in range(4):
+            out.add(round((-theta + 90 * k) % 360, 3))
+    return sorted(out)
+
+
+def _min_width(geom):
+    """Smallest width of the part over all directions (rotating calipers on the convex hull)."""
+    hull = geom.convex_hull
+    if hull.geom_type != "Polygon":
+        return 0.0
+    pts = np.asarray(hull.exterior.coords)[:-1]
+    best = float("inf")
+    for i in range(len(pts)):
+        d = pts[(i + 1) % len(pts)] - pts[i]
+        n = math.hypot(*d)
+        if n == 0:
+            continue
+        dist = np.abs((pts - pts[i]) @ np.array([-d[1], d[0]]) / n)
+        best = min(best, float(dist.max()))
+    return best
+
+
 def _variants(part: PolyPart, step: float, cell: float, pad: float):
-    """Distinct rotations of a part (cached on the part)."""
+    """Distinct rotations of a part (cached on the part).
+
+    Fixed steps (multiples of `step`) plus edge-aligned angles, so that e.g. the hypotenuse
+    of a triangle can lie exactly horizontal whatever the step is.
+    """
     key = (step, cell, pad)
     if key in part._cache:
         return part._cache[key]
     angles = [0.0]
     if part.rotate and step and step < 360:
         angles = [a * step for a in range(int(round(360 / step)))]
+        for a in _aligned_angles(part.geom):
+            if all(min(abs(a - b), 360 - abs(a - b)) > 0.05 for b in angles):
+                angles.append(a)
     seen, out = set(), []
     c = part.geom.centroid
     for ang in angles:
@@ -229,42 +275,59 @@ def _flat_members(part):
     return part.members or [(part.name, part.geom)]
 
 
-def _build_clusters(parts, step, cell, spacing):
-    """Parts list where qty>=2 parts are replaced by rigid 2-up (and 4-up) clusters when clearly tighter."""
-    out, any_cluster = [], False
+def _cluster_options(parts, step, cell, spacing):
+    """For each part with qty>=2: its tight pair / quad prototypes (or None when not clearly tighter)."""
+    opts = []
     for p in parts:
-        qty = int(p.qty)
-        found = None
-        if qty >= 2 and p.members is None:
+        o = {"part": p, "pair": None, "quad": None}
+        if int(p.qty) >= 2 and p.members is None:
             try:
                 found = _best_pair(p, step, cell, spacing)
             except Exception:  # noqa: BLE001 - pairing is only an optimisation
                 found = None
-        if not (found and found[1] >= 1.15 * found[2]):
-            out.append(p)
+            if found and found[1] >= 1.15 * found[2]:
+                o["pair"] = found[0]
+                if int(p.qty) >= 4:  # pair of pairs
+                    try:
+                        q = _best_pair(PolyPart(found[0].name, found[0].geom, 2, found[0].rotate, found[0].members),
+                                       step, cell, spacing)
+                    except Exception:  # noqa: BLE001
+                        q = None
+                    if q and q[1] >= 1.05 * found[1]:
+                        o["quad"] = q[0]
+        opts.append(o)
+    return opts
+
+
+def _single(p, qty):
+    return replace(p, qty=qty)  # shares the variant cache with p
+
+
+def _compose(opts, mode):
+    """Job list: 'plain' = all single parts, 'full' = as many pairs/quads as possible,
+    list of k = k pairs per part (rest single)."""
+    jobs = []
+    for i, o in enumerate(opts):
+        p, qty = o["part"], int(o["part"].qty)
+        if mode == "plain" or o["pair"] is None:
+            jobs.append(_single(p, qty))
             continue
-        pair, eff_pair, _ = found
-        any_cluster = True
-        n_pairs, odd = qty // 2, qty % 2
-        quad = None
-        if n_pairs >= 2:  # pair of pairs
-            try:
-                q = _best_pair(PolyPart(pair.name, pair.geom, n_pairs, pair.rotate, pair.members), step, cell, spacing)
-            except Exception:  # noqa: BLE001
-                q = None
-            if q and q[1] >= 1.05 * eff_pair:
-                quad = q[0]
-        if quad is not None:
-            quad.qty = n_pairs // 2
-            out.append(quad)
-            if n_pairs % 2:
-                out.append(PolyPart(pair.name, pair.geom, 1, pair.rotate, pair.members))
+        if mode == "full":
+            n_pairs = qty // 2
+            if o["quad"] is not None and n_pairs >= 2:
+                jobs.append(replace(o["quad"], qty=n_pairs // 2))
+                n_pairs %= 2
+            if n_pairs:
+                jobs.append(replace(o["pair"], qty=n_pairs))
+            if qty % 2:
+                jobs.append(_single(p, 1))
         else:
-            pair.qty = n_pairs
-            out.append(pair)
-        if odd:
-            out.append(PolyPart(p.name, p.geom, 1, p.rotate))
-    return out, any_cluster
+            k = max(0, min(int(mode[i]), qty // 2))
+            if k:
+                jobs.append(replace(o["pair"], qty=k))
+            if qty - 2 * k:
+                jobs.append(_single(p, qty - 2 * k))
+    return jobs
 
 
 # -------------------------------------------------------------------- decode
@@ -334,23 +397,37 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
     """
     if sheet_w - 2 * margin <= 0 or sheet_h - 2 * margin <= 0:
         raise ValueError("Margin is too large for the sheet")
+    for p in parts:  # fail fast on parts that cannot fit at any rotation
+        if _min_width(p.geom) > min(sheet_w, sheet_h) - 2 * margin + 1e-6 or p.geom.area > (sheet_w - 2 * margin) * (sheet_h - 2 * margin):
+            raise ValueError(f"Part '{p.name}' does not fit on the sheet")
     cell = cell or max(sheet_w, sheet_h) / 800.0
     pad = spacing / 2 + PAD_FACTOR * cell
     rng = random.Random(seed)
     t0 = time.monotonic()
 
-    clusters, any_cluster = _build_clusters(parts, rot_step, cell, spacing)
-    sets = {"plain": list(parts)}
+    opts = _cluster_options(parts, rot_step, cell, spacing)
+    paired_idx = [i for i, o in enumerate(opts) if o["pair"] is not None]
+    any_cluster = bool(paired_idx)
+    sets = {"plain": _compose(opts, "plain")}
     if any_cluster:
-        sets["paired"] = clusters
+        sets["paired"] = _compose(opts, "full")
 
-    plan = []  # deterministic baselines, most promising first
+    plan = []  # deterministic baselines, most promising first: (mode, rule, order, noise)
     for name in (["paired"] if any_cluster else []) + ["plain"]:
         plan.append((name, "xend", "area", 0.0))
+    n_base_min = len(plan)  # always run at least these
+    if any_cluster:  # mix of pairs and singles: k pairs for the biggest paired part, others full
+        big = max(paired_idx, key=lambda i: opts[i]["part"].geom.area * int(opts[i]["part"].qty))
+        maxk = int(opts[big]["part"].qty) // 2
+        ks = sorted({max(1, round(maxk * f)) for f in (0.8, 0.6, 0.4, 0.2)} | set(range(max(1, maxk - 3), maxk)), reverse=True)
+        for k in ks:
+            if 1 <= k < maxk:
+                mode = [int(o["part"].qty) // 2 if o["pair"] is not None else 0 for o in opts]
+                mode[big] = k
+                plan.append((tuple(mode), "xend", "area", 0.0))
     for name in (["paired"] if any_cluster else []) + ["plain"]:
         for rule in ("env", "contact", "yend"):
             plan.append((name, rule, "area", 0.0))
-    n_base_min = len(sets)  # always run at least xend for each set
 
     best, best_fit, errors, runs = None, None, [], 0
     i = 0
@@ -363,12 +440,17 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
         else:
             if elapsed >= time_limit:
                 break
-            setname = rng.choice(list(sets))
+            kind = rng.choice(["plain", "paired", "mixed", "mixed"] if any_cluster else ["plain"])
+            if kind == "mixed":
+                setname = tuple(rng.randint(0, int(o["part"].qty) // 2) if o["pair"] is not None else 0 for o in opts)
+            else:
+                setname = kind
             rule = rng.choice(RULES)
             order = rng.choice(ORDERS + ("shuffle",))
             noise = rng.choice((0.0, 0.1, 0.25))
         i += 1
-        jobs = _order(sets[setname], order, rng)
+        base_jobs = sets[setname] if isinstance(setname, str) else _compose(opts, list(setname))
+        jobs = _order(base_jobs, order, rng)
         try:
             res = _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rule,
                              rng if noise else None, noise)
@@ -382,7 +464,7 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
         if best is None or fit < best_fit:
             best, best_fit = res, fit
             if info is not None:
-                info.update(set=setname, rule=rule, order=order, noise=noise)
+                info.update(set=setname if isinstance(setname, str) else "mixed", rule=rule, order=order, noise=noise)
         if progress:
             frac = min(1.0, (time.monotonic() - t0) / max(time_limit, 1e-9)) if time_limit else min(1.0, i / n_base_min)
             progress(frac, f"layouts tried: {runs} · best: {best_fit[0]} sheet(s), "

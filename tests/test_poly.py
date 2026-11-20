@@ -117,3 +117,20 @@ def test_search_never_worse_than_baseline_and_valid():
     check(better, 900, 600, 5, 3)
     assert info["runs"] >= 2
     assert (len(better), better[-1].used_area) <= (len(base), base[-1].used_area)
+
+
+def test_edge_aligned_rotation_lays_hypotenuse_flat():
+    """Regression: a strip only ~590 high fits right triangles (legs 756 x 800) with the hypotenuse
+    horizontal (needs the part's own edge angle, not a multiple of the 90 degree step)."""
+    from shapes import normalize
+    tri = normalize(Polygon([(0, 800), (756, 800), (756, 0)]))
+    s = nest_polygons([PolyPart("H", tri, 3)], 2500, 600, margin=5, spacing=3, rot_step=90)
+    check(s, 2500, 600, 5, 3)
+    assert [len(x.placements) for x in s] == [3]
+
+
+def test_unfittable_part_fails_fast():
+    t = time.time()
+    with pytest.raises(ValueError):
+        nest_polygons([PolyPart("big", build_shape("rectangle", 5000, 5000), 1)], 2500, 1250)
+    assert time.time() - t < 2
