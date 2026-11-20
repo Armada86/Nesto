@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS nest_runs (
     result JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE nest_runs ADD COLUMN IF NOT EXISTS seconds DOUBLE PRECISION;
 """
 
 
@@ -117,19 +118,19 @@ def save_parts(pid: int, parts: list[dict]):
             )
 
 
-def save_run(pid, sheet_w, sheet_h, margin, spacing, sheets, utilization, result):
+def save_run(pid, sheet_w, sheet_h, margin, spacing, sheets, utilization, result, seconds=None):
     with connect() as c:
         c.execute(
-            "INSERT INTO nest_runs(project_id,sheet_w,sheet_h,margin,spacing,sheets,utilization,result)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-            (pid, sheet_w, sheet_h, margin, spacing, sheets, utilization, json.dumps(result)),
+            "INSERT INTO nest_runs(project_id,sheet_w,sheet_h,margin,spacing,sheets,utilization,result,seconds)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (pid, sheet_w, sheet_h, margin, spacing, sheets, utilization, json.dumps(result), seconds),
         )
 
 
 def list_runs(pid: int):
     with connect() as c:
         return c.execute(
-            "SELECT id, created_at, sheet_w, sheet_h, sheets, utilization FROM nest_runs"
+            "SELECT id, created_at, sheet_w, sheet_h, sheets, utilization, seconds FROM nest_runs"
             " WHERE project_id=%s ORDER BY id DESC", (pid,)
         ).fetchall()
 
