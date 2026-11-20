@@ -31,7 +31,7 @@ def fmt_time(sec):
     return f"{m // 60} h {m % 60:02d} min"
 
 
-st.set_page_config(page_title="Nesto – 2D Nesting", layout="wide", page_icon=branding.favicon())
+st.set_page_config(page_title="Nesto – 2D Nesting", layout="wide", page_icon=branding.PAGE_ICON)
 st.markdown(branding.CSS, unsafe_allow_html=True)
 
 # ---------- database ----------
