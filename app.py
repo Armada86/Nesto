@@ -165,6 +165,19 @@ def set_result(result, run_id=None):
     st.session_state.result_token = st.session_state.get("result_token", 0) + 1
 
 
+def save_as_new_run():
+    """Store the moved layout as a NEW run; the run it came from keeps its original layout."""
+    result = st.session_state.result
+    meta = st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}
+    s = summary(_sheets_from(result))
+    new_id = db.save_run(pid, result[0]["width"], result[0]["height"], meta["margin"], meta["spacing"],
+                         s["sheets"], s["utilization"], result, None)
+    st.session_state.run_id = new_id
+    st.session_state.result_original = copy.deepcopy(result)
+    st.session_state.edit_history = []
+    return new_id
+
+
 @st.dialog("Unsaved moves")
 def unsaved_dialog(action: str, payload=None):
     """The layout on the screen has parts moved by hand and not saved; `action` ("load_run" / "nest") would replace it."""
@@ -173,6 +186,10 @@ def unsaved_dialog(action: str, payload=None):
     st.warning(f"You moved parts by hand ({n} move{'s' if n != 1 else ''}) and have not saved them. {what}")
     run_id = st.session_state.get("run_id")
     c1, c2, c3 = st.columns(3)
+    if st.button("💾 Save as new run & continue", width="stretch", help="Keep the original run as it is and store the moved layout as a new run."):
+        save_as_new_run()
+        st.session_state.pending_action = (action, payload)
+        st.rerun()
     if c1.button("💾 Save & continue", type="primary", width="stretch", disabled=not run_id,
                  help="Store the moved layout in its run first." if run_id else "This layout has no stored run to save to."):
         db.update_run_result(pid, run_id, st.session_state.result)
@@ -611,7 +628,7 @@ with tab_table:
                        "run, nest again or open another project. Switch on *Move parts by dragging* and tap "
                        "**Save changes** to keep them.", icon=None)
         if edit:
-            tb1, tb2, tb3 = st.columns(3)
+            tb1, tb2, tb3, tb4 = st.columns(4)
             run_id = st.session_state.get("run_id")
             if tb1.button("↶ Undo last move", disabled=not history, width="stretch"):
                 si, part, dx, dy = history.pop()
@@ -627,6 +644,11 @@ with tab_table:
                 st.session_state.result_original = copy.deepcopy(st.session_state.result)
                 st.session_state.edit_history = []
                 st.session_state.flash = ("Layout saved to the run.", ":material/check_circle:")
+                st.rerun()
+            if tb4.button("➕ Save as new run", disabled=not history, width="stretch",
+                          help="Keep the original run as it is and store the moved layout as a new run."):
+                nid = save_as_new_run()
+                st.session_state.flash = (f"Saved as new run #{nid}.", ":material/check_circle:")
                 st.rerun()
             if not history:
                 st.caption("No moves yet. Every sheet below can be edited.")
