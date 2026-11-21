@@ -47,7 +47,10 @@
     send("streamlit:setFrameHeight", { height: h });
   }
   window.addEventListener("message", function (ev) {
-    if (ev.data && ev.data.type === "streamlit:render") render(ev.data.args || {});
+    if (ev.data && ev.data.type === "streamlit:render") {
+      if (S && S.drag) { lateRender = ev.data.args || {}; return; }               // never redraw under the user's finger
+      render(ev.data.args || {});
+    }
   });
   window.addEventListener("resize", setHeight);
   window.__nestoState = function () { return S; };   // read-only handle for automated tests
@@ -60,6 +63,38 @@
     return e;
   }
   function fmt(v) { return (Math.round(v * 10) / 10).toString(); }
+
+  // ---- edits the server has not confirmed yet ----
+  // Every edit gets a sequence number and is kept here until a render message shows that the server has handled it.
+  // Each message carries all unconfirmed edits, so edits made while the server is still busy are never lost.
+  var Q = { pending: [], next: 0 };
+  var lateRender = null;                                                             // a render that arrived during a drag
+  function newId() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+  function pushOp(op) {
+    op.seq = Q.next++;
+    Q.pending.push(op);
+    if (Q.pending.length > 40) Q.pending.shift();
+    send("streamlit:setComponentValue", { dataType: "json", value: { id: newId(), ops: Q.pending.slice() } });
+  }
+  // the geometry change of an op, applied to the local copy of the sheet (no feasibility check: it was done when made)
+  function applyLocal(op) {
+    var i = op.part;
+    if (i < 0 || i >= S.parts.length) return;
+    var polys = S.parts[i].polys;
+    if (op.kind === "move") polys = Geom.translatePolys(polys, op.dx, op.dy);
+    else polys = Geom.translatePolys(Geom.transformPolys(polys, 0, 0, op.kind, op.value), op.nx || 0, op.ny || 0);
+    S.parts[i] = Geom.makePart(polys);
+  }
+  // fold a part's drag offset into its outline and report the move
+  function commitMove(i) {
+    var o = S.offs[i];
+    if (Math.abs(o[0]) < 1e-6 && Math.abs(o[1]) < 1e-6) { S.offs[i] = [0, 0]; return; }
+    var dx = o[0], dy = o[1];
+    S.parts[i] = Geom.makePart(Geom.translatePolys(S.parts[i].polys, dx, dy));
+    S.offs[i] = [0, 0];
+    paintPart(i); place(i);
+    pushOp({ part: i, kind: "move", dx: dx, dy: dy });
+  }
 
   function render(a) {
     var keepSel = S ? S.sel : null, keepSub = S ? S.sub : null;
@@ -84,6 +119,11 @@
     });
     var fs = Math.max(H / 40, 6);
     S.fs = fs;
+    // what the server has handled is in the parts it sent; edits it has not seen yet are put on top again
+    var srv = a.rev || 0;
+    Q.pending = Q.pending.filter(function (o) { return o.seq >= srv; });
+    if (srv > Q.next) Q.next = srv;
+    Q.pending.forEach(applyLocal);
     a.parts.forEach(function (p, idx) {
       var g = el("g", { "class": "part", "data-i": idx }, svg);
       S.nodes.push(g);
@@ -197,8 +237,8 @@
   function doOp(op, value) {
     var i = S.sel;
     if (i === null || S.drag) return;
-    var o = S.offs[i];
-    var polys = Geom.transformPolys(S.parts[i].polys, o[0], o[1], op, value);
+    clearTimeout(S.sendTimer); commitMove(i);                                        // a pending arrow-key nudge goes first
+    var polys = Geom.transformPolys(S.parts[i].polys, 0, 0, op, value);
     var part = Geom.makePart(polys);
     var sh = Geom.shiftIntoSheet(part, S.W, S.H, S.margin);                          // a part at the edge may be pushed back in
     if (sh) { polys = Geom.translatePolys(polys, sh[0], sh[1]); part = Geom.makePart(polys); }
@@ -209,12 +249,7 @@
     }
     S.parts[i] = part; S.offs[i] = [0, 0];
     paintPart(i); place(i); describe(false); placeMenu();
-    clearTimeout(S.sendTimer);
-    send("streamlit:setComponentValue", {
-      dataType: "json",
-      value: { id: Math.random().toString(36).slice(2) + Date.now().toString(36), rev: S.rev, part: i, op: op, value: value,
-               ox: o[0], oy: o[1], nx: sh[0], ny: sh[1] }
-    });
+    pushOp({ part: i, kind: op, value: value, nx: sh[0], ny: sh[1] });
   }
   function describe(blocked) {
     if (S.sel === null) return;
@@ -273,19 +308,11 @@
       place(d.i);
     }
     S.drag = null;
+    commitMove(d.i);
     describe(false);
     showMenu();
-    emit(d.i);
+    if (lateRender) { var la = lateRender; lateRender = null; render(la); }
   }
-  function emit(i) {
-    var o = S.offs[i];
-    if (Math.abs(o[0]) < 1e-6 && Math.abs(o[1]) < 1e-6) return;
-    send("streamlit:setComponentValue", {
-      dataType: "json",
-      value: { id: Math.random().toString(36).slice(2) + Date.now().toString(36), rev: S.rev, part: i, dx: o[0], dy: o[1] }
-    });
-  }
-
   // clicking the empty sheet deselects
   svg.addEventListener("pointerdown", function (ev) {
     if (!S || ev.target.closest(".part")) return;                    // a part was hit: onDown handles it
@@ -323,7 +350,7 @@
     describe(r[2] && Math.hypot(r[0] - o[0] - dx, r[1] - o[1] - dy) > 1e-6);
     placeMenu();
     clearTimeout(S.sendTimer);
-    S.sendTimer = setTimeout(function () { emit(i); }, 450);
+    S.sendTimer = setTimeout(function () { commitMove(i); }, 450);
   });
 })();
 </script>

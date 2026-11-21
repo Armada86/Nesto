@@ -82,11 +82,14 @@ def unsaved_moves() -> int:
 def leave_guard(n: int) -> None:
     """Make the browser ask before the page is reloaded / closed / left while there are unsaved moves.
     (Always rendered: with n = 0 it removes the handler again.)"""
-    components.html(
-        "<script>(function(){var w=window.parent;"
-        "if(w.__nestoGuard){w.removeEventListener('beforeunload',w.__nestoGuard);w.__nestoGuard=null;}"
-        f"if({int(n)}>0){{w.__nestoGuard=function(e){{e.preventDefault();e.returnValue='';return '';}};"
-        "w.addEventListener('beforeunload',w.__nestoGuard);}})();</script>", height=0)
+    html = ("<script>(function(){var w=window.parent;"
+            "if(w.__nestoGuard){w.removeEventListener('beforeunload',w.__nestoGuard);w.__nestoGuard=null;}"
+            f"if({int(n)}>0){{w.__nestoGuard=function(e){{e.preventDefault();e.returnValue='';return '';}};"
+            "w.addEventListener('beforeunload',w.__nestoGuard);}})();</script>")
+    if hasattr(st, "iframe"):                       # st.components.v1.html is being removed from Streamlit
+        st.iframe(html, height=1)
+    else:
+        components.html(html, height=0)
 
 
 @st.dialog("New project")
@@ -264,7 +267,6 @@ if pid and not proj:  # deleted elsewhere
     open_project(None)
     st.rerun()
 st.session_state.pid_name = proj["name"] if proj else None
-leave_guard(unsaved_moves() if proj else 0)
 
 # ---------- sidebar ----------
 with st.sidebar:
@@ -459,6 +461,8 @@ with tab_table:
 .st-key-nest_btn button p { font-size: 1.9rem !important; font-weight: 600 !important; }
 .st-key-nest_btn button:hover { background-color: #15803d !important; border-color: #166534 !important; }
 .st-key-nest_btn button:active { background-color: #166534 !important; }
+/* while editing parts: no greying out of the page during the short re-runs after each move */
+[data-testid="stMain"]:has(iframe[src*="sheet_editor"]) [data-stale="true"] { opacity: 1 !important; transition: none !important; }
 /* light blue export buttons */
 [class*="st-key-dl_"] button { background-color: #dbeafe !important; border: 1px solid #93c5fd !important; color: #1e3a8a !important; }
 [class*="st-key-dl_"] button p { color: #1e3a8a !important; }
@@ -568,6 +572,135 @@ with st.sidebar:
     else:
         st.caption("No runs yet.")
 
+def scrap_lists(result, margin, cache) -> list:
+    """Usable offcut rectangles of every sheet; cached per sheet layout, so an edit only recomputes its own sheet."""
+    out = []
+    for i, sh in enumerate(_sheets_from(result)):
+        k = (i, hash(json.dumps(result[i])), margin)
+        if k not in cache:
+            if len(cache) > 300:
+                cache.clear()
+            cache[k] = free_rectangles(sh, margin)
+        out.append(cache[k])
+    return out
+
+
+@st.fragment
+def sheets_area(meta, scrap_cache):
+    """The unsaved-moves banner, the edit toolbar and the sheets. It is a fragment: editing a part re-runs only this
+    function, not the whole page, so the page does not grey out and a move feels immediate."""
+    result = st.session_state.result
+    sheets = _sheets_from(result)
+    edit = st.session_state.get("edit_mode", False)
+    history = st.session_state.get("edit_history", [])
+    top = st.container()                      # drawn below, after the sheets have handled the latest edit
+    def draw_toolbar():
+        history = st.session_state.get("edit_history", [])
+        leave_guard(len(history))
+        if history:
+            n = len(history)
+            st.warning(f"⚠ **{n} unsaved move{'s' if n != 1 else ''}.** They are lost if you reload the page, load another "
+                       "run, nest again or open another project. Switch on *Edit parts* and tap "
+                       "**Save changes** to keep them.", icon=None)
+        if edit:
+            tb1, tb2, tb3, tb4 = st.columns(4)
+            run_id = st.session_state.get("run_id")
+            if tb1.button("↶ Undo last move", disabled=not history, width="stretch"):
+                si, part, dx, dy = history.pop()
+                if dx == "snapshot":                                  # a rotation / flip: put the old placement back
+                    result[si]["placements"][part] = dy
+                else:
+                    apply_move(result[si], part, -dx, -dy, meta["margin"], meta["spacing"])
+                st.session_state.edit_rev[si] = st.session_state.edit_rev.get(si, 0) + RESYNC   # editors drop what they had queued
+                st.rerun(scope="fragment")
+            if tb2.button("Reset layout", disabled=not history, width="stretch"):
+                set_result(copy.deepcopy(st.session_state.result_original), run_id)
+                st.rerun()
+            if tb3.button("💾 Save changes", type="primary", disabled=not (history and run_id), width="stretch",
+                          help="Store the moved layout in this run of the project history."):
+                db.update_run_result(pid, run_id, result)
+                st.session_state.result_original = copy.deepcopy(result)
+                st.session_state.edit_history = []
+                st.session_state.flash = ("Layout saved to the run.", ":material/check_circle:")
+                st.rerun()
+            if tb4.button("➕ Save as new run", disabled=not history, width="stretch",
+                          help="Keep the original run as it is and store the moved layout as a new run."):
+                nid = save_as_new_run()
+                st.session_state.flash = (f"Saved as new run #{nid}.", ":material/check_circle:")
+                st.rerun()
+            if not history:
+                st.caption("No moves yet. Every sheet below can be edited.")
+    for i, sh in enumerate(sheets, 1):
+        ekey = f"sheet_editor_{st.session_state.result_token}_{i}"
+        if edit:
+            # the edits the browser reported since the last run are handled first, so everything drawn below is current
+            mv = st.session_state.get(ekey)
+            seen = st.session_state.setdefault("applied_moves", set())
+            if isinstance(mv, dict) and mv.get("id") not in seen:
+                seen.add(mv.get("id"))
+                apply_edits(i - 1, mv.get("ops") or [], meta, history)
+        scrap = scrap_lists_for(result, i - 1, scrap_cache)
+        best = scrap[0] if scrap else None
+        title = (f"Sheet {i} – {sh.utilization:.2%} used"
+                 + (f" · largest offcut {best[2]:.0f} × {best[3]:.0f}" if best else ""))
+        if not edit:
+            st.pyplot(draw_sheet(sh, f"Sheet {i}", scrap))
+            continue
+        st.markdown(f"**{title}**")
+        ensure_polys(result[i - 1])
+        sheet_editor(result[i - 1], meta["margin"], meta["spacing"], scrap, st.session_state.edit_rev.get(i - 1, 0), key=ekey)
+
+    with top:
+        draw_toolbar()
+
+def scrap_lists_for(result, k, cache):
+    sh = _sheets_from([result[k]])[0]
+    key = (k, hash(json.dumps(result[k])), margin)
+    if key not in cache:
+        if len(cache) > 300:
+            cache.clear()
+        cache[key] = free_rectangles(sh, margin)
+    return cache[key]
+
+
+RESYNC = 100000   # added to a sheet's edit counter when the editor must drop its queued edits (undo, refused edit)
+
+
+def apply_edits(si: int, ops: list, meta: dict, history: list) -> bool:
+    """Apply the edits the browser reports for sheet `si`, in order. Each op carries a sequence number; the sheet
+    remembers how many it has handled (edit_rev), so a resent or out-of-order op is never applied twice.
+    Returns True when an edit was refused (the editor is then re-synchronised by the next draw)."""
+    sh_i = st.session_state.result[si]
+    expected = st.session_state.edit_rev.get(si, 0)
+    for o in sorted((o for o in ops if isinstance(o, dict) and isinstance(o.get("seq"), int)), key=lambda o: o["seq"]):
+        if o["seq"] < expected:
+            continue                                              # already handled
+        if o["seq"] > expected:
+            break                                                 # a gap: wait for the earlier ones
+        try:
+            k = int(o["part"])
+            if o.get("kind") in ("rotate", "flip"):
+                before = copy.deepcopy(sh_i["placements"][k]) if 0 <= k < len(sh_i["placements"]) else None
+                ok, msg = apply_transform(sh_i, k, o["kind"], o.get("value"), 0.0, 0.0, float(o.get("nx", 0)),
+                                          float(o.get("ny", 0)), meta["margin"], meta["spacing"])
+                entry = (si, k, "snapshot", before)
+            else:
+                ok, msg = apply_move(sh_i, k, float(o["dx"]), float(o["dy"]), meta["margin"], meta["spacing"])
+                entry = (si, k, float(o["dx"]), float(o["dy"]))
+        except (KeyError, TypeError, ValueError):
+            ok, msg = False, "invalid request"
+        if ok:
+            history.append(entry)
+            st.session_state.edit_history = history
+            expected += 1
+            st.session_state.edit_rev[si] = expected
+        else:
+            st.toast(f"That change is not allowed: {msg}.", icon=":material/block:")
+            st.session_state.edit_rev[si] = expected + RESYNC
+            return True
+    return False
+
+
 # ---------- results: shown on the first tab only ----------
 with tab_table:
     if "result" in st.session_state:
@@ -586,106 +719,46 @@ with tab_table:
                        f"({'paired parts' if info['set'] == 'paired' else 'single parts'}, placement rule: {info['rule']}"
                        f"{', scrap-aware' if info.get('protect') else ''}). Green dashed boxes = usable scrap.")
 
-        # scrap analysis (cached per result): used by the drawings and by the Excel cut list
-        key = (hash(json.dumps(st.session_state.result)), margin)
-        if st.session_state.get("scrap_key") != key:
-            st.session_state.scrap_key = key
-            st.session_state.scrap = [free_rectangles(sh, margin) for sh in sheets]
-
-        # 2. export, right above the nest
+        # 2. export, right above the nest. The files are built when you click (deferred), from the layout as it is
+        #    at that moment, so hand edits are always included and every edit stays cheap.
         st.subheader("Export")
         with_names = st.checkbox("Include part names as text (layer LABELS)", value=True)
         meta = st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}
-        xlsx = cutlist_xlsx(sheets, project=proj["name"], margin=meta["margin"], spacing=meta["spacing"],
-                            seconds=st.session_state.get("nest_seconds"), parts=st.session_state.get("nest_parts"),
-                            offcuts=st.session_state.scrap)
-        safe = re.sub(r"[^A-Za-z0-9_-]+", "_", proj["name"]).strip("_") or "nest"
+        result_ref, scrap_cache = st.session_state.result, st.session_state.setdefault("scrap_cache", {})
+        seconds, nest_parts = st.session_state.get("nest_seconds"), st.session_state.get("nest_parts")
+        pname = proj["name"]
+        safe = re.sub(r"[^A-Za-z0-9_-]+", "_", pname).strip("_") or "nest"
+
+        def _sheets_now():
+            return _sheets_from(result_ref)
+
+        def _xlsx():
+            return cutlist_xlsx(_sheets_now(), project=pname, margin=meta["margin"], spacing=meta["spacing"],
+                                seconds=seconds, parts=nest_parts, offcuts=scrap_lists(result_ref, margin, scrap_cache))
+
         d = st.columns(4)
         if len(sheets) == 1:
-            d[0].download_button("⬇ DXF (sheet 1)", sheet_dxf(sheets[0], with_names), "sheet_01.dxf", "application/dxf",
-                                 width="stretch", key="dl_dxf")
+            d[0].download_button("⬇ DXF (sheet 1)", lambda: sheet_dxf(_sheets_now()[0], with_names), "sheet_01.dxf",
+                                 "application/dxf", width="stretch", key="dl_dxf", on_click="ignore")
             slot = 1
         else:
-            d[0].download_button(f"⬇ DXF – {len(sheets)} files (ZIP)", sheets_zip(sheets, labels=with_names),
-                                 "nest_sheets.zip", "application/zip", width="stretch", key="dl_dxf_zip")
-            d[1].download_button("⬇ DXF – all sheets in one file (stacked)", all_sheets_dxf(sheets, labels=with_names),
-                                 "nest_all_sheets.dxf", "application/dxf", width="stretch", key="dl_dxf_all")
+            d[0].download_button(f"⬇ DXF – {len(sheets)} files (ZIP)", lambda: sheets_zip(_sheets_now(), labels=with_names),
+                                 "nest_sheets.zip", "application/zip", width="stretch", key="dl_dxf_zip", on_click="ignore")
+            d[1].download_button("⬇ DXF – all sheets in one file (stacked)",
+                                 lambda: all_sheets_dxf(_sheets_now(), labels=with_names),
+                                 "nest_all_sheets.dxf", "application/dxf", width="stretch", key="dl_dxf_all", on_click="ignore")
             slot = 2
-        d[slot].download_button("⬇ Cut list (Excel)", xlsx, f"{safe}_cutlist.xlsx",
+        d[slot].download_button("⬇ Cut list (Excel)", _xlsx, f"{safe}_cutlist.xlsx",
                                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch",
-                                key="dl_xlsx")
-        d[slot + 1].download_button("⬇ Layout (JSON)", json.dumps(st.session_state.result), "nest.json", width="stretch",
-                                key="dl_json")
+                                key="dl_xlsx", on_click="ignore")
+        d[slot + 1].download_button("⬇ Layout (JSON)", lambda: json.dumps(result_ref), "nest.json", width="stretch",
+                                    key="dl_json", on_click="ignore")
 
         # 3. the sheets
         edit = st.toggle("✋ Edit parts: move, rotate, flip", key="edit_mode",
                          help="Click a part to get its menu. Drag it (or use the arrow keys) to move it; Rotate and Flip turn it in place when it has room. "
                               "A part moves freely in the empty space "
                               "around it and stops when it touches a neighbouring part or the sheet edge.")
-        history = st.session_state.get("edit_history", [])
-        if history:
-            n = len(history)
-            st.warning(f"⚠ **{n} unsaved move{'s' if n != 1 else ''}.** They are lost if you reload the page, load another "
-                       "run, nest again or open another project. Switch on *Edit parts* and tap "
-                       "**Save changes** to keep them.", icon=None)
-        if edit:
-            tb1, tb2, tb3, tb4 = st.columns(4)
-            run_id = st.session_state.get("run_id")
-            if tb1.button("↶ Undo last move", disabled=not history, width="stretch"):
-                si, part, dx, dy = history.pop()
-                if dx == "snapshot":                                  # a rotation / flip: put the old placement back
-                    st.session_state.result[si]["placements"][part] = dy
-                else:
-                    apply_move(st.session_state.result[si], part, -dx, -dy, meta["margin"], meta["spacing"])
-                st.session_state.edit_rev[si] = st.session_state.edit_rev.get(si, 0) + 1
-                st.rerun()
-            if tb2.button("Reset layout", disabled=not history, width="stretch"):
-                set_result(copy.deepcopy(st.session_state.result_original), run_id)
-                st.rerun()
-            if tb3.button("💾 Save changes", type="primary", disabled=not (history and run_id), width="stretch",
-                          help="Store the moved layout in this run of the project history."):
-                db.update_run_result(pid, run_id, st.session_state.result)
-                st.session_state.result_original = copy.deepcopy(st.session_state.result)
-                st.session_state.edit_history = []
-                st.session_state.flash = ("Layout saved to the run.", ":material/check_circle:")
-                st.rerun()
-            if tb4.button("➕ Save as new run", disabled=not history, width="stretch",
-                          help="Keep the original run as it is and store the moved layout as a new run."):
-                nid = save_as_new_run()
-                st.session_state.flash = (f"Saved as new run #{nid}.", ":material/check_circle:")
-                st.rerun()
-            if not history:
-                st.caption("No moves yet. Every sheet below can be edited.")
-        for i, sh in enumerate(sheets, 1):
-            best = st.session_state.scrap[i - 1][0] if st.session_state.scrap[i - 1] else None
-            title = (f"Sheet {i} – {sh.utilization:.2%} used"
-                     + (f" · largest offcut {best[2]:.0f} × {best[3]:.0f}" if best else ""))
-            if not edit:
-                st.pyplot(draw_sheet(sh, f"Sheet {i}", st.session_state.scrap[i - 1]))
-                continue
-            st.markdown(f"**{title}**")
-            ensure_polys(st.session_state.result[i - 1])
-            rev = st.session_state.edit_rev.get(i - 1, 0)
-            mv = sheet_editor(st.session_state.result[i - 1], meta["margin"], meta["spacing"],
-                              st.session_state.scrap[i - 1], rev, key=f"sheet_editor_{st.session_state.result_token}_{i}")
-            seen = st.session_state.setdefault("applied_moves", set())
-            if mv and mv.get("id") not in seen:
-                seen.add(mv.get("id"))
-                if mv.get("rev") == rev:
-                    sh_i, k = st.session_state.result[i - 1], int(mv["part"])
-                    if mv.get("op"):                                  # rotate / flip
-                        before = copy.deepcopy(sh_i["placements"][k]) if 0 <= k < len(sh_i["placements"]) else None
-                        ok, msg = apply_transform(sh_i, k, mv["op"], mv.get("value"), float(mv.get("ox", 0)), float(mv.get("oy", 0)),
-                                                  float(mv.get("nx", 0)), float(mv.get("ny", 0)), meta["margin"], meta["spacing"])
-                        if ok:
-                            history.append((i - 1, k, "snapshot", before))
-                    else:
-                        ok, msg = apply_move(sh_i, k, float(mv["dx"]), float(mv["dy"]), meta["margin"], meta["spacing"])
-                        if ok:
-                            history.append((i - 1, k, float(mv["dx"]), float(mv["dy"])))
-                    if ok:
-                        st.session_state.edit_history = history
-                    else:
-                        st.session_state.flash = (f"That change is not allowed: {msg}.", ":material/block:")
-                    st.session_state.edit_rev[i - 1] = rev + 1
-                st.rerun()
+        sheets_area(meta, scrap_cache)
+    else:
+        leave_guard(0)
