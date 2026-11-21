@@ -480,3 +480,25 @@ def test_pairs_of_flipped_parts_stay_valid():
     for sh in s:
         for p in sh.placements:
             assert p.area == pytest.approx(part.area, rel=1e-3)           # every placed part has the part's own area
+
+
+def test_fine_rotation_step_is_never_worse_and_reports_the_fine_pass():
+    from shapely.geometry import Polygon
+    import nesting_poly as npl
+    parts = [npl.PolyPart("t", Polygon([(0, 0), (260, 0), (90, 170)]), 6), npl.PolyPart("b", Polygon([(0, 0), (300, 0), (300, 60), (0, 60)]), 3)]
+    coarse, fine = {}, {}
+    a = npl.nest_polygons(parts, 1000, 600, 5, 3, rot_step=15, cell=8, info=coarse)
+    b = npl.nest_polygons(parts, 1000, 600, 5, 3, rot_step=2, cell=8, info=fine)
+    assert fine["fine_step"] == 2.0 and coarse.get("fine_step", 0.0) == 0.0
+    assert npl._fitness(b) <= npl._fitness(a)                                  # the pass only replaces a layout when better
+    assert sum(len(s.placements) for s in b) == 9
+
+
+def test_extra_orientations_are_added_to_the_variants():
+    from shapely.geometry import Polygon
+    import nesting_poly as npl
+    p = npl.PolyPart("t", Polygon([(0, 0), (260, 0), (90, 170)]), 1, flip=False)
+    q = npl.PolyPart("t", p.geom, 1, flip=False, extra=((7.0, False), (352.0, False)))
+    base = {round(v.ang, 1) for v in npl._variants(p, 15.0, 8.0, 2.0, False)}
+    more = {round(v.ang, 1) for v in npl._variants(q, 15.0, 8.0, 2.0, False)}
+    assert {7.0, 352.0} <= more and not ({7.0, 352.0} & base) and base <= more

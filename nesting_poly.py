@@ -51,6 +51,7 @@ PAD_FACTOR = 0.75  # > sqrt(2)/2: any cell touched by the part has its centre in
 RULES = ("xend", "env", "contact", "yend")
 ORDERS = ("area", "long", "perimeter", "width", "height")
 SMALL_PART = 0.08  # a part smaller than this fraction of the usable sheet is "small": it hunts for gaps
+FINE_BELOW = 15.0   # rotation steps finer than this use the fine-tuning pass
 REGULAR = 0.7      # a free region is "regular scrap" if its biggest rectangle fills >= 70 % of the region
 MAX_SCRAP = 4      # regular scrap rectangles tracked per sheet
 MIN_PIECE_SCORE = 0.02  # a scrap piece counts as squarish scrap in the ranking from 2 % of a sheet (area x squareness)
@@ -66,6 +67,7 @@ class PolyPart:
     members: list | None = None  # rigid cluster: [(name, geom in cluster coordinates)]
     _cache: dict = field(default_factory=dict, repr=False)
     flip: bool = True  # may be turned over (mirrored): both sides of the sheet are the same
+    extra: tuple = ()  # extra orientations to try: ((angle, mirrored), ...), used by the fine-tuning pass
 
 
 @dataclass
@@ -166,7 +168,7 @@ def _variants(part: PolyPart, step: float, cell: float, pad: float, allow_flip: 
     Fixed steps (multiples of `step`) plus edge-aligned angles, so that e.g. the hypotenuse
     of a triangle can lie exactly horizontal whatever the step is.
     """
-    key = (step, cell, pad, allow_flip)
+    key = (step, cell, pad, allow_flip, part.extra)
     if key in part._cache:
         return part._cache[key]
     seen, out = set(), []
@@ -182,6 +184,9 @@ def _variants(part: PolyPart, step: float, cell: float, pad: float, allow_flip: 
             for a in _aligned_angles(base):
                 if all(min(abs(a - b), 360 - abs(a - b)) > 0.05 for b in angles):
                     angles.append(a)
+        for a, mir in part.extra:      # fine-tuning orientations (see nest_polygons)
+            if bool(mir) == mirror and all(min(abs(a - b), 360 - abs(a - b)) > 0.05 for b in angles):
+                angles.append(a)
         for ang in angles:
             g = affinity.rotate(base, ang, origin=(c.x, c.y)) if ang else base
             if mirror and any(_same_shape(g, v.geom) for v in out):
@@ -613,7 +618,7 @@ def _small_part_spot(grids, variants, min_cells, rule, rng, noise):
 
 # -------------------------------------------------------------------- decode
 def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rule, rng=None, noise=0.0,
-               protect=False, allow_flip=True):
+               protect=False, allow_flip=True, usage=None):
     grids: list[_Grid] = []
     for part in jobs:
         variants = _variants(part, rot_step, cell, pad, allow_flip)
@@ -641,6 +646,8 @@ def _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rul
                 grids.append(grid)
             k, ox, oy = placed[:3]
             v = variants[k]
+            if usage is not None:
+                usage.setdefault(part.name, set()).add((round(float(v.ang) % 360, 3), bool(v.mirror)))
             grid.commit(v.mask, ox, oy)
             for name, mg in members:
                 if part.members:
@@ -848,6 +855,12 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
             raise ValueError(f"Part '{p.name}' does not fit on the sheet")
     cell = cell or max(sheet_w, sheet_h) / 800.0
     pad = spacing / 2 + PAD_FACTOR * cell
+    # Steps finer than 15 degrees: the search itself runs on the 15 degree set (every extra angle multiplies the
+    # time), then a fine-tuning pass re-nests the best layout with all the angles within +-7.5 degrees (at the fine
+    # step) of the angles it uses. The pass only replaces the layout when the result is better.
+    fine = 0.0
+    if 0 < rot_step < FINE_BELOW:
+        fine, rot_step = float(rot_step), FINE_BELOW
     rng = random.Random(seed)
     t0 = time.monotonic()
 
@@ -886,6 +899,7 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
             plan.append((name, rule, "area", 0.0, True, False))
 
     best, best_fit, errors, runs, best_params = None, None, [], 0, None
+    best_jobs, best_usage, best_flip = None, {}, False
     i = 0
     while True:
         elapsed = time.monotonic() - t0
@@ -911,9 +925,10 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
         i += 1
         base_jobs = sets[setname] if isinstance(setname, str) else _compose(opts, list(setname))
         jobs = _order(base_jobs, order, rng)
+        usage = {}
         try:
             res = _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rule,
-                             rng if noise else None, noise, protect, allow_flip)
+                             rng if noise else None, noise, protect, allow_flip, usage)
         except ValueError as e:
             errors.append(e)
             if len(errors) > 3 + len(plan) and best is None:
@@ -924,6 +939,7 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
         if best is None or fit < best_fit:
             best, best_fit = res, fit
             best_params = (setname, rule, order, noise, protect)
+            best_jobs, best_usage, best_flip = jobs, usage, allow_flip
             if info is not None:
                 info.update(set=setname if isinstance(setname, str) else "mixed", rule=rule, order=order, noise=noise,
                             protect=protect, allow_flip=allow_flip)
@@ -933,10 +949,36 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
             progress(frac, f"layouts tried: {runs} · best: {best_fit[0]} sheet(s){big}")
     if best is None:
         raise errors[0]
+    fine_gain = False
+    if fine and best_jobs:
+        half = int(FINE_BELOW / 2 / fine + 1e-9)
+        for _round in range(2):
+            if progress:
+                progress(0.97, f"fine-tuning rotation ({fine:g}° steps)…")
+            refined = []
+            for j in best_jobs:
+                ex = set(j.extra)
+                for a, mir in best_usage.get(j.name, ()):
+                    for k in range(-half, half + 1):
+                        ex.add((round((a + k * fine) % 360, 3), mir))
+                refined.append(replace(j, extra=tuple(sorted(ex))))
+            usage = {}
+            try:
+                res = _nest_once(refined, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, best_params[1],
+                                 None, 0.0, best_params[4], best_flip, usage)
+            except ValueError:
+                break
+            runs += 1
+            fit = _fitness(res)
+            if fit < best_fit:
+                best, best_fit, best_jobs, best_usage, fine_gain = res, fit, refined, usage, True
+            else:
+                break
     if progress:
         progress(1.0, "settling parts onto the sheet edges…")
     moved, changed = settle_layout(best, margin, spacing, seconds=min(20.0, max(5.0, 0.3 * time_limit)))
     if info is not None:
         info.update(runs=runs, seconds=time.monotonic() - t0, fitness=best_fit, settled_parts=moved, settled_sheets=changed,
-                    flipped_parts=sum(1 for sh in best for p in sh.placements if p.mirrored))
+                    flipped_parts=sum(1 for sh in best for p in sh.placements if p.mirrored),
+                    fine_step=fine, fine_improved=fine_gain)
     return best
