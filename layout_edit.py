@@ -70,7 +70,7 @@ def apply_move(sheet: dict, index: int, dx: float, dy: float, margin: float, spa
 def apply_transform(sheet: dict, index: int, op: str, value, ox: float, oy: float, nx: float, ny: float,
                     margin: float, spacing: float):
     """Rotate (op "rotate", value = degrees counter-clockwise) or mirror (op "flip", value "h" = left-right,
-    "v" = top-bottom) part `index` about the centre of its bounding box, in place.
+    "v" = top-bottom) part `index` (rotate: about its centre of mass, flip: about the middle of its bounding box), in place.
 
     The part is shifted by (ox, oy) first (a drag the browser has not reported yet), turned, then shifted by (nx, ny)
     (used to bring a turned part at the sheet edge back inside the margin). Returns (ok, message); the sheet is only
@@ -81,8 +81,9 @@ def apply_transform(sheet: dict, index: int, op: str, value, ox: float, oy: floa
     if not all(isinstance(v, (int, float)) and abs(v) < 1e6 for v in (ox, oy, nx, ny)):
         return False, "invalid move"
     g = affinity.translate(placement_geom(pl[index]), ox, oy)
-    cx, cy = (g.bounds[0] + g.bounds[2]) / 2, (g.bounds[1] + g.bounds[3]) / 2
+    cx, cy = (g.bounds[0] + g.bounds[2]) / 2, (g.bounds[1] + g.bounds[3]) / 2     # flip: the middle of the bounding box
     if op == "rotate":
+        cx, cy = g.centroid.x, g.centroid.y                                        # rotate: the centre of mass (turning back returns)
         if not isinstance(value, (int, float)) or abs(value) > 720:
             return False, "invalid angle"
         g = affinity.rotate(g, value, origin=(cx, cy))

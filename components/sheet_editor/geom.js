@@ -168,11 +168,29 @@
   }
 
   /** rotate (op "rotate", value = degrees, counter-clockwise) or mirror (op "flip", value "h" = left-right, "v" = top-bottom)
-   *  a part about the centre of its bounding box. The part is first shifted by (ox, oy), the drag offset it carries.
+   *  a part about the centre of its bounding box (flip) or its centre of mass (rotate). The part is first shifted by (ox, oy), the drag offset it carries.
    *  Same convention as layout_edit.apply_transform on the server. Returns new polygons in sheet coordinates. */
+  function centroid(polys) {            // area centroid (holes count as negative area)
+    let A = 0, X = 0, Y = 0;
+    const ring = function (pts, sign) {
+      let a = 0, x = 0, y = 0;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const c = pts[i][0] * pts[i + 1][1] - pts[i + 1][0] * pts[i][1];
+        a += c; x += (pts[i][0] + pts[i + 1][0]) * c; y += (pts[i][1] + pts[i + 1][1]) * c;
+      }
+      const sg = a < 0 ? -1 : 1;           // orientation does not matter: use the absolute area
+      A += sign * Math.abs(a) / 2; X += sign * sg * x / 6; Y += sign * sg * y / 6;
+    };
+    for (const poly of polys) { ring(poly.ext, 1); for (const h of poly.holes || []) ring(h, -1); }
+    return A > 1e-9 ? [X / A, Y / A] : null;
+  }
   function transformPolys(polys, ox, oy, op, value) {
     const b = makePart(polys).bbox;
-    const cx = (b[0] + b[2]) / 2 + ox, cy = (b[1] + b[3]) / 2 + oy;
+    let cx = (b[0] + b[2]) / 2 + ox, cy = (b[1] + b[3]) / 2 + oy;
+    if (op === 'rotate') {                // turn about the centre of mass, so that turning back returns to the same spot
+      const c = centroid(polys);
+      if (c) { cx = c[0] + ox; cy = c[1] + oy; }
+    }
     let f;
     if (op === 'rotate') {
       const a = value * Math.PI / 180, co = Math.cos(a), si = Math.sin(a);
