@@ -602,9 +602,9 @@ def sheets_area(meta, scrap_cache):
         if history:
             n = len(history)
             st.warning(f"⚠ **{n} unsaved move{'s' if n != 1 else ''}.** They are lost if you reload the page, load another "
-                       "run, nest again or open another project. Switch on *Edit parts* and tap "
-                       "**Save changes** to keep them.", icon=None)
-        if edit:
+                       "run, nest again or open another project. Tap **Save changes** (or **Save as new run**) to keep them.",
+                       icon=None)
+        if edit or history:                                       # the save buttons stay while there is something to save
             tb1, tb2, tb3, tb4 = st.columns(4)
             run_id = st.session_state.get("run_id")
             if tb1.button("↶ Undo last move", disabled=not history, width="stretch"):
@@ -630,7 +630,7 @@ def sheets_area(meta, scrap_cache):
                 nid = save_as_new_run()
                 st.session_state.flash = (f"Saved as new run #{nid}.", ":material/check_circle:")
                 st.rerun()
-            if not history:
+            if edit and not history:
                 st.caption("No moves yet. Every sheet below can be edited.")
     for i, sh in enumerate(sheets, 1):
         ekey = f"sheet_editor_{st.session_state.result_token}_{i}"
