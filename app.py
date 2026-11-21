@@ -286,6 +286,7 @@ with st.sidebar:
         rename_project_dialog(pid, proj["name"])
     if st.button("Delete", icon=":material/delete:", width="stretch", disabled=not proj):
         delete_project_dialog(pid, proj["name"])
+    history_box = st.container()     # the run history goes here (filled further down), right below the menu
 
 if not proj:
     st.markdown(branding.header_html("2D nesting"), unsafe_allow_html=True)
@@ -549,7 +550,7 @@ def _sheets_from(result):
             for r in result]
 
 
-with st.sidebar:
+with history_box:
     st.divider()
     st.subheader("History")
     runs = db.list_runs(pid)
