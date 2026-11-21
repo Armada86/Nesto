@@ -16,6 +16,20 @@ from shapely.strtree import STRtree
 from shapes import geom_from_json, geom_to_json
 
 TOL = 0.01  # rounding tolerance (outlines are stored with 4 decimals)
+HOLD_GAP = 0.08  # the hold area lies below the sheet, this fraction of the sheet width (vertical) apart from it
+
+
+def hold_rect(sheet: dict) -> tuple:
+    """(x0, y0, x1, y1) of the hold area of a sheet: a box as big as the sheet, below it (negative y). Parts that are
+    set aside while the others are rearranged live here; they are not on the sheet."""
+    w, h = sheet["width"], sheet["height"]
+    gap = HOLD_GAP * h
+    return (0.0, -(gap + h), float(w), -gap)
+
+
+def is_held(p: dict) -> bool:
+    """Is this placement in the hold area (below the sheet) instead of on the sheet?"""
+    return p["y"] + p["h"] / 2.0 < 0
 
 
 def placement_geom(p: dict):
@@ -33,7 +47,12 @@ def ensure_polys(sheet: dict) -> None:
 
 def check_position(sheet: dict, index: int, geom, margin: float, spacing: float) -> str | None:
     """None if part `index` may sit at `geom`, otherwise the reason it may not."""
-    if not box(margin - TOL, margin - TOL, sheet["width"] - margin + TOL, sheet["height"] - margin + TOL).contains(geom):
+    b = geom.bounds
+    if (b[1] + b[3]) / 2.0 < 0:                       # in the hold area: it only has to stay inside that box
+        x0, y0, x1, y1 = hold_rect(sheet)
+        if not box(x0 - TOL, y0 - TOL, x1 + TOL, y1 + TOL).contains(geom):
+            return "outside the hold area"
+    elif not box(margin - TOL, margin - TOL, sheet["width"] - margin + TOL, sheet["height"] - margin + TOL).contains(geom):
         return "outside the sheet margin"
     others = [placement_geom(p) for k, p in enumerate(sheet["placements"]) if k != index]
     if not others:

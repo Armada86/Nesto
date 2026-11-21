@@ -113,11 +113,15 @@
     return false;
   }
 
-  /** is the part (offset ox, oy) inside the usable area of the sheet? (small tolerance for rounding) */
-  function insideSheet(part, ox, oy, W, H, margin, tol) {
+  /** is the part (offset ox, oy) inside the rectangle [x0, y0, x1, y1]? (small tolerance for rounding) */
+  function insideRect(part, ox, oy, r, tol) {
     tol = tol === undefined ? 0.01 : tol;
-    return part.bbox[0] + ox >= margin - tol && part.bbox[1] + oy >= margin - tol &&
-           part.bbox[2] + ox <= W - margin + tol && part.bbox[3] + oy <= H - margin + tol;
+    return part.bbox[0] + ox >= r[0] - tol && part.bbox[1] + oy >= r[1] - tol &&
+           part.bbox[2] + ox <= r[2] + tol && part.bbox[3] + oy <= r[3] + tol;
+  }
+  /** is the part (offset ox, oy) inside the usable area of the sheet? */
+  function insideSheet(part, ox, oy, W, H, margin, tol) {
+    return insideRect(part, ox, oy, [margin, margin, W - margin, H - margin], tol);
   }
 
   /**
@@ -127,11 +131,14 @@
    * Returns [x, y, blocked].
    */
   function moveConstrained(parts, offs, i, x0, y0, x1, y1, W, H, margin, gap) {
+    return moveInRect(parts, offs, i, x0, y0, x1, y1, [margin, margin, W - margin, H - margin], gap);
+  }
+  function moveInRect(parts, offs, i, x0, y0, x1, y1, rect, gap) {
     const P = parts[i];
     gap = Math.max(gap - 0.005, 0);   // same rounding slack as the server check, so parts that sit exactly at the spacing can move
     const step = Math.min(4, Math.max(0.4, 2 * gap));
     const feasible = function (x, y) {
-      if (!insideSheet(P, x, y, W, H, margin, 0.005)) return false;
+      if (!insideRect(P, x, y, rect, 0.005)) return false;
       for (let k = 0; k < parts.length; k++) {
         if (k !== i && collides(P, x, y, parts[k], offs[k][0], offs[k][1], gap)) return false;
       }
@@ -204,24 +211,29 @@
     const ring = function (r) { return r.map(function (p) { return [p[0] + dx, p[1] + dy]; }); };
     return polys.map(function (poly) { return { ext: ring(poly.ext), holes: (poly.holes || []).map(ring) }; });
   }
-  /** the shift that brings a part's bounding box inside the usable sheet area, or null when it is too big for it */
-  function shiftIntoSheet(part, W, H, margin) {
+  /** the shift that brings a part's bounding box inside the rectangle, or null when it is too big for it */
+  function shiftIntoRect(part, r) {
     const b = part.bbox;
-    if (b[2] - b[0] > W - 2 * margin + 0.005 || b[3] - b[1] > H - 2 * margin + 0.005) return null;
-    return [Math.max(0, margin - b[0]) - Math.max(0, b[2] - (W - margin)),
-            Math.max(0, margin - b[1]) - Math.max(0, b[3] - (H - margin))];
+    if (b[2] - b[0] > r[2] - r[0] + 0.005 || b[3] - b[1] > r[3] - r[1] + 0.005) return null;
+    return [Math.max(0, r[0] - b[0]) - Math.max(0, b[2] - r[2]),
+            Math.max(0, r[1] - b[1]) - Math.max(0, b[3] - r[3])];
   }
-  /** may `part` (offset ox, oy) take the place of part i? (inside the margin, not closer than `gap` to any other part) */
-  function fits(parts, offs, i, part, ox, oy, W, H, margin, gap) {
+  function shiftIntoSheet(part, W, H, margin) { return shiftIntoRect(part, [margin, margin, W - margin, H - margin]); }
+  /** may `part` (offset ox, oy) take the place of part i inside rectangle r? (not closer than `gap` to any other part) */
+  function fitsRect(parts, offs, i, part, ox, oy, r, gap) {
     gap = Math.max(gap - 0.005, 0);
-    if (!insideSheet(part, ox, oy, W, H, margin, 0.005)) return false;
+    if (!insideRect(part, ox, oy, r, 0.005)) return false;
     for (let k = 0; k < parts.length; k++) {
       if (k !== i && collides(part, ox, oy, parts[k], offs[k][0], offs[k][1], gap)) return false;
     }
     return true;
   }
+  function fits(parts, offs, i, part, ox, oy, W, H, margin, gap) {
+    return fitsRect(parts, offs, i, part, ox, oy, [margin, margin, W - margin, H - margin], gap);
+  }
 
-  return { transformPolys: transformPolys, translatePolys: translatePolys, shiftIntoSheet: shiftIntoSheet, fits: fits,
+  return { insideRect: insideRect, shiftIntoRect: shiftIntoRect, fitsRect: fitsRect, moveInRect: moveInRect,
+           transformPolys: transformPolys, translatePolys: translatePolys, shiftIntoSheet: shiftIntoSheet, fits: fits,
            makePart: makePart, collides: collides, insideSheet: insideSheet, moveConstrained: moveConstrained,
            segSeg2: segSeg2, pointInPart: pointInPart };
 });
