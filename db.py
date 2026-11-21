@@ -131,12 +131,21 @@ def save_parts(pid: int, parts: list[dict]):
 
 
 def save_run(pid, sheet_w, sheet_h, margin, spacing, sheets, utilization, result, seconds=None):
+    """Store a nest result as a run of the project; returns the new run's id."""
     with connect() as c:
-        c.execute(
+        row = c.execute(
             "INSERT INTO nest_runs(project_id,sheet_w,sheet_h,margin,spacing,sheets,utilization,result,seconds)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (pid, sheet_w, sheet_h, margin, spacing, sheets, utilization, json.dumps(result), seconds),
-        )
+        ).fetchone()
+        return row["id"]
+
+
+def update_run_result(pid: int, run_id: int, result) -> int:
+    """Replace the stored layout of a run (after parts were moved by hand). Only runs of project `pid`."""
+    with connect() as c:
+        return c.execute("UPDATE nest_runs SET result=%s WHERE id=%s AND project_id=%s",
+                         (json.dumps(result), run_id, pid)).rowcount
 
 
 def list_runs(pid: int):

@@ -1,3 +1,4 @@
+import copy
 import json
 import re
 import time
@@ -9,12 +10,14 @@ import branding
 import db
 from cutlist_export import cutlist_xlsx
 from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
+from layout_edit import apply_move, ensure_polys
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
 from nesting_poly import PolyPart, free_rectangles, nest_polygons
 from part_view import fmt as fmt_dim, part_png, part_stats
 from render import draw_sheet
 from step_io import read_step
+from sheet_editor import sheet_editor
 from shapes import SHAPES, geom_to_json, part_geometry, stored_geometry
 
 def fmt_time(sec):
@@ -58,7 +61,8 @@ for _k, _v in DEFAULTS.items():
 # ---------- project handling ----------
 def open_project(pid: int | None):
     """Make `pid` the open project (None = close). Settings are applied before the widgets are drawn."""
-    for k in ("result", "nest_info", "parts", "loaded_pid", "lib_idx", "lib_search"):
+    for k in ("result", "nest_info", "parts", "loaded_pid", "lib_idx", "lib_search", "result_original", "run_id",
+              "edit_history", "edit_rev"):
         st.session_state.pop(k, None)
     st.session_state.pid = pid
     if pid is None:
@@ -129,6 +133,16 @@ def delete_project_dialog(pid: int, name: str):
         db.delete_project(pid)
         open_project(None)
         st.rerun()
+
+
+def set_result(result, run_id=None):
+    """Show `result` (a list of sheets) and start a fresh editing session for it."""
+    st.session_state.result = result
+    st.session_state.result_original = copy.deepcopy(result)   # "Reset layout" returns to this
+    st.session_state.run_id = run_id                           # the stored run these sheets belong to
+    st.session_state.edit_history = []                         # moves made by hand since: [(sheet, part, dx, dy)]
+    st.session_state.edit_rev = {}                             # per sheet: number of changes (guards against stale drags)
+    st.session_state.result_token = st.session_state.get("result_token", 0) + 1
 
 
 def settings_snapshot():
@@ -436,9 +450,9 @@ with tab_table:
             result = [{"width": sh.width, "height": sh.height,
                        "placements": [pl.__dict__ for pl in sh.placements]} for sh in sheets]
             db.save_parts(pid, current)
-            db.save_run(pid, sheet_w, sheet_h, margin, spacing, s["sheets"], s["utilization"], result, elapsed)
+            run_id = db.save_run(pid, sheet_w, sheet_h, margin, spacing, s["sheets"], s["utilization"], result, elapsed)
             st.session_state.parts = current
-            st.session_state.result = result
+            set_result(result, run_id)
             st.session_state.nest_seconds = elapsed
             st.session_state.nest_parts = [{k: p[k] for k in ("name", "shape", "width", "height", "qty")} for p in to_nest]
             st.session_state.run_meta = {"margin": margin, "spacing": spacing}
@@ -465,7 +479,7 @@ with st.sidebar:
         b_load, b_del = st.columns(2)
         if b_load.button("Load run", width="stretch"):
             run_row = db.load_run(labels[pick])
-            st.session_state.result = run_row["result"]
+            set_result(run_row["result"], labels[pick])
             st.session_state.nest_seconds = run_row.get("seconds")
             st.session_state.pop("nest_info", None)
             st.session_state.pop("nest_parts", None)   # the part list of that old run is not stored
@@ -526,5 +540,52 @@ with tab_table:
                                 key="dl_json")
 
         # 3. the sheets
+        edit = st.toggle("✋ Move parts by dragging", key="edit_mode",
+                         help="Click a part and drag it (or use the arrow keys). It moves freely in the empty space "
+                              "around it and stops when it touches a neighbouring part or the sheet edge.")
+        history = st.session_state.get("edit_history", [])
+        if edit:
+            tb1, tb2, tb3 = st.columns(3)
+            run_id = st.session_state.get("run_id")
+            if tb1.button("↶ Undo last move", disabled=not history, width="stretch"):
+                si, part, dx, dy = history.pop()
+                apply_move(st.session_state.result[si], part, -dx, -dy, meta["margin"], meta["spacing"])
+                st.session_state.edit_rev[si] = st.session_state.edit_rev.get(si, 0) + 1
+                st.rerun()
+            if tb2.button("Reset layout", disabled=not history, width="stretch"):
+                set_result(copy.deepcopy(st.session_state.result_original), run_id)
+                st.rerun()
+            if tb3.button("💾 Save changes", type="primary", disabled=not (history and run_id), width="stretch",
+                          help="Store the moved layout in this run of the project history."):
+                db.update_run_result(pid, run_id, st.session_state.result)
+                st.session_state.result_original = copy.deepcopy(st.session_state.result)
+                st.session_state.edit_history = []
+                st.session_state.flash = ("Layout saved to the run.", ":material/check_circle:")
+                st.rerun()
+            st.caption(f"{len(history)} unsaved move{'s' if len(history) != 1 else ''}." if history else
+                       "No moves yet. Every sheet below can be edited.")
         for i, sh in enumerate(sheets, 1):
-            st.pyplot(draw_sheet(sh, f"Sheet {i}", st.session_state.scrap[i - 1]))
+            best = st.session_state.scrap[i - 1][0] if st.session_state.scrap[i - 1] else None
+            title = (f"Sheet {i} – {sh.utilization:.2%} used"
+                     + (f" · largest offcut {best[2]:.0f} × {best[3]:.0f}" if best else ""))
+            if not edit:
+                st.pyplot(draw_sheet(sh, f"Sheet {i}", st.session_state.scrap[i - 1]))
+                continue
+            st.markdown(f"**{title}**")
+            ensure_polys(st.session_state.result[i - 1])
+            rev = st.session_state.edit_rev.get(i - 1, 0)
+            mv = sheet_editor(st.session_state.result[i - 1], meta["margin"], meta["spacing"],
+                              st.session_state.scrap[i - 1], rev, key=f"sheet_editor_{st.session_state.result_token}_{i}")
+            seen = st.session_state.setdefault("applied_moves", set())
+            if mv and mv.get("id") not in seen:
+                seen.add(mv.get("id"))
+                if mv.get("rev") == rev:
+                    ok, msg = apply_move(st.session_state.result[i - 1], int(mv["part"]), float(mv["dx"]), float(mv["dy"]),
+                                         meta["margin"], meta["spacing"])
+                    if ok:
+                        history.append((i - 1, int(mv["part"]), float(mv["dx"]), float(mv["dy"])))
+                        st.session_state.edit_history = history
+                    else:
+                        st.session_state.flash = (f"That move is not allowed: {msg}.", ":material/block:")
+                    st.session_state.edit_rev[i - 1] = rev + 1
+                st.rerun()

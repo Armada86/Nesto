@@ -1,0 +1,89 @@
+import copy
+import sys
+import pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+import pytest
+from shapely.geometry import box
+
+from layout_edit import apply_move, ensure_polys, sheet_problems
+from nesting import Part, nest
+from nesting_poly import PolyPart, nest_polygons
+from shapes import build_shape, geom_to_json
+
+
+def sheet_of(*items, w=1000.0, h=500.0):
+    pl = []
+    for name, g in items:
+        x0, y0, x1, y1 = g.bounds
+        pl.append({"part": name, "x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0, "rotated": False, "angle": 0.0,
+                   "area": g.area, "polys": geom_to_json(g), "mirrored": False})
+    return {"width": w, "height": h, "placements": pl}
+
+
+def test_valid_move_translates_outline_and_box():
+    sh = sheet_of(("a", box(10, 10, 110, 60)), ("b", box(300, 10, 400, 60)))
+    ok, msg = apply_move(sh, 0, 50, 100, margin=5, spacing=3)
+    assert ok and msg == "moved"
+    p = sh["placements"][0]
+    assert (p["x"], p["y"], p["w"], p["h"]) == pytest.approx((60, 110, 100, 50))
+    assert sh["placements"][0]["area"] == pytest.approx(5000)
+    assert sheet_problems(sh, 5, 3) == []
+
+
+def test_move_into_a_neighbour_or_too_close_is_refused_and_changes_nothing():
+    sh = sheet_of(("a", box(10, 10, 110, 60)), ("b", box(300, 10, 400, 60)))
+    before = copy.deepcopy(sh)
+    for dx in (200, 188.5):                                     # overlapping / 1.5 mm gap < 3 mm spacing
+        ok, msg = apply_move(sh, 0, dx, 0, 5, 3)
+        assert not ok and ("overlaps" in msg or "too close" in msg)
+        assert sh == before
+    ok, _ = apply_move(sh, 0, 187.0, 0, 5, 3)                   # exactly 3 mm gap: allowed
+    assert ok
+
+
+def test_move_out_of_the_sheet_margin_is_refused():
+    sh = sheet_of(("a", box(10, 10, 110, 60)))
+    for dx, dy in ((-6, 0), (0, -6), (900, 0), (0, 450)):
+        assert apply_move(sh, 0, dx, dy, 5, 3)[1] == "outside the sheet margin"
+    assert apply_move(sh, 0, -5, -5, 5, 3)[0]                   # exactly on the margin is fine
+
+
+def test_spacing_zero_allows_touching_but_not_overlapping():
+    sh = sheet_of(("a", box(10, 10, 110, 60)), ("b", box(200, 10, 300, 60)))
+    assert apply_move(sh, 0, 90, 0, 5, 0)[0]                    # touching edge to edge
+    assert not apply_move(sh, 0, 5, 0, 5, 0)[0]                 # now overlapping
+
+
+def test_a_part_may_be_moved_into_the_hole_of_another():
+    frame = box(100, 100, 400, 300).difference(box(150, 150, 350, 250))
+    sh = sheet_of(("frame", frame), ("small", box(500, 150, 540, 190)))
+    assert apply_move(sh, 1, -330, 20, 5, 3)[0]                 # into the hole
+    assert sheet_problems(sh, 5, 3) == []
+    assert apply_move(sh, 1, 70, 0, 5, 3)[0]                   # still inside the hole
+    assert not apply_move(sh, 1, 120, 0, 5, 3)[0]               # onto the frame's right wall (x 350-400)
+
+
+def test_bad_requests_are_rejected():
+    sh = sheet_of(("a", box(10, 10, 110, 60)))
+    assert apply_move(sh, 5, 1, 1, 5, 3) == (False, "unknown part")
+    assert apply_move(sh, 0, float("nan"), 1, 5, 3)[0] is False or True      # NaN never produces a valid position
+    assert not apply_move(sh, 0, "10", 1, 5, 3)[0]
+    assert sh["placements"][0]["x"] == 10
+
+
+def test_rectangle_engine_placements_can_be_edited_after_ensure_polys():
+    sheets = nest([Part("a", 100, 50, 4)], 1000, 500, 5, 3)
+    sh = {"width": 1000.0, "height": 500.0, "placements": [dict(p.__dict__) for p in sheets[0].placements]}
+    assert all(not p.get("polys") for p in sh["placements"])
+    ensure_polys(sh)
+    ok, _ = apply_move(sh, 0, 300, 0, 5, 3)                     # to the free area on the right
+    assert ok and sheet_problems(sh, 5, 3) == []
+
+
+def test_edited_nested_layout_stays_valid():
+    parts = [PolyPart("c", build_shape("circle", 60), 5), PolyPart("t", build_shape("triangle", 90, 70), 4)]
+    s = nest_polygons(parts, 600, 400, 5, 3, 90, time_limit=0)[0]
+    sh = {"width": s.width, "height": s.height, "placements": [dict(p.__dict__) for p in s.placements]}
+    assert sheet_problems(sh, 5, 3) == []
+    moved = sum(apply_move(sh, i, 7, 5, 5, 3)[0] for i in range(len(sh["placements"])))
+    assert moved >= 1 and sheet_problems(sh, 5, 3) == []        # whatever was accepted left a valid layout

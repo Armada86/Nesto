@@ -95,3 +95,18 @@ def test_migration_turns_flip_on_for_parts_saved_before_the_column_existed(db):
         assert parts[0]["name"] == "legacy" and parts[0]["flip"] is True and parts[0]["qty"] == 3
     finally:
         db.delete_project(pid)
+
+
+def test_save_run_returns_its_id_and_a_layout_can_be_updated_only_inside_its_project(db):
+    a, b = db.create_project("edit-A"), db.create_project("edit-B")
+    try:
+        rid = db.save_run(a, 2500, 1250, 5, 3, 1, 0.5, [{"width": 2500, "height": 1250, "placements": []}], 1.0)
+        assert isinstance(rid, int) and [r["id"] for r in db.list_runs(a)] == [rid]
+        new = [{"width": 2500, "height": 1250, "placements": [{"part": "p", "x": 5, "y": 5, "w": 1, "h": 1}]}]
+        assert db.update_run_result(b, rid, new) == 0                      # another project: refused
+        assert db.load_run(rid)["result"][0]["placements"] == []
+        assert db.update_run_result(a, rid, new) == 1
+        assert db.load_run(rid)["result"][0]["placements"][0]["part"] == "p"
+    finally:
+        db.delete_project(a)
+        db.delete_project(b)
