@@ -327,44 +327,47 @@ st.subheader("Parts")
 tab_table, tab_dxf, tab_lib = st.tabs(["Enter dimensions", "Import DXF / STEP", "All parts"])
 
 with tab_table:
-    st.caption("Size A = width (or diameter for a circle). Size B = height (ignored for circles). "
-               "Triangle: A = base, B = height. Parts from DXF keep their drawing; their sizes are informational.")
-    cols = ["name", "shape", "width", "height", "qty", "rotate", "flip"]
-    df = pd.DataFrame(
-        [{k: p.get(k, {"shape": "rectangle", "rotate": True, "flip": True}.get(k)) for k in cols} for p in parts_state]
-        or [{"name": "", "shape": "rectangle", "width": 0.0, "height": 0.0, "qty": 1, "rotate": True, "flip": True}]
-    )
-    edited = st.data_editor(
-        df, num_rows="dynamic", width="stretch", key=f"editor_{pid}_{len(parts_state)}",
-        column_config={
-            "name": "Name",
-            "shape": st.column_config.SelectboxColumn("Shape", options=SHAPES, default="rectangle", required=True),
-            "width": st.column_config.NumberColumn("Size A", min_value=0.0),
-            "height": st.column_config.NumberColumn("Size B", min_value=0.0),
-            "qty": st.column_config.NumberColumn("Qty", min_value=0, step=1,
-                                                 help="Number of pieces to nest. 0 = keep the part in the project but do not nest it."),
-            "rotate": st.column_config.CheckboxColumn("Can rotate", default=True),
-            "flip": st.column_config.CheckboxColumn("Can flip", default=True,
-                                                    help="The part may be turned over (mirrored) to nest tighter. "
-                                                         "Leave on when both sides of the sheet are the same."),
-        },
-    )
-    outlines = {p["name"]: p.get("outline") for p in parts_state}
-    current = []
-    for i, r in edited.iterrows():
-        shape = r["shape"] if isinstance(r["shape"], str) else "rectangle"
-        w = float(r["width"]) if pd.notna(r["width"]) else 0.0
-        h = float(r["height"]) if pd.notna(r["height"]) else 0.0
-        if shape == "circle":
-            h = w
-        if w <= 0 or h <= 0:
-            continue
-        nm = str(r["name"]) if isinstance(r["name"], str) and r["name"] else f"part{i + 1}"
-        current.append({"name": nm, "shape": shape, "width": w, "height": h,
-                        "qty": int(r["qty"]) if pd.notna(r["qty"]) else 1,
-                        "rotate": bool(r["rotate"]),
-                        "flip": bool(r["flip"]) if pd.notna(r["flip"]) else True,   # old rows / new rows: on
-                        "outline": outlines.get(nm)})
+    with st.expander("Expand parts"):          # the table is folded away: one line until you open it
+        st.caption("Size A = width (or diameter for a circle). Size B = height (ignored for circles). "
+                   "Triangle: A = base, B = height. Parts from DXF keep their drawing; their sizes are informational.")
+        cols = ["name", "shape", "width", "height", "qty", "rotate", "flip"]
+        df = pd.DataFrame(
+            [{k: p.get(k, {"shape": "rectangle", "rotate": True, "flip": True}.get(k)) for k in cols} for p in parts_state]
+            or [{"name": "", "shape": "rectangle", "width": 0.0, "height": 0.0, "qty": 1, "rotate": True, "flip": True}]
+        )
+        df.index = range(1, len(df) + 1)                      # serial numbers 1, 2, 3 ... shown as the first column
+        edited = st.data_editor(
+            df, num_rows="dynamic", width="stretch", key=f"editor_{pid}_{len(parts_state)}", hide_index=False,
+            column_config={
+                "_index": st.column_config.Column("No.", width="small", disabled=True),
+                "name": "Name",
+                "shape": st.column_config.SelectboxColumn("Shape", options=SHAPES, default="rectangle", required=True),
+                "width": st.column_config.NumberColumn("Size A", min_value=0.0),
+                "height": st.column_config.NumberColumn("Size B", min_value=0.0),
+                "qty": st.column_config.NumberColumn("Qty", min_value=0, step=1,
+                                                     help="Number of pieces to nest. 0 = keep the part in the project but do not nest it."),
+                "rotate": st.column_config.CheckboxColumn("Can rotate", default=True),
+                "flip": st.column_config.CheckboxColumn("Can flip", default=True,
+                                                        help="The part may be turned over (mirrored) to nest tighter. "
+                                                             "Leave on when both sides of the sheet are the same."),
+            },
+        )
+        outlines = {p["name"]: p.get("outline") for p in parts_state}
+        current = []
+        for i, (_, r) in enumerate(edited.iterrows()):
+            shape = r["shape"] if isinstance(r["shape"], str) else "rectangle"
+            w = float(r["width"]) if pd.notna(r["width"]) else 0.0
+            h = float(r["height"]) if pd.notna(r["height"]) else 0.0
+            if shape == "circle":
+                h = w
+            if w <= 0 or h <= 0:
+                continue
+            nm = str(r["name"]) if isinstance(r["name"], str) and r["name"] else f"part{i + 1}"
+            current.append({"name": nm, "shape": shape, "width": w, "height": h,
+                            "qty": int(r["qty"]) if pd.notna(r["qty"]) else 1,
+                            "rotate": bool(r["rotate"]),
+                            "flip": bool(r["flip"]) if pd.notna(r["flip"]) else True,   # old rows / new rows: on
+                            "outline": outlines.get(nm)})
 
 with tab_dxf:
     st.caption("**DXF**: any closed outline made of LINE / ARC / CIRCLE / POLYLINE / SPLINE / ELLIPSE entities; "
