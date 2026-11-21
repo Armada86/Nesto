@@ -121,3 +121,25 @@ def test_a_blocked_part_slides_along_the_obstacle():
     assert blocked
     assert x == pytest.approx(100 - 3 - 40, abs=0.1)                  # its right edge stopped 3 mm before the wall (x offset 57)
     assert y == pytest.approx(100, abs=0.1)                           # and it slid up along the wall as far as asked
+
+
+def test_js_rotate_and_flip_agree_with_the_server_transform():
+    from layout_edit import apply_transform
+    from shapes import geom_from_json
+    rng = random.Random(7)
+    turns, expected = [], []
+    for _ in range(60):
+        g = affinity.translate(random_shape(rng), rng.uniform(20, 300), rng.uniform(20, 300))
+        ox, oy = rng.uniform(-20, 20), rng.uniform(-20, 20)
+        op, value = rng.choice([("rotate", 90), ("rotate", -90), ("rotate", 15), ("rotate", -37.5), ("flip", "h"), ("flip", "v")])
+        polys = geom_to_json(g)
+        sheet = {"width": 5000.0, "height": 5000.0, "placements": [{"part": "p", "x": 0, "y": 0, "w": 1, "h": 1, "polys": polys}]}
+        ok, _ = apply_transform(sheet, 0, op, value, ox, oy, 0, 0, 0, 0)
+        assert ok
+        expected.append(geom_from_json(sheet["placements"][0]["polys"]))
+        turns.append({"polys": polys, "ox": ox, "oy": oy, "op": op, "value": value})
+    out = run_node({"pairs": [], "moves": [], "turns": turns})["turns"]
+    for got, want in zip(out, expected):
+        from shapes import geom_from_json as gj
+        g = gj(got)
+        assert g.symmetric_difference(want).area < 1e-2 * max(want.area, 1) * 0.01 + 0.05

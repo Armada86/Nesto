@@ -67,6 +67,46 @@ def apply_move(sheet: dict, index: int, dx: float, dy: float, margin: float, spa
     return True, "moved"
 
 
+def apply_transform(sheet: dict, index: int, op: str, value, ox: float, oy: float, nx: float, ny: float,
+                    margin: float, spacing: float):
+    """Rotate (op "rotate", value = degrees counter-clockwise) or mirror (op "flip", value "h" = left-right,
+    "v" = top-bottom) part `index` about the centre of its bounding box, in place.
+
+    The part is shifted by (ox, oy) first (a drag the browser has not reported yet), turned, then shifted by (nx, ny)
+    (used to bring a turned part at the sheet edge back inside the margin). Returns (ok, message); the sheet is only
+    changed when ok, i.e. when the turned part has room: inside the margin and not too close to any other part."""
+    pl = sheet["placements"]
+    if not (0 <= index < len(pl)):
+        return False, "unknown part"
+    if not all(isinstance(v, (int, float)) and abs(v) < 1e6 for v in (ox, oy, nx, ny)):
+        return False, "invalid move"
+    g = affinity.translate(placement_geom(pl[index]), ox, oy)
+    cx, cy = (g.bounds[0] + g.bounds[2]) / 2, (g.bounds[1] + g.bounds[3]) / 2
+    if op == "rotate":
+        if not isinstance(value, (int, float)) or abs(value) > 720:
+            return False, "invalid angle"
+        g = affinity.rotate(g, value, origin=(cx, cy))
+    elif op == "flip":
+        if value not in ("h", "v"):
+            return False, "invalid flip"
+        g = affinity.scale(g, xfact=-1 if value == "h" else 1, yfact=-1 if value == "v" else 1, origin=(cx, cy))
+    else:
+        return False, "unknown operation"
+    g = affinity.translate(g, nx, ny)
+    reason = check_position(sheet, index, g, margin, spacing)
+    if reason:
+        return False, reason
+    p = pl[index]
+    x0, y0, x1, y1 = g.bounds
+    p["polys"] = geom_to_json(g)
+    p["x"], p["y"], p["w"], p["h"] = x0, y0, x1 - x0, y1 - y0
+    if op == "rotate":
+        p["angle"] = (float(p.get("angle", 0.0)) + value) % 360
+    else:
+        p["mirrored"] = not p.get("mirrored", False)
+    return True, "turned"
+
+
 def sheet_problems(sheet: dict, margin: float, spacing: float) -> list[str]:
     """Every rule violation in a sheet (for tests and sanity checks): [] means a valid layout."""
     out = []

@@ -87,3 +87,79 @@ def test_edited_nested_layout_stays_valid():
     assert sheet_problems(sh, 5, 3) == []
     moved = sum(apply_move(sh, i, 7, 5, 5, 3)[0] for i in range(len(sh["placements"])))
     assert moved >= 1 and sheet_problems(sh, 5, 3) == []        # whatever was accepted left a valid layout
+
+
+# ---- rotate / flip ----
+def _two(gap=10.0):
+    from shapes import geom_to_json
+    from shapely.geometry import box
+    def pl(name, x, y, w, h):
+        return {"part": name, "x": x, "y": y, "w": w, "h": h, "angle": 0.0, "mirrored": False, "polys": geom_to_json(box(x, y, x + w, y + h))}
+    return {"width": 1000.0, "height": 500.0, "placements": [pl("a", 100, 100, 200, 50), pl("b", 300 + gap, 100, 100, 100)]}
+
+
+def test_rotate_with_room_turns_the_part_about_its_centre_and_books_the_angle():
+    from layout_edit import apply_transform, sheet_problems, placement_geom
+    sh = _two()
+    from shapes import geom_to_json
+    from shapely.geometry import box
+    sh["placements"][1]["polys"] = geom_to_json(box(700, 100, 800, 200))   # plenty of room around a
+    ok, msg = apply_transform(sh, 0, "rotate", 90, 0, 0, 0, 0, 5, 3)
+    assert ok, msg
+    p = sh["placements"][0]
+    assert (round(p["w"]), round(p["h"])) == (50, 200) and p["angle"] == 90.0
+    cx, cy = placement_geom(p).centroid.x, placement_geom(p).centroid.y
+    assert abs(cx - 200) < 1e-3 and abs(cy - 125) < 1e-3
+    assert sheet_problems(sh, 5, 3) == []
+
+
+def test_rotate_without_room_is_refused_and_changes_nothing():
+    from layout_edit import apply_transform
+    from shapes import geom_to_json
+    from shapely.geometry import box
+    sh = _two()
+    sh["placements"][1]["polys"] = geom_to_json(box(150, 153, 250, 253))   # b sits 3 mm above a: turned upright, a hits it
+    before = sh["placements"][0]["polys"]
+    ok, msg = apply_transform(sh, 0, "rotate", 90, 0, 0, 0, 0, 5, 3)
+    assert not ok and "close" in msg
+    assert sh["placements"][0]["polys"] == before and sh["placements"][0]["angle"] == 0.0
+
+
+def test_rotate_cannot_leave_the_sheet_margin_but_the_pushed_back_shift_is_accepted():
+    from layout_edit import apply_transform
+    sh = _two()
+    from shapes import geom_to_json
+    from shapely.geometry import box
+    sh["placements"][1]["polys"] = geom_to_json(box(700, 100, 800, 200))
+    sh["placements"][0]["polys"] = geom_to_json(box(300, 5, 500, 55))   # on the bottom margin: turned upright it sticks out below
+    ok, _ = apply_transform(sh, 0, "rotate", 90, 0, 0, 0, 0, 5, 3)
+    assert not ok
+    ok, msg = apply_transform(sh, 0, "rotate", 90, 0, 0, 0, 80, 5, 3)      # the browser sends the shift that fixes it
+    assert ok, msg
+
+
+def test_flip_mirrors_an_asymmetric_part_and_toggles_the_mirrored_flag():
+    from layout_edit import apply_transform, placement_geom
+    from shapes import geom_to_json
+    from shapely.geometry import Polygon
+    tri = Polygon([(100, 100), (200, 100), (100, 160)])      # right angle at the lower left
+    sh = {"width": 1000.0, "height": 500.0, "placements": [{"part": "t", "x": 100, "y": 100, "w": 100, "h": 60, "angle": 0.0,
+                                                           "mirrored": False, "polys": geom_to_json(tri)}]}
+    ok, msg = apply_transform(sh, 0, "flip", "h", 0, 0, 0, 0, 5, 3)
+    assert ok, msg
+    g = placement_geom(sh["placements"][0])
+    assert sh["placements"][0]["mirrored"] is True
+    assert abs(g.area - tri.area) < 1e-3 and abs(g.bounds[0] - 100) < 1e-3 and abs(g.bounds[2] - 200) < 1e-3
+    assert g.contains(Polygon([(190, 105), (195, 105), (195, 110)]))        # the right angle is now at the lower right
+    ok, _ = apply_transform(sh, 0, "flip", "v", 0, 0, 0, 0, 5, 3)
+    assert ok and sh["placements"][0]["mirrored"] is False                  # flipped twice = turned over twice (bookkeeping)
+
+
+def test_bad_transform_requests_are_refused():
+    from layout_edit import apply_transform
+    sh = _two()
+    assert not apply_transform(sh, 5, "rotate", 90, 0, 0, 0, 0, 5, 3)[0]
+    assert not apply_transform(sh, 0, "spin", 90, 0, 0, 0, 0, 5, 3)[0]
+    assert not apply_transform(sh, 0, "flip", "x", 0, 0, 0, 0, 5, 3)[0]
+    assert not apply_transform(sh, 0, "rotate", "90", 0, 0, 0, 0, 5, 3)[0]
+    assert not apply_transform(sh, 0, "rotate", 90, 1e9, 0, 0, 0, 5, 3)[0]
