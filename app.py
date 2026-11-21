@@ -339,7 +339,7 @@ with tab_table:
         edited = st.data_editor(
             df, num_rows="dynamic", width="stretch", key=f"editor_{pid}_{len(parts_state)}", hide_index=False,
             column_config={
-                "_index": st.column_config.Column("No.", width="small", disabled=True),
+                "_index": st.column_config.Column("No.", width=48, disabled=True, alignment="left"),
                 "name": "Name",
                 "shape": st.column_config.SelectboxColumn("Shape", options=SHAPES, default="rectangle", required=True),
                 "width": st.column_config.NumberColumn("Size A", min_value=0.0),
