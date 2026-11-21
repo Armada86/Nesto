@@ -5,6 +5,7 @@ import time
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 import branding
 import db
@@ -73,10 +74,27 @@ def open_project(pid: int | None):
     st.query_params["project"] = str(pid)
 
 
+def unsaved_moves() -> int:
+    """Parts moved by hand in the layout on the screen and not saved yet."""
+    return len(st.session_state.get("edit_history", []))
+
+
+def leave_guard(n: int) -> None:
+    """Make the browser ask before the page is reloaded / closed / left while there are unsaved moves.
+    (Always rendered: with n = 0 it removes the handler again.)"""
+    components.html(
+        "<script>(function(){var w=window.parent;"
+        "if(w.__nestoGuard){w.removeEventListener('beforeunload',w.__nestoGuard);w.__nestoGuard=null;}"
+        f"if({int(n)}>0){{w.__nestoGuard=function(e){{e.preventDefault();e.returnValue='';return '';}};"
+        "w.addEventListener('beforeunload',w.__nestoGuard);}})();</script>", height=0)
+
+
 @st.dialog("New project")
 def new_project_dialog():
     name = st.text_input("Project name", placeholder="e.g. Job 1042 – brackets")
-    if st.button("Create project", type="primary", width="stretch"):
+    n = unsaved_moves()
+    ok = st.checkbox(f"Discard the {n} unsaved move{'s' if n != 1 else ''} of the current layout", key="discard_new") if n else True
+    if st.button("Create project", type="primary", width="stretch", disabled=not ok):
         name = name.strip()
         if not name:
             st.error("Please enter a name.")
@@ -97,7 +115,9 @@ def load_project_dialog():
     current_name = st.session_state.get("pid_name")
     idx = list(labels).index(current_name) if current_name in labels else 0
     choice = st.selectbox("Select a project", list(labels), index=idx)
-    if st.button("Open project", type="primary", width="stretch"):
+    n = unsaved_moves()
+    ok = st.checkbox(f"Discard the {n} unsaved move{'s' if n != 1 else ''} of the current layout", key="discard_load") if n else True
+    if st.button("Open project", type="primary", width="stretch", disabled=not ok):
         open_project(labels[choice])
         st.rerun()
 
@@ -143,6 +163,38 @@ def set_result(result, run_id=None):
     st.session_state.edit_history = []                         # moves made by hand since: [(sheet, part, dx, dy)]
     st.session_state.edit_rev = {}                             # per sheet: number of changes (guards against stale drags)
     st.session_state.result_token = st.session_state.get("result_token", 0) + 1
+
+
+@st.dialog("Unsaved moves")
+def unsaved_dialog(action: str, payload=None):
+    """The layout on the screen has parts moved by hand and not saved; `action` ("load_run" / "nest") would replace it."""
+    n = unsaved_moves()
+    what = {"load_run": "Loading another run replaces it.", "nest": "Nesting again replaces it."}[action]
+    st.warning(f"You moved parts by hand ({n} move{'s' if n != 1 else ''}) and have not saved them. {what}")
+    run_id = st.session_state.get("run_id")
+    c1, c2, c3 = st.columns(3)
+    if c1.button("💾 Save & continue", type="primary", width="stretch", disabled=not run_id,
+                 help="Store the moved layout in its run first." if run_id else "This layout has no stored run to save to."):
+        db.update_run_result(pid, run_id, st.session_state.result)
+        st.session_state.result_original = copy.deepcopy(st.session_state.result)
+        st.session_state.edit_history = []
+        st.session_state.pending_action = (action, payload)
+        st.rerun()
+    if c2.button("Discard & continue", width="stretch"):
+        st.session_state.edit_history = []
+        st.session_state.pending_action = (action, payload)
+        st.rerun()
+    if c3.button("Cancel", width="stretch"):
+        st.rerun()
+
+
+def do_load_run(run_id):
+    run_row = db.load_run(run_id)
+    set_result(run_row["result"], run_id)
+    st.session_state.nest_seconds = run_row.get("seconds")
+    st.session_state.pop("nest_info", None)
+    st.session_state.pop("nest_parts", None)   # the part list of that old run is not stored
+    st.session_state.run_meta = {"margin": run_row.get("margin", margin), "spacing": run_row.get("spacing", spacing)}
 
 
 def settings_snapshot():
@@ -195,6 +247,7 @@ if pid and not proj:  # deleted elsewhere
     open_project(None)
     st.rerun()
 st.session_state.pid_name = proj["name"] if proj else None
+leave_guard(unsaved_moves() if proj else 0)
 
 # ---------- sidebar ----------
 with st.sidebar:
@@ -373,6 +426,11 @@ with tab_lib:
             r2b.metric("Holes", len(stats["holes"]))
             st.caption("Sizes are in the units of your drawing / typed dimensions (usually mm).")
 
+# an action the user confirmed in the "Unsaved moves" dialog
+_pending = st.session_state.pop("pending_action", None)
+if _pending and _pending[0] == "load_run":
+    do_load_run(_pending[1])
+
 with tab_table:
     st.markdown("""
 <style>
@@ -391,6 +449,11 @@ with tab_table:
 [class*="st-key-dl_"] button:active { background-color: #93c5fd !important; }
 </style>""", unsafe_allow_html=True)
     run = st.button("▶ Nest", key="nest_btn", type="primary")
+    if _pending and _pending[0] == "nest":
+        run = True                                   # confirmed in the dialog
+    elif run and unsaved_moves():
+        unsaved_dialog("nest")                       # would replace the moved layout: ask first
+        run = False
 
 if save_clicked:  # sidebar Save: sheet/nesting settings first (small and safe), then the parts
     snap = settings_snapshot()
@@ -478,12 +541,10 @@ with st.sidebar:
         pick = st.selectbox("Past runs", list(labels))
         b_load, b_del = st.columns(2)
         if b_load.button("Load run", width="stretch"):
-            run_row = db.load_run(labels[pick])
-            set_result(run_row["result"], labels[pick])
-            st.session_state.nest_seconds = run_row.get("seconds")
-            st.session_state.pop("nest_info", None)
-            st.session_state.pop("nest_parts", None)   # the part list of that old run is not stored
-            st.session_state.run_meta = {"margin": run_row.get("margin", margin), "spacing": run_row.get("spacing", spacing)}
+            if unsaved_moves():
+                unsaved_dialog("load_run", labels[pick])
+            else:
+                do_load_run(labels[pick])
         if b_del.button("Delete…", icon=":material/delete:", width="stretch"):
             st.session_state.del_runs_sel = [pick]
             delete_runs_dialog(pid, labels)
@@ -544,6 +605,11 @@ with tab_table:
                          help="Click a part and drag it (or use the arrow keys). It moves freely in the empty space "
                               "around it and stops when it touches a neighbouring part or the sheet edge.")
         history = st.session_state.get("edit_history", [])
+        if history:
+            n = len(history)
+            st.warning(f"⚠ **{n} unsaved move{'s' if n != 1 else ''}.** They are lost if you reload the page, load another "
+                       "run, nest again or open another project. Switch on *Move parts by dragging* and tap "
+                       "**Save changes** to keep them.", icon=None)
         if edit:
             tb1, tb2, tb3 = st.columns(3)
             run_id = st.session_state.get("run_id")
@@ -562,8 +628,8 @@ with tab_table:
                 st.session_state.edit_history = []
                 st.session_state.flash = ("Layout saved to the run.", ":material/check_circle:")
                 st.rerun()
-            st.caption(f"{len(history)} unsaved move{'s' if len(history) != 1 else ''}." if history else
-                       "No moves yet. Every sheet below can be edited.")
+            if not history:
+                st.caption("No moves yet. Every sheet below can be edited.")
         for i, sh in enumerate(sheets, 1):
             best = st.session_state.scrap[i - 1][0] if st.session_state.scrap[i - 1] else None
             title = (f"Sheet {i} – {sh.utilization:.2%} used"
