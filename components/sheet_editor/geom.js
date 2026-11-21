@@ -167,6 +167,43 @@
     return [best[0], best[1], true];
   }
 
-  return { makePart: makePart, collides: collides, insideSheet: insideSheet, moveConstrained: moveConstrained,
+  /** rotate (op "rotate", value = degrees, counter-clockwise) or mirror (op "flip", value "h" = left-right, "v" = top-bottom)
+   *  a part about the centre of its bounding box. The part is first shifted by (ox, oy), the drag offset it carries.
+   *  Same convention as layout_edit.apply_transform on the server. Returns new polygons in sheet coordinates. */
+  function transformPolys(polys, ox, oy, op, value) {
+    const b = makePart(polys).bbox;
+    const cx = (b[0] + b[2]) / 2 + ox, cy = (b[1] + b[3]) / 2 + oy;
+    let f;
+    if (op === 'rotate') {
+      const a = value * Math.PI / 180, co = Math.cos(a), si = Math.sin(a);
+      f = function (x, y) { x += ox - cx; y += oy - cy; return [cx + x * co - y * si, cy + x * si + y * co]; };
+    } else if (value === 'h') f = function (x, y) { return [2 * cx - (x + ox), y + oy]; };
+    else f = function (x, y) { return [x + ox, 2 * cy - (y + oy)]; };
+    const ring = function (r) { return r.map(function (p) { return f(p[0], p[1]); }); };
+    return polys.map(function (poly) { return { ext: ring(poly.ext), holes: (poly.holes || []).map(ring) }; });
+  }
+  function translatePolys(polys, dx, dy) {
+    const ring = function (r) { return r.map(function (p) { return [p[0] + dx, p[1] + dy]; }); };
+    return polys.map(function (poly) { return { ext: ring(poly.ext), holes: (poly.holes || []).map(ring) }; });
+  }
+  /** the shift that brings a part's bounding box inside the usable sheet area, or null when it is too big for it */
+  function shiftIntoSheet(part, W, H, margin) {
+    const b = part.bbox;
+    if (b[2] - b[0] > W - 2 * margin + 0.005 || b[3] - b[1] > H - 2 * margin + 0.005) return null;
+    return [Math.max(0, margin - b[0]) - Math.max(0, b[2] - (W - margin)),
+            Math.max(0, margin - b[1]) - Math.max(0, b[3] - (H - margin))];
+  }
+  /** may `part` (offset ox, oy) take the place of part i? (inside the margin, not closer than `gap` to any other part) */
+  function fits(parts, offs, i, part, ox, oy, W, H, margin, gap) {
+    gap = Math.max(gap - 0.005, 0);
+    if (!insideSheet(part, ox, oy, W, H, margin, 0.005)) return false;
+    for (let k = 0; k < parts.length; k++) {
+      if (k !== i && collides(part, ox, oy, parts[k], offs[k][0], offs[k][1], gap)) return false;
+    }
+    return true;
+  }
+
+  return { transformPolys: transformPolys, translatePolys: translatePolys, shiftIntoSheet: shiftIntoSheet, fits: fits,
+           makePart: makePart, collides: collides, insideSheet: insideSheet, moveConstrained: moveConstrained,
            segSeg2: segSeg2, pointInPart: pointInPart };
 });

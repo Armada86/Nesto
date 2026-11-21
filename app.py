@@ -11,7 +11,7 @@ import branding
 import db
 from cutlist_export import cutlist_xlsx
 from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
-from layout_edit import apply_move, ensure_polys
+from layout_edit import apply_move, apply_transform, ensure_polys
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
 from nesting_poly import PolyPart, free_rectangles, nest_polygons
@@ -618,21 +618,25 @@ with tab_table:
                                 key="dl_json")
 
         # 3. the sheets
-        edit = st.toggle("✋ Move parts by dragging", key="edit_mode",
-                         help="Click a part and drag it (or use the arrow keys). It moves freely in the empty space "
+        edit = st.toggle("✋ Edit parts: move, rotate, flip", key="edit_mode",
+                         help="Click a part to get its menu. Drag it (or use the arrow keys) to move it; Rotate and Flip turn it in place when it has room. "
+                              "A part moves freely in the empty space "
                               "around it and stops when it touches a neighbouring part or the sheet edge.")
         history = st.session_state.get("edit_history", [])
         if history:
             n = len(history)
             st.warning(f"⚠ **{n} unsaved move{'s' if n != 1 else ''}.** They are lost if you reload the page, load another "
-                       "run, nest again or open another project. Switch on *Move parts by dragging* and tap "
+                       "run, nest again or open another project. Switch on *Edit parts* and tap "
                        "**Save changes** to keep them.", icon=None)
         if edit:
             tb1, tb2, tb3, tb4 = st.columns(4)
             run_id = st.session_state.get("run_id")
             if tb1.button("↶ Undo last move", disabled=not history, width="stretch"):
                 si, part, dx, dy = history.pop()
-                apply_move(st.session_state.result[si], part, -dx, -dy, meta["margin"], meta["spacing"])
+                if dx == "snapshot":                                  # a rotation / flip: put the old placement back
+                    st.session_state.result[si]["placements"][part] = dy
+                else:
+                    apply_move(st.session_state.result[si], part, -dx, -dy, meta["margin"], meta["spacing"])
                 st.session_state.edit_rev[si] = st.session_state.edit_rev.get(si, 0) + 1
                 st.rerun()
             if tb2.button("Reset layout", disabled=not history, width="stretch"):
@@ -668,12 +672,20 @@ with tab_table:
             if mv and mv.get("id") not in seen:
                 seen.add(mv.get("id"))
                 if mv.get("rev") == rev:
-                    ok, msg = apply_move(st.session_state.result[i - 1], int(mv["part"]), float(mv["dx"]), float(mv["dy"]),
-                                         meta["margin"], meta["spacing"])
+                    sh_i, k = st.session_state.result[i - 1], int(mv["part"])
+                    if mv.get("op"):                                  # rotate / flip
+                        before = copy.deepcopy(sh_i["placements"][k]) if 0 <= k < len(sh_i["placements"]) else None
+                        ok, msg = apply_transform(sh_i, k, mv["op"], mv.get("value"), float(mv.get("ox", 0)), float(mv.get("oy", 0)),
+                                                  float(mv.get("nx", 0)), float(mv.get("ny", 0)), meta["margin"], meta["spacing"])
+                        if ok:
+                            history.append((i - 1, k, "snapshot", before))
+                    else:
+                        ok, msg = apply_move(sh_i, k, float(mv["dx"]), float(mv["dy"]), meta["margin"], meta["spacing"])
+                        if ok:
+                            history.append((i - 1, k, float(mv["dx"]), float(mv["dy"])))
                     if ok:
-                        history.append((i - 1, int(mv["part"]), float(mv["dx"]), float(mv["dy"])))
                         st.session_state.edit_history = history
                     else:
-                        st.session_state.flash = (f"That move is not allowed: {msg}.", ":material/block:")
+                        st.session_state.flash = (f"That change is not allowed: {msg}.", ":material/block:")
                     st.session_state.edit_rev[i - 1] = rev + 1
                 st.rerun()
