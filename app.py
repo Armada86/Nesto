@@ -48,7 +48,7 @@ except Exception as e:  # noqa: BLE001
     st.error(f"Cannot connect to Neon: {e}")
     st.stop()
 
-ROT_STEPS = {"None": 0, "90°": 90, "45°": 45, "30°": 30, "15°": 15}
+ROT_STEPS = {"None": 0, "90°": 90, "45°": 45, "30°": 30, "15°": 15, "10°": 10, "5°": 5, "2°": 2, "1°": 1}
 PRECISION = {"Fast": 500, "Balanced": 800, "Fine": 1400}
 EFFORT = {"Quick": 0, "Normal": 15, "Thorough": 60}  # seconds of extra search for irregular parts
 
@@ -308,7 +308,8 @@ with st.sidebar:
 
     st.subheader("Nesting")
     rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), key="rot_label", on_change=autosave_settings,
-                                 help="Finer steps pack irregular shapes better but take longer.")
+                                 help="Finer steps pack irregular shapes better but take longer. Steps below 15° first search with 15° and then fine-tune "
+                                      "the best layout with the finer angles around the angles it uses (this adds some time).")
     prec_label = st.select_slider("Precision (irregular shapes)", list(PRECISION), key="prec_label", on_change=autosave_settings,
                                   help="Finer = tighter packing, slower.")
     effort_label = st.select_slider("Search effort (irregular shapes)", list(EFFORT), key="effort_label",
