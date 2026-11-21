@@ -128,9 +128,10 @@
    */
   function moveConstrained(parts, offs, i, x0, y0, x1, y1, W, H, margin, gap) {
     const P = parts[i];
+    gap = Math.max(gap - 0.005, 0);   // same rounding slack as the server check, so parts that sit exactly at the spacing can move
     const step = Math.min(4, Math.max(0.4, 2 * gap));
     const feasible = function (x, y) {
-      if (!insideSheet(P, x, y, W, H, margin)) return false;
+      if (!insideSheet(P, x, y, W, H, margin, 0.005)) return false;
       for (let k = 0; k < parts.length; k++) {
         if (k !== i && collides(P, x, y, parts[k], offs[k][0], offs[k][1], gap)) return false;
       }
