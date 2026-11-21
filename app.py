@@ -468,6 +468,13 @@ with tab_table:
 .st-key-nest_btn button:active { background-color: #166534 !important; }
 /* while editing parts: no greying out of the page during the short re-runs after each move */
 [data-testid="stMain"]:has(iframe[src*="sheet_editor"]) [data-stale="true"] { opacity: 1 !important; transition: none !important; }
+/* the four run numbers stay side by side, also on a phone (Streamlit would stack the columns) */
+.st-key-metrics_row [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; gap: 0.5rem !important; }
+.st-key-metrics_row [data-testid="stColumn"] { min-width: 0 !important; width: auto !important; flex: 1 1 0 !important; }
+@media (max-width: 640px) {
+  .st-key-metrics_row [data-testid="stMetricLabel"] p { font-size: 0.72rem !important; }
+  .st-key-metrics_row [data-testid="stMetricValue"] { font-size: 1.35rem !important; }
+}
 /* light blue export buttons */
 [class*="st-key-dl_"] button { background-color: #dbeafe !important; border: 1px solid #93c5fd !important; color: #1e3a8a !important; }
 [class*="st-key-dl_"] button p { color: #1e3a8a !important; }
@@ -729,11 +736,12 @@ with tab_table:
         info = st.session_state.get("nest_info")
 
         # 1. headline numbers, including how long the nest took
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Sheets", s["sheets"])
-        m2.metric("Parts placed", s["parts"])
-        m3.metric("Utilization", f"{s['utilization']:.2%}")
-        m4.metric("Time taken", fmt_time(st.session_state.get("nest_seconds")))
+        with st.container(key="metrics_row"):
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Sheets", s["sheets"])
+            m2.metric("Parts placed", s["parts"])
+            m3.metric("Utilization", f"{s['utilization']:.2%}")
+            m4.metric("Time taken", fmt_time(st.session_state.get("nest_seconds")))
         if info:
             st.caption(f"Best of {info['runs']} layouts "
                        f"({'paired parts' if info['set'] == 'paired' else 'single parts'}, placement rule: {info['rule']}"
