@@ -11,7 +11,7 @@ import branding
 import db
 from cutlist_export import cutlist_xlsx
 from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
-from layout_edit import apply_move, apply_transform, ensure_polys
+from layout_edit import apply_move, apply_transform, ensure_polys, is_held
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
 from nesting_poly import PolyPart, free_rectangles, nest_polygons
@@ -548,10 +548,16 @@ with tab_table:
 
 
 def _sheets_from(result):
+    """Sheet objects of a stored result. Parts that were set aside in the hold area are NOT on the sheet: left out."""
     fields = Placement.__dataclass_fields__
     return [Sheet(r["width"], r["height"],
-                  [Placement(**{k: v for k, v in p.items() if k in fields}) for p in r["placements"]])
+                  [Placement(**{k: v for k, v in p.items() if k in fields}) for p in r["placements"] if not is_held(p)])
             for r in result]
+
+
+def held_parts(result) -> list:
+    """['Sheet 2: H-104A', ...] for the parts that are in a hold area instead of on their sheet."""
+    return [f"Sheet {i}: {p['part']}" for i, r in enumerate(result, 1) for p in r["placements"] if is_held(p)]
 
 
 with history_box:
@@ -607,6 +613,15 @@ def sheets_area(meta, scrap_cache):
             st.warning(f"⚠ **{n} unsaved move{'s' if n != 1 else ''}.** They are lost if you reload the page, load another "
                        "run, nest again or open another project. Tap **Save changes** (or **Save as new run**) to keep them.",
                        icon=None)
+        held = held_parts(result)
+        if held:
+            names = ", ".join(held)
+            if edit:
+                st.info(f"📦 **{len(held)} part{'s' if len(held) != 1 else ''} on hold** ({names}). They are below the sheet in the "
+                        "hold area and are not on the sheet: drag them back in when there is room.")
+            else:
+                st.warning(f"⚠ **{len(held)} part{'s' if len(held) != 1 else ''} left outside the sheet** ({names}). They are in the "
+                           "hold area, not on the sheet, and not in the exports. Switch on *Edit parts* and drag them back onto the sheet.")
         if edit or history:                                       # the save buttons stay while there is something to save
             tb1, tb2, tb3, tb4 = st.columns(4)
             run_id = st.session_state.get("run_id")
@@ -727,6 +742,9 @@ with tab_table:
         # 2. export, right above the nest. The files are built when you click (deferred), from the layout as it is
         #    at that moment, so hand edits are always included and every edit stays cheap.
         st.subheader("Export")
+        _held_now = held_parts(st.session_state.result)
+        if _held_now:
+            st.warning(f"⚠ {len(_held_now)} part(s) are outside the sheet (hold area) and are NOT in the exports: {', '.join(_held_now)}")
         with_names = st.checkbox("Include part names as text (layer LABELS)", value=True)
         meta = st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}
         result_ref, scrap_cache = st.session_state.result, st.session_state.setdefault("scrap_cache", {})
@@ -764,6 +782,11 @@ with tab_table:
                          help="Click a part to get its menu. Drag it (or use the arrow keys) to move it; Rotate and Flip turn it in place when it has room. "
                               "A part moves freely in the empty space "
                               "around it and stops when it touches a neighbouring part or the sheet edge.")
+        was_editing = st.session_state.get("_edit_prev", False)
+        st.session_state._edit_prev = bool(edit)
+        _held = held_parts(st.session_state.result)
+        if was_editing and not edit and _held:
+            st.toast(f"{len(_held)} part(s) are still outside the sheet: {', '.join(_held)}", icon=":material/warning:")
         sheets_area(meta, scrap_cache)
     else:
         leave_guard(0)

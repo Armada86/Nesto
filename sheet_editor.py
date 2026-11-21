@@ -6,7 +6,7 @@ import pathlib
 import matplotlib
 import streamlit.components.v1 as components
 
-from layout_edit import placement_geom
+from layout_edit import hold_rect, placement_geom
 from shapes import geom_to_json
 
 _DIR = pathlib.Path(__file__).parent / "components" / "sheet_editor"
@@ -35,4 +35,4 @@ def sheet_editor(sheet: dict, margin: float, spacing: float, scrap, rev: int, ke
     """Show one sheet whose parts can be dragged. Returns the last reported move
     {"id", "rev", "part", "dx", "dy"} (or None)."""
     return _component(width=sheet["width"], height=sheet["height"], margin=margin, spacing=spacing,
-                      parts=parts_payload(sheet), scrap=[list(r) for r in scrap], rev=rev, key=key, default=None)
+                      parts=parts_payload(sheet), hold=list(hold_rect(sheet)), scrap=[list(r) for r in scrap], rev=rev, key=key, default=None)

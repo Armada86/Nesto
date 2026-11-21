@@ -43,7 +43,7 @@
   function setHeight() {
     if (!S) return;
     var w = document.getElementById("wrap").clientWidth || 600;
-    var h = Math.ceil(w * S.H / S.W) + 34;
+    var h = Math.ceil(w * (S.H - (S.hold ? S.hold[1] : 0)) / S.W) + 34;
     send("streamlit:setFrameHeight", { height: h });
   }
   window.addEventListener("message", function (ev) {
@@ -103,9 +103,9 @@
       W: W, H: H, margin: margin, gap: Math.max(spacing, 0.2), rev: a.rev || 0,
       parts: a.parts.map(function (p) { return Geom.makePart(p.polys); }),
       offs: a.parts.map(function () { return [0, 0]; }),
-      meta: a.parts, nodes: [], sel: null, drag: null, sendTimer: null, sub: null, sw: 1, fs: 6
+      hold: (a.hold && a.hold.length === 4) ? a.hold : null, meta: a.parts, nodes: [], sel: null, drag: null, sendTimer: null, sub: null, sw: 1, fs: 6
     };
-    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("viewBox", "0 0 " + W + " " + (H - (S.hold ? S.hold[1] : 0)));
     svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     var sw = Math.max(W / 1800, 0.4);
@@ -113,6 +113,14 @@
     el("rect", { x: 0, y: 0, width: W, height: H, fill: "#ffffff" }, svg);
     el("rect", { x: margin, y: margin, width: W - 2 * margin, height: H - 2 * margin, fill: "none", stroke: "#94a3b8",
                  "stroke-width": sw, "stroke-dasharray": (sw * 5) + " " + (sw * 4) }, svg);
+    if (S.hold) {                                                                    // the hold area below the sheet
+      var hb = S.hold;
+      el("rect", { x: hb[0], y: H - hb[3], width: hb[2] - hb[0], height: hb[3] - hb[1], fill: "#f1f5f9", "fill-opacity": 0.9,
+                   stroke: "#64748b", "stroke-width": sw * 1.2, "stroke-dasharray": (sw * 8) + " " + (sw * 5), "pointer-events": "none" }, svg);
+      var ht = el("text", { x: hb[0] + W * 0.012, y: H - hb[3] + Math.max(H / 32, 6) * 1.4, "font-size": Math.max(H / 32, 6),
+                            fill: "#64748b", "pointer-events": "none" }, svg);
+      ht.textContent = "HOLD AREA – set parts aside here while you rearrange the sheet, then drag them back in (they are not on the sheet)";
+    }
     (a.scrap || []).forEach(function (r) {
       el("rect", { x: r[0], y: H - r[1] - r[3], width: r[2], height: r[3], fill: "#22c55e", "fill-opacity": 0.06, stroke: "#22c55e",
                    "stroke-width": sw, "stroke-dasharray": (sw * 6) + " " + (sw * 4), "pointer-events": "none" }, svg);
@@ -154,6 +162,37 @@
         t.textContent = p.name;
       }
     }
+  }
+
+  // ---- sheet area and hold area ----
+  function rectFor(region) { return region === "hold" ? S.hold : [S.margin, S.margin, S.W - S.margin, S.H - S.margin]; }
+  function regionAt(i, ox, oy) {
+    var b = S.parts[i].bbox;
+    return S.hold && ((b[1] + b[3]) / 2 + oy < 0) ? "hold" : "sheet";
+  }
+  // move part i from its offset towards (tx, ty); inside one area it stops at neighbours and the area's edge. When the
+  // target lies in the other area (the pointer crossed the sheet's lower edge) the part appears there at the nearest
+  // free place. Returns [x, y, blocked].
+  function moveTo(i, tx, ty) {
+    var o = S.offs[i], cur = regionAt(i, o[0], o[1]), want = regionAt(i, tx, ty);
+    if (cur === want) return Geom.moveInRect(S.parts, S.offs, i, o[0], o[1], tx, ty, rectFor(cur), S.gap);
+    var rect = rectFor(want), b = S.parts[i].bbox;
+    var spot = function (x, y) {                                                    // clamp into the area, test it
+      var sh = Geom.shiftIntoRect({ bbox: [b[0] + x, b[1] + y, b[2] + x, b[3] + y] }, rect);
+      if (!sh) return null;
+      var cx = x + sh[0], cy = y + sh[1];
+      return Geom.fitsRect(S.parts, S.offs, i, S.parts[i], cx, cy, rect, S.gap) ? [cx, cy, false] : null;
+    };
+    var r = spot(tx, ty);
+    if (r) return r;
+    var step = Math.max(S.gap * 2, Math.min(rect[2] - rect[0], rect[3] - rect[1]) / 60), maxR = Math.max(rect[2] - rect[0], rect[3] - rect[1]);
+    for (var d = step; d <= maxR; d += step) {
+      for (var a = 0; a < 16; a++) {
+        r = spot(tx + d * Math.cos(a * Math.PI / 8), ty + d * Math.sin(a * Math.PI / 8));
+        if (r) return r;
+      }
+    }
+    return [o[0], o[1], true];                                                      // no room in the other area
   }
 
   function toSheet(ev) {
@@ -240,9 +279,10 @@
     clearTimeout(S.sendTimer); commitMove(i);                                        // a pending arrow-key nudge goes first
     var polys = Geom.transformPolys(S.parts[i].polys, 0, 0, op, value);
     var part = Geom.makePart(polys);
-    var sh = Geom.shiftIntoSheet(part, S.W, S.H, S.margin);                          // a part at the edge may be pushed back in
+    var rect = rectFor(regionAt(i, 0, 0));
+    var sh = Geom.shiftIntoRect(part, rect);                                         // a part at the edge may be pushed back in
     if (sh) { polys = Geom.translatePolys(polys, sh[0], sh[1]); part = Geom.makePart(polys); }
-    if (!sh || !Geom.fits(S.parts, S.offs, i, part, 0, 0, S.W, S.H, S.margin, S.gap)) {
+    if (!sh || !Geom.fitsRect(S.parts, S.offs, i, part, 0, 0, rect, S.gap)) {
       info.innerHTML = "<b>" + S.meta[i].name + "</b> &nbsp; <span class='warn'>not enough room to " +
         (op === "rotate" ? "rotate" : "flip") + " it here: move it or its neighbours first</span>";
       return;
@@ -254,7 +294,8 @@
   function describe(blocked) {
     if (S.sel === null) return;
     var i = S.sel, b = S.parts[i].bbox, o = S.offs[i];
-    info.innerHTML = "<b>" + S.meta[i].name + "</b> &nbsp; x " + fmt(b[0] + o[0]) + " &nbsp; y " + fmt(b[1] + o[1]) +
+    info.innerHTML = "<b>" + S.meta[i].name + "</b>" + (regionAt(i, o[0], o[1]) === "hold" ? " <i>(on hold, not on the sheet)</i>" : "") +
+      " &nbsp; x " + fmt(b[0] + o[0]) + " &nbsp; y " + fmt(b[1] + o[1]) +
       " &nbsp; (" + fmt(b[2] - b[0]) + " × " + fmt(b[3] - b[1]) + ")" +
       (blocked ? " &nbsp; <span class='warn'>at its limit (part spacing / edge margin / neighbour)</span>" : "");
   }
@@ -284,7 +325,7 @@
       if (!d) return;
       d.raf = false;
       var i = d.i, tx = d.last[0] - d.gx, ty = d.last[1] - d.gy;
-      var r = Geom.moveConstrained(S.parts, S.offs, i, S.offs[i][0], S.offs[i][1], tx, ty, S.W, S.H, S.margin, S.gap);
+      var r = moveTo(i, tx, ty);
       S.offs[i] = [r[0], r[1]];
       place(i);
       var short = Math.hypot(tx - r[0], ty - r[1]) > 0.5;
@@ -303,7 +344,7 @@
     // apply the last pointer position that the animation frame has not processed yet
     if (d.last) {
       var tx = d.last[0] - d.gx, ty = d.last[1] - d.gy;
-      var r = Geom.moveConstrained(S.parts, S.offs, d.i, S.offs[d.i][0], S.offs[d.i][1], tx, ty, S.W, S.H, S.margin, S.gap);
+      var r = moveTo(d.i, tx, ty);
       S.offs[d.i] = [r[0], r[1]];
       place(d.i);
     }
@@ -344,7 +385,7 @@
     var dx = ev.key === "ArrowLeft" ? -st : ev.key === "ArrowRight" ? st : 0;
     var dy = ev.key === "ArrowDown" ? -st : ev.key === "ArrowUp" ? st : 0;
     var i = S.sel, o = S.offs[i];
-    var r = Geom.moveConstrained(S.parts, S.offs, i, o[0], o[1], o[0] + dx, o[1] + dy, S.W, S.H, S.margin, S.gap);
+    var r = moveTo(i, o[0] + dx, o[1] + dy);
     S.offs[i] = [r[0], r[1]];
     place(i);
     describe(r[2] && Math.hypot(r[0] - o[0] - dx, r[1] - o[1] - dy) > 1e-6);

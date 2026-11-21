@@ -163,3 +163,37 @@ def test_bad_transform_requests_are_refused():
     assert not apply_transform(sh, 0, "flip", "x", 0, 0, 0, 0, 5, 3)[0]
     assert not apply_transform(sh, 0, "rotate", "90", 0, 0, 0, 0, 5, 3)[0]
     assert not apply_transform(sh, 0, "rotate", 90, 1e9, 0, 0, 0, 5, 3)[0]
+
+
+# ---- hold area ----
+def test_a_part_may_be_set_aside_in_the_hold_area_and_brought_back():
+    from layout_edit import apply_move, hold_rect, is_held, placement_geom, sheet_problems
+    sh = _two()
+    x0, y0, x1, y1 = hold_rect(sh)
+    assert y1 < 0 and y0 < y1 and (x0, x1) == (0.0, sh["width"])         # a box below the sheet
+    ok, msg = apply_move(sh, 0, 0, -(100 + 300), 5, 3)                    # a: y 100..150 -> -300..-250, inside the hold box
+    assert ok, msg
+    assert is_held(sh["placements"][0]) and not is_held(sh["placements"][1])
+    assert sheet_problems(sh, 5, 3) == []
+    ok, msg = apply_move(sh, 0, 0, 400, 5, 3)                             # and back onto the sheet
+    assert ok, msg and not is_held(sh["placements"][0])
+
+
+def test_hold_area_limits_and_the_gap_between_sheet_and_hold_area():
+    from layout_edit import apply_move, hold_rect
+    sh = _two()
+    x0, y0, x1, y1 = hold_rect(sh)
+    ok, msg = apply_move(sh, 0, 0, -(100 + (-y0) + 10), 5, 3)             # below the bottom of the hold box
+    assert not ok and "hold" in msg
+    ok, msg = apply_move(sh, 0, 2000, -400, 5, 3)                         # right of the hold box
+    assert not ok and "hold" in msg
+    ok, msg = apply_move(sh, 0, 0, -105, 5, 3)                            # centre still above y=0 but sticking out of the sheet
+    assert not ok and "margin" in msg
+
+
+def test_two_held_parts_cannot_overlap():
+    from layout_edit import apply_move
+    sh = _two()
+    assert apply_move(sh, 0, 0, -400, 5, 3)[0]
+    ok, msg = apply_move(sh, 1, -150, -500, 5, 3)                         # b lands right against a (y -400..-300 vs -300..-250)
+    assert not ok and "close" in msg
