@@ -325,7 +325,7 @@ if st.session_state.get("loaded_pid") != pid:
 parts_state: list[dict] = st.session_state.parts
 
 st.subheader("Parts")
-tab_table, tab_dxf, tab_lib = st.tabs(["Enter dimensions", "Import DXF / STEP", "All parts"])
+tab_table, tab_dxf, tab_lib = st.tabs(["Nesting", "Import files", "Parts details"])
 
 with tab_table:
     with st.expander("Expand parts"):          # the table is folded away: one line until you open it
@@ -415,7 +415,7 @@ with tab_dxf:
 
 with tab_lib:
     if not current:
-        st.info("This project has no parts yet. Add them in **Enter dimensions** or **Import DXF / STEP**.")
+        st.info("This project has no parts yet. Add them in **Nesting** or **Import files**.")
     else:
         n_in = sum(1 for p in current if p["qty"] > 0)
         st.caption(f"{len(current)} parts in this project · {n_in} in the nesting list · "
@@ -482,6 +482,17 @@ with tab_table:
   .st-key-metrics_row [data-testid="stMetricLabel"] p { font-size: 0.72rem !important; }
   .st-key-metrics_row [data-testid="stMetricValue"] { font-size: 1.35rem !important; }
 }
+/* the three main tabs look like bordered cards */
+[data-testid="stTabs"] [role="tablist"] { gap: 0.5rem !important; border-bottom: none !important; box-shadow: none !important; }
+[data-testid="stTabs"] [role="tablist"]::after { display: none !important; }
+[data-testid="stTabs"] .react-aria-SelectionIndicator, [data-testid="stTabs"] [data-baseweb="tab-highlight"],
+[data-testid="stTabs"] [data-baseweb="tab-border"] { display: none !important; }
+[data-testid="stTabs"] [role="tab"] { border: 1px solid #cbd5e1 !important; border-radius: 0.6rem !important; background: #f8fafc !important;
+    padding: 0.55rem 1.1rem !important; height: auto !important; box-shadow: 0 1px 2px rgba(15,23,42,.08); }
+[data-testid="stTabs"] [role="tab"]:hover { background: #eef2f7 !important; }
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] { background: #fff !important; border: 2px solid #dc2626 !important;
+    box-shadow: 0 2px 6px rgba(15,23,42,.15); }
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] p { font-weight: 600; }
 /* light blue export buttons */
 [class*="st-key-dl_"] button { background-color: #dbeafe !important; border: 1px solid #93c5fd !important; color: #1e3a8a !important; }
 [class*="st-key-dl_"] button p { color: #1e3a8a !important; }
