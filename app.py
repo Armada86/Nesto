@@ -324,7 +324,6 @@ if st.session_state.get("loaded_pid") != pid:
     st.session_state.loaded_pid = pid
 parts_state: list[dict] = st.session_state.parts
 
-st.subheader("Parts")
 tab_table, tab_dxf, tab_lib = st.tabs(["Nesting", "Import files", "Parts details"])
 
 with tab_table:
