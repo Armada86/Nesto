@@ -11,6 +11,7 @@ import branding
 import db
 from cutlist_export import cutlist_xlsx
 from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
+from nest_job import NestJob, start_job
 from layout_edit import apply_move, apply_transform, ensure_polys, is_held
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
@@ -450,6 +451,12 @@ with tab_lib:
             r2b.metric("Holes", len(stats["holes"]))
             st.caption("Sizes are in the units of your drawing / typed dimensions (usually mm).")
 
+@st.cache_resource
+def nest_jobs() -> dict:
+    """Background nesting jobs of the server (project id -> NestJob), shared by every session and page reload."""
+    return {}
+
+
 # an action the user confirmed in the "Unsaved moves" dialog
 _pending = st.session_state.pop("pending_action", None)
 if _pending and _pending[0] == "load_run":
@@ -481,7 +488,8 @@ with tab_table:
 [class*="st-key-dl_"] button:hover { background-color: #bfdbfe !important; border-color: #60a5fa !important; }
 [class*="st-key-dl_"] button:active { background-color: #93c5fd !important; }
 </style>""", unsafe_allow_html=True)
-    run = st.button("▶ Nest", key="nest_btn", type="primary")
+    _job0 = nest_jobs().get(pid)
+    run = st.button("▶ Nest", key="nest_btn", type="primary", disabled=bool(_job0 and _job0.state == "running"))
     if _pending and _pending[0] == "nest":
         run = True                                   # confirmed in the dialog
     elif run and unsaved_moves():
@@ -512,21 +520,18 @@ if save_clicked:  # sidebar Save: sheet/nesting settings first (small and safe),
 
 
 # ---------- nesting ----------
-def run_nesting(parts):
-    all_rect = all(p["shape"] in ("rectangle",) and stored_geometry(p.get("outline")) is None for p in parts)
-    if all_rect:  # exact and instant
-        return nest([Part(p["name"], p["width"], p["height"], p["qty"], p["rotate"]) for p in parts],
-                    sheet_w, sheet_h, margin, spacing)
-    bar = st.progress(0.0, text="Nesting…")
-    pp = [PolyPart(p["name"], part_geometry(p), p["qty"], p["rotate"], flip=p.get("flip", True)) for p in parts]
-    cell = max(sheet_w, sheet_h) / PRECISION[prec_label]
-    info = {}
-    out = nest_polygons(pp, sheet_w, sheet_h, margin, spacing, ROT_STEPS[rot_label], cell,
-                        progress=lambda f, msg: bar.progress(min(max(f, 0.0), 1.0), text=f"Nesting… {msg}"),
-                        time_limit=EFFORT[effort_label], info=info)
-    bar.empty()
-    st.session_state.nest_info = info
-    return out
+@st.fragment(run_every=1.5)
+def nest_progress(job_id):
+    """Progress of the background nesting; ends with a full re-run when the job has finished."""
+    job = nest_jobs().get(pid)
+    if job is None or job.id != job_id or job.state != "running":
+        st.rerun()
+        return
+    st.progress(job.frac, text=f"Nesting… {job.msg}")
+    st.caption(f"{fmt_time(time.time() - job.started)} so far. Nesting keeps running on the server: you can lock your phone "
+               "or leave the page and come back later; the result is saved in the History.")
+    if st.button("Cancel nesting", key="cancel_nest"):
+        job.cancel = True
 
 
 with tab_table:
@@ -534,13 +539,12 @@ with tab_table:
         to_nest = [p for p in current if p["qty"] > 0]
         if not to_nest:
             st.warning("Nothing to nest: add a part with a quantity of at least 1.")
-        else:
-            t_start = time.perf_counter()
-            try:
-                sheets = run_nesting(to_nest)
-            except ValueError as e:
-                st.error(str(e))
-                st.stop()
+        elif _job0 is not None and _job0.state == "running":
+            st.warning("A nesting is already running for this project.")
+        elif all(p["shape"] in ("rectangle",) and stored_geometry(p.get("outline")) is None for p in to_nest):
+            t_start = time.perf_counter()           # rectangles only: exact and instant, no background job needed
+            sheets = nest([Part(p["name"], p["width"], p["height"], p["qty"], p["rotate"]) for p in to_nest],
+                          sheet_w, sheet_h, margin, spacing)
             elapsed = time.perf_counter() - t_start
             s = summary(sheets)
             result = [{"width": sh.width, "height": sh.height,
@@ -548,10 +552,54 @@ with tab_table:
             db.save_parts(pid, current)
             run_id = db.save_run(pid, sheet_w, sheet_h, margin, spacing, s["sheets"], s["utilization"], result, elapsed)
             st.session_state.parts = current
+            st.session_state.nest_info = {}
             set_result(result, run_id)
             st.session_state.nest_seconds = elapsed
             st.session_state.nest_parts = [{k: p[k] for k in ("name", "shape", "width", "height", "qty")} for p in to_nest]
             st.session_state.run_meta = {"margin": margin, "spacing": spacing}
+        else:
+            # irregular parts can take minutes: nest in a background thread so that locking the phone or losing the
+            # connection does not stop it; the thread saves the finished run to the History itself
+            st.session_state.parts = current
+            snap = dict(sheet_w=sheet_w, sheet_h=sheet_h, margin=margin, spacing=spacing)
+            cfg = dict(snap, rot_step=ROT_STEPS[rot_label], cell=max(sheet_w, sheet_h) / PRECISION[prec_label],
+                       time_limit=EFFORT[effort_label])
+            job = NestJob(pid, [{k: p[k] for k in ("name", "shape", "width", "height", "qty")} for p in to_nest],
+                          {"margin": margin, "spacing": spacing})
+            parts_to_save = [dict(p) for p in current]
+            job_pid = pid
+
+            def _save(result, s, elapsed):
+                db.save_parts(job_pid, parts_to_save)
+                return db.save_run(job_pid, snap["sheet_w"], snap["sheet_h"], snap["margin"], snap["spacing"],
+                                   s["sheets"], s["utilization"], result, elapsed)
+
+            nest_jobs()[pid] = job
+            start_job(job, to_nest, cfg, _save)
+            st.rerun()                                # shows the progress and disables the Nest button
+
+    # a background nesting that finished (also one that finished while this page was closed or the phone was locked)
+    _job = nest_jobs().get(pid)
+    if _job is not None and _job.state == "done" and st.session_state.get("adopted_job") != _job.id:
+        st.session_state.adopted_job = _job.id
+        if unsaved_moves():
+            st.info(f"A nesting finished in the background (run #{_job.run_id}). Your unsaved moves were kept: "
+                    "open the new run with **Load run** in the History when you are ready.")
+        else:
+            set_result(_job.result, _job.run_id)
+            st.session_state.nest_info = _job.info
+            st.session_state.nest_seconds = _job.elapsed
+            st.session_state.nest_parts = _job.nest_parts
+            st.session_state.run_meta = _job.meta
+            st.rerun()                               # the History in the sidebar lists the new run
+    elif _job is not None and _job.state in ("error", "cancelled") and st.session_state.get("seen_job") != _job.id:
+        st.session_state.seen_job = _job.id
+        if _job.state == "error":
+            st.error(_job.error)
+        else:
+            st.info("Nesting cancelled.")
+    elif _job is not None and _job.state == "running":
+        nest_progress(_job.id)
 
 
 def _sheets_from(result):
