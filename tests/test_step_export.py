@@ -44,18 +44,21 @@ def test_stacked_file_and_zip(sheets):
     assert names == ["sheet_01.step", "sheet_02.step"]
 
 
-def test_sheet_is_just_its_rectangle_and_parts_get_the_thickness(sheets):
+def test_sheet_rectangle_has_zero_thickness_as_a_surface_below_the_parts_or_as_an_outline(sheets):
     import re
     sh = sheets[0]
     n_parts = len(sh.placements)
-    solid = se.sheet_step(sh, 1, thickness=3.0).decode("latin1")
+    pt_re = r"CARTESIAN_POINT\('',\(([-\d.E+]+),([-\d.E+]+),([-\d.E+]+)\)\)"
+
+    solid = se.sheet_step(sh, 1, thickness=3.0).decode("latin1")          # default: a flat surface for the sheet
     assert solid.count("MANIFOLD_SOLID_BREP") == n_parts                  # only the parts are solids
-    pts = re.findall(r"CARTESIAN_POINT\('',\(([-\d.E+]+),([-\d.E+]+),([-\d.E+]+)\)\)", solid)
-    on_sheet = {(round(float(x), 3), round(float(y), 3)) for x, y, z in pts}
-    assert {(0.0, 0.0), (1000.0, 0.0), (1000.0, 700.0), (0.0, 700.0)} <= on_sheet        # the exact sheet rectangle
-    assert max(float(z) for _, _, z in pts) == 3.0 and min(float(z) for _, _, z in pts) == 0.0
+    pts = [(round(float(x), 3), round(float(y), 3), round(float(z), 3)) for x, y, z in re.findall(pt_re, solid)]
+    corners = {(0.0, 0.0, se.SHEET_Z), (1000.0, 0.0, se.SHEET_Z), (1000.0, 700.0, se.SHEET_Z), (0.0, 700.0, se.SHEET_Z)}
+    assert corners <= set(pts)                                            # the exact sheet rectangle, below the parts
+    assert max(z for _, _, z in pts) == 3.0                               # part thickness as typed
 
     flat = se.sheet_step(sh, 1, thickness=0.0).decode("latin1")           # 0 in the box: only 2D shapes
-    assert "MANIFOLD_SOLID_BREP" not in flat
-    assert flat.count("ADVANCED_FACE") == n_parts                         # one face per part and NO face for the sheet
-    assert "Sheet 1" in flat
+    assert "MANIFOLD_SOLID_BREP" not in flat and flat.count("ADVANCED_FACE") == n_parts + 1   # parts + the sheet surface
+
+    outline = se.sheet_step(sh, 1, thickness=0.0, mode="outline").decode("latin1")
+    assert outline.count("ADVANCED_FACE") == n_parts and "GEOMETRIC_CURVE_SET" in outline    # no face for the sheet
