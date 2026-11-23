@@ -32,7 +32,7 @@ def test_one_sheet_keeps_names_outlines_and_holes(sheets):
 
 
 def test_flat_faces_when_no_thickness(sheets):
-    data = se.sheet_step(sheets[0], 1, thickness=0.0).decode("latin1")
+    data = se.sheet_step(sheets[0], 1, thickness=0.0, mode="surface").decode("latin1")
     assert "ADVANCED_FACE" in data and "MANIFOLD_SOLID_BREP" not in data
 
 
@@ -44,21 +44,21 @@ def test_stacked_file_and_zip(sheets):
     assert names == ["sheet_01.step", "sheet_02.step"]
 
 
-def test_sheet_rectangle_has_zero_thickness_as_a_surface_below_the_parts_or_as_an_outline(sheets):
+def test_sheet_modes_plate_surface_outline(sheets):
     import re
     sh = sheets[0]
     n_parts = len(sh.placements)
     pt_re = r"CARTESIAN_POINT\('',\(([-\d.E+]+),([-\d.E+]+),([-\d.E+]+)\)\)"
 
-    solid = se.sheet_step(sh, 1, thickness=3.0).decode("latin1")          # default: a flat surface for the sheet
-    assert solid.count("MANIFOLD_SOLID_BREP") == n_parts                  # only the parts are solids
-    pts = [(round(float(x), 3), round(float(y), 3), round(float(z), 3)) for x, y, z in re.findall(pt_re, solid)]
-    corners = {(0.0, 0.0, se.SHEET_Z), (1000.0, 0.0, se.SHEET_Z), (1000.0, 700.0, se.SHEET_Z), (0.0, 700.0, se.SHEET_Z)}
-    assert corners <= set(pts)                                            # the exact sheet rectangle, below the parts
+    plate = se.sheet_step(sh, 1, thickness=3.0).decode("latin1")          # default: a 1 mm solid plate whose top face is z = 0, the parts' lower level
+    assert plate.count("MANIFOLD_SOLID_BREP") == n_parts + 1             # the parts and the sheet plate
+    pts = {(round(float(x), 3), round(float(y), 3), round(float(z), 3)) for x, y, z in re.findall(pt_re, plate)}
+    assert {(0.0, 0.0, 0.0), (1000.0, 700.0, 0.0), (0.0, 0.0, -1.0), (1000.0, 700.0, -1.0)} <= pts   # 1000 x 700 x 1 mm, z -1 .. 0
     assert max(z for _, _, z in pts) == 3.0                               # part thickness as typed
 
-    flat = se.sheet_step(sh, 1, thickness=0.0).decode("latin1")           # 0 in the box: only 2D shapes
-    assert "MANIFOLD_SOLID_BREP" not in flat and flat.count("ADVANCED_FACE") == n_parts + 1   # parts + the sheet surface
+    flat = se.sheet_step(sh, 1, thickness=0.0, mode="surface").decode("latin1")   # zero-thickness surface below the parts
+    assert "MANIFOLD_SOLID_BREP" not in flat and flat.count("ADVANCED_FACE") == n_parts + 1
+    assert {round(float(z), 3) for z in re.findall(r"CARTESIAN_POINT\('',\([-\d.E+]+,[-\d.E+]+,([-\d.E+]+)\)\)", flat)} == {0.0, se.SHEET_Z}
 
     outline = se.sheet_step(sh, 1, thickness=0.0, mode="outline").decode("latin1")
     assert outline.count("ADVANCED_FACE") == n_parts and "GEOMETRIC_CURVE_SET" in outline    # no face for the sheet

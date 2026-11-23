@@ -113,31 +113,38 @@ def _write(named_shapes) -> bytes:
         os.unlink(path)
 
 
-SHEET_Z = -0.5   # a sheet surface lies this far below the parts: at their lower level, but not on top of their faces
+SHEET_Z = -0.5            # a sheet surface lies this far below the parts: at their lower level, but not on top of their faces
+SHEET_PLATE = 1.0         # thickness of the sheet plate (mm): its TOP face is the plane z = 0 where the parts start
 
 
-def _sheet_entities(sheet, number, dx=0.0, dy=0.0, thickness=0.0, mode="surface"):
-    """The sheet's rectangle, of zero thickness: mode "surface" = a flat rectangular face (CAD programs always show
-    it), mode "outline" = only its four edges (some programs do not display free edges)."""
+def _sheet_entities(sheet, number, dx=0.0, dy=0.0, thickness=0.0, mode="plate"):
+    """The sheet of a STEP file. mode "plate" = a solid rectangular plate of the sheet size, 1 mm thick, below the parts:
+    its upper face is the plane z = 0 where the parts start (the plate spans z = -1 .. 0); "surface" = a flat zero-thickness face 0.5 mm below the parts; "outline" = only its four
+    edges (some CAD programs do not display free edges)."""
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
+    from OCP.gp import gp_Vec
 
     _ocp()
     corners = [(dx, dy), (dx + sheet.width, dy), (dx + sheet.width, dy + sheet.height), (dx, dy + sheet.height)]
     if mode == "outline":
         sheet_shape = _wire(corners)
-    else:
+    elif mode == "surface":
         sheet_shape = BRepBuilderAPI_MakeFace(_wire(corners, z=SHEET_Z), True).Face()
+    else:
+        face = BRepBuilderAPI_MakeFace(_wire(corners, z=-SHEET_PLATE), True).Face()
+        sheet_shape = BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, SHEET_PLATE)).Shape()
     items = [(f"Sheet {number}", sheet_shape)]
     for p in sheet.placements:
         items.append((p.part, _part_shape(p, dx, dy, thickness)))
     return items
 
 
-def sheet_step(sheet, number=1, thickness=0.0, mode="surface") -> bytes:
+def sheet_step(sheet, number=1, thickness=0.0, mode="plate") -> bytes:
     return _write(_sheet_entities(sheet, number, thickness=thickness, mode=mode))
 
 
-def all_sheets_step(sheets, gap=300.0, thickness=0.0, mode="surface") -> bytes:
+def all_sheets_step(sheets, gap=300.0, thickness=0.0, mode="plate") -> bytes:
     """One STEP with the sheets stacked vertically (sheet 1 on top), like the stacked DXF."""
     items, y = [], 0.0
     for i, s in enumerate(sheets, 1):
@@ -147,7 +154,7 @@ def all_sheets_step(sheets, gap=300.0, thickness=0.0, mode="surface") -> bytes:
     return _write(items)
 
 
-def sheets_step_zip(sheets, prefix="sheet", thickness=0.0, mode="surface") -> bytes:
+def sheets_step_zip(sheets, prefix="sheet", thickness=0.0, mode="plate") -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for i, s in enumerate(sheets, 1):
