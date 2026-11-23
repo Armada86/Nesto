@@ -83,10 +83,20 @@ def _as_dict(p):
     return {"x": p.x, "y": p.y, "w": p.w, "h": p.h, "polys": p.polys}
 
 
-# the sheet is a neutral light grey-blue, the parts use saturated colours: no part can look like the sheet
-SHEET_COLOR = (0.80, 0.82, 0.86)
-PART_COLORS = [(0.86, 0.25, 0.22), (0.96, 0.60, 0.15), (0.95, 0.85, 0.20), (0.30, 0.70, 0.30), (0.15, 0.65, 0.65),
-               (0.20, 0.45, 0.85), (0.55, 0.35, 0.80), (0.85, 0.30, 0.65), (0.60, 0.40, 0.25), (0.65, 0.80, 0.25)]
+# the sheet is a neutral light grey; the parts use a green / blue theme. The palette alternates between hues so that
+# neighbouring parts (which get consecutive palette entries) are easy to tell apart, and every entry is clearly darker
+# or more saturated than the sheet grey.
+SHEET_COLOR = (0.80, 0.80, 0.80)
+PART_COLORS = [(0.10, 0.30, 0.75),   # deep blue
+               (0.10, 0.62, 0.35),   # emerald green
+               (0.30, 0.65, 0.95),   # sky blue
+               (0.12, 0.42, 0.20),   # forest green
+               (0.10, 0.75, 0.85),   # cyan
+               (0.50, 0.78, 0.25),   # lime green
+               (0.08, 0.18, 0.45),   # navy
+               (0.35, 0.85, 0.65),   # mint
+               (0.00, 0.55, 0.60),   # teal
+               (0.25, 0.45, 0.60)]   # steel blue
 
 
 def assign_colors(placements, touch=6.0) -> list:
