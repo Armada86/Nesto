@@ -113,33 +113,43 @@ def _write(named_shapes) -> bytes:
         os.unlink(path)
 
 
-def _sheet_entities(sheet, number, dx=0.0, dy=0.0, thickness=0.0):
-    """The sheet is just its rectangle: four edges (a closed wire) of the sheet's size, no face, no thickness."""
+SHEET_Z = -0.5   # a sheet surface lies this far below the parts: at their lower level, but not on top of their faces
+
+
+def _sheet_entities(sheet, number, dx=0.0, dy=0.0, thickness=0.0, mode="surface"):
+    """The sheet's rectangle, of zero thickness: mode "surface" = a flat rectangular face (CAD programs always show
+    it), mode "outline" = only its four edges (some programs do not display free edges)."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+
     _ocp()
-    outline = _wire([(dx, dy), (dx + sheet.width, dy), (dx + sheet.width, dy + sheet.height), (dx, dy + sheet.height)])
-    items = [(f"Sheet {number}", outline)]
+    corners = [(dx, dy), (dx + sheet.width, dy), (dx + sheet.width, dy + sheet.height), (dx, dy + sheet.height)]
+    if mode == "outline":
+        sheet_shape = _wire(corners)
+    else:
+        sheet_shape = BRepBuilderAPI_MakeFace(_wire(corners, z=SHEET_Z), True).Face()
+    items = [(f"Sheet {number}", sheet_shape)]
     for p in sheet.placements:
         items.append((p.part, _part_shape(p, dx, dy, thickness)))
     return items
 
 
-def sheet_step(sheet, number=1, thickness=0.0) -> bytes:
-    return _write(_sheet_entities(sheet, number, thickness=thickness))
+def sheet_step(sheet, number=1, thickness=0.0, mode="surface") -> bytes:
+    return _write(_sheet_entities(sheet, number, thickness=thickness, mode=mode))
 
 
-def all_sheets_step(sheets, gap=300.0, thickness=0.0) -> bytes:
+def all_sheets_step(sheets, gap=300.0, thickness=0.0, mode="surface") -> bytes:
     """One STEP with the sheets stacked vertically (sheet 1 on top), like the stacked DXF."""
     items, y = [], 0.0
     for i, s in enumerate(sheets, 1):
         dy = y - s.height
-        items += _sheet_entities(s, i, dy=dy, thickness=thickness)
+        items += _sheet_entities(s, i, dy=dy, thickness=thickness, mode=mode)
         y = dy - gap
     return _write(items)
 
 
-def sheets_step_zip(sheets, prefix="sheet", thickness=0.0) -> bytes:
+def sheets_step_zip(sheets, prefix="sheet", thickness=0.0, mode="surface") -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for i, s in enumerate(sheets, 1):
-            z.writestr(f"{prefix}_{i:02d}.step", sheet_step(s, i, thickness))
+            z.writestr(f"{prefix}_{i:02d}.step", sheet_step(s, i, thickness, mode))
     return buf.getvalue()

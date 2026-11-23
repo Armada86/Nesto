@@ -816,6 +816,10 @@ with tab_table:
         step_t = st.number_input("STEP thickness (0 = flat faces, otherwise solid plates)", min_value=0.0, value=0.0, step=0.5,
                                  key="step_thickness", help="Only for the STEP files: 0 exports every part as a flat face; "
                                  "a thickness (e.g. 3) exports solid plates of that thickness. Part names are kept in the file.")
+        step_sheet_label = st.selectbox("Sheet in the STEP files", ["Flat surface (zero thickness)", "Outline only (four edges)"],
+                                        key="step_sheet_mode", help="The sheet rectangle of the STEP files. A flat surface 0.5 mm below the "
+                                        "parts is shown by every CAD program; an outline is only four edges, which some programs do not display.")
+        step_sheet = "outline" if step_sheet_label.startswith("Outline") else "surface"
         meta = st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}
         result_ref, scrap_cache = st.session_state.result, st.session_state.setdefault("scrap_cache", {})
         seconds, nest_parts = st.session_state.get("nest_seconds"), st.session_state.get("nest_parts")
@@ -848,12 +852,12 @@ with tab_table:
                                     key="dl_json", on_click="ignore")
         e = st.columns(4)
         if len(sheets) == 1:
-            e[0].download_button("⬇ STEP (sheet 1)", lambda: sheet_step(_sheets_now()[0], 1, step_t), "sheet_01.step",
+            e[0].download_button("⬇ STEP (sheet 1)", lambda: sheet_step(_sheets_now()[0], 1, step_t, step_sheet), "sheet_01.step",
                                  "application/step", width="stretch", key="dl_step", on_click="ignore")
         else:
-            e[0].download_button(f"⬇ STEP – {len(sheets)} files (ZIP)", lambda: sheets_step_zip(_sheets_now(), thickness=step_t),
+            e[0].download_button(f"⬇ STEP – {len(sheets)} files (ZIP)", lambda: sheets_step_zip(_sheets_now(), thickness=step_t, mode=step_sheet),
                                  "nest_sheets_step.zip", "application/zip", width="stretch", key="dl_step_zip", on_click="ignore")
-            e[1].download_button("⬇ STEP – all sheets in one file (stacked)", lambda: all_sheets_step(_sheets_now(), thickness=step_t),
+            e[1].download_button("⬇ STEP – all sheets in one file (stacked)", lambda: all_sheets_step(_sheets_now(), thickness=step_t, mode=step_sheet),
                                  "nest_all_sheets.step", "application/step", width="stretch", key="dl_step_all", on_click="ignore")
 
         # 3. the sheets
