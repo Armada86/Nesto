@@ -42,3 +42,19 @@ def test_stacked_file_and_zip(sheets):
     assert "Sheet 1" in stacked.decode("latin1") and "Sheet 2" in stacked.decode("latin1")
     names = zipfile.ZipFile(io.BytesIO(se.sheets_step_zip(two))).namelist()
     assert names == ["sheet_01.step", "sheet_02.step"]
+
+
+def test_sheet_is_an_empty_zero_thickness_rectangle_and_parts_get_the_thickness(sheets):
+    import re
+    sh = sheets[0]
+    n_parts = len(sh.placements)
+    solid = se.sheet_step(sh, 1, thickness=3.0).decode("latin1")
+    assert solid.count("MANIFOLD_SOLID_BREP") == n_parts                  # only the parts are solids: the sheet is not
+    pts = re.findall(r"CARTESIAN_POINT\('',\(([-\d.E+]+),([-\d.E+]+),([-\d.E+]+)\)\)", solid)
+    on_sheet = {(round(float(x), 3), round(float(y), 3)) for x, y, z in pts}
+    assert {(0.0, 0.0), (1000.0, 0.0), (1000.0, 700.0), (0.0, 700.0)} <= on_sheet        # the exact sheet rectangle is there
+    assert max(float(z) for _, _, z in pts) == 3.0 and min(float(z) for _, _, z in pts) == 0.0   # thickness as typed
+
+    flat = se.sheet_step(sh, 1, thickness=0.0).decode("latin1")           # 0 in the box: only 2D shapes
+    assert "MANIFOLD_SOLID_BREP" not in flat
+    assert {round(float(z), 3) for z in re.findall(r"CARTESIAN_POINT\('',\([-\d.E+]+,[-\d.E+]+,([-\d.E+]+)\)\)", flat)} == {0.0}
