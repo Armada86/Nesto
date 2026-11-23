@@ -56,3 +56,20 @@ def test_cut_length_is_the_border_of_the_parts_including_holes():
     s1, s2 = Sheet(1000, 500, [rect, plate]), Sheet(1000, 500, [rect])
     assert abs(s1.cut_length - 2600) < 1e-6 and s2.cut_length == 1000.0
     assert abs(summary([s1, s2])["cut_length"] - 3600) < 1e-6 and summary([])["cut_length"] == 0.0
+
+
+def test_cut_length_matches_shapely_for_nested_irregular_parts():
+    from shapely.geometry import box
+    import nesting_poly as npl
+    from nesting_poly import PolyPart
+    from shapes import build_shape, geom_from_json
+    parts = [PolyPart("plate", box(0, 0, 500, 300).difference(box(100, 100, 200, 200)), 2), PolyPart("disc", build_shape("circle", 250), 2),
+             PolyPart("tri", build_shape("triangle", 400, 300), 3)]
+    sheets = npl.nest_polygons(parts, 2500, 1250, 5, 3, rot_step=90, cell=6.0)
+    for sh in sheets:
+        for p in sh.placements:
+            g = geom_from_json(p.polys)
+            assert abs(p.cut_length - g.boundary.length) < 0.01, (p.part, p.cut_length, g.boundary.length)   # outline + holes
+        assert abs(sh.cut_length - sum(geom_from_json(p.polys).boundary.length for p in sh.placements)) < 0.05
+    outline, holes, hole_len = next(p for s in sheets for p in s.placements if p.part == "plate").cut_parts()
+    assert holes == 1 and abs(hole_len - 400) < 0.01 and abs(outline - 1600) < 0.01

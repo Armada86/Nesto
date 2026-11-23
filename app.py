@@ -478,6 +478,10 @@ with tab_table:
 /* the four run numbers stay side by side, also on a phone (Streamlit would stack the columns) */
 .st-key-metrics_row [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; gap: 0.5rem !important; }
 .st-key-metrics_row [data-testid="stColumn"] { min-width: 0 !important; width: auto !important; flex: 1 1 0 !important; }
+.st-key-metrics_row [data-testid="stMetricValue"], .st-key-metrics_row [data-testid="stMetricValue"] > div { overflow: visible !important; text-overflow: clip !important; }
+@media (max-width: 1100px) {
+  .st-key-metrics_row [data-testid="stMetricValue"] { font-size: 1.7rem !important; }
+}
 @media (max-width: 640px) {
   .st-key-metrics_row [data-testid="stMetricLabel"] p { font-size: 0.62rem !important; white-space: nowrap; }
   .st-key-metrics_row [data-testid="stMetricValue"] { font-size: 1.05rem !important; }
@@ -663,6 +667,19 @@ def scrap_lists(result, margin, cache) -> list:
     return out
 
 
+def cut_breakdown(sh, number: int) -> None:
+    """Folded table: the cut length of every part on a sheet (outline, holes) and the total."""
+    with st.expander(f"Cut length by part – sheet {number}"):
+        rows = []
+        for k, p in enumerate(sh.placements, 1):
+            outline, holes, hole_len = p.cut_parts()
+            rows.append({"No.": k, "Part": p.part, "Outline": round(outline, 1), "Holes": holes,
+                         "Hole outlines": round(hole_len, 1), "Cut length": round(outline + hole_len, 1)})
+        st.dataframe(rows, hide_index=True, width="stretch", column_config={
+            "No.": st.column_config.NumberColumn(width=45), "Holes": st.column_config.NumberColumn(width=60)})
+        st.markdown(f"**Total for sheet {number}: {sh.cut_length:,.1f}**  ·  {len(rows)} parts")
+
+
 @st.fragment
 def sheets_area(meta, scrap_cache):
     """The unsaved-moves banner, the edit toolbar and the sheets. It is a fragment: editing a part re-runs only this
@@ -732,8 +749,10 @@ def sheets_area(meta, scrap_cache):
                  + (f" · largest offcut {best[2]:.0f} × {best[3]:.0f}" if best else ""))
         if not edit:
             st.pyplot(draw_sheet(sh, f"Sheet {i}", scrap))
+            cut_breakdown(sh, i)
             continue
         st.markdown(f"**{title}**")
+        cut_breakdown(sh, i)
         ensure_polys(result[i - 1])
         sheet_editor(result[i - 1], meta["margin"], meta["spacing"], scrap, st.session_state.edit_rev.get(i - 1, 0), key=ekey)
 
