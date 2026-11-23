@@ -12,6 +12,7 @@ import db
 from cutlist_export import cutlist_xlsx
 from dxf_export import all_sheets_dxf, sheet_dxf, sheets_zip
 from nest_job import NestJob, start_job
+from step_export import all_sheets_step, sheet_step, sheets_step_zip
 from layout_edit import apply_move, apply_transform, ensure_polys, is_held
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
@@ -812,6 +813,9 @@ with tab_table:
         if _held_now:
             st.warning(f"⚠ {len(_held_now)} part(s) are outside the sheet (hold area) and are NOT in the exports: {', '.join(_held_now)}")
         with_names = st.checkbox("Include part names as text (layer LABELS)", value=True)
+        step_t = st.number_input("STEP thickness (0 = flat faces, otherwise solid plates)", min_value=0.0, value=0.0, step=0.5,
+                                 key="step_thickness", help="Only for the STEP files: 0 exports every part as a flat face; "
+                                 "a thickness (e.g. 3) exports solid plates of that thickness. Part names are kept in the file.")
         meta = st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}
         result_ref, scrap_cache = st.session_state.result, st.session_state.setdefault("scrap_cache", {})
         seconds, nest_parts = st.session_state.get("nest_seconds"), st.session_state.get("nest_parts")
@@ -842,6 +846,15 @@ with tab_table:
                                 key="dl_xlsx", on_click="ignore")
         d[slot + 1].download_button("⬇ Layout (JSON)", lambda: json.dumps(result_ref), "nest.json", width="stretch",
                                     key="dl_json", on_click="ignore")
+        e = st.columns(4)
+        if len(sheets) == 1:
+            e[0].download_button("⬇ STEP (sheet 1)", lambda: sheet_step(_sheets_now()[0], 1, step_t), "sheet_01.step",
+                                 "application/step", width="stretch", key="dl_step", on_click="ignore")
+        else:
+            e[0].download_button(f"⬇ STEP – {len(sheets)} files (ZIP)", lambda: sheets_step_zip(_sheets_now(), thickness=step_t),
+                                 "nest_sheets_step.zip", "application/zip", width="stretch", key="dl_step_zip", on_click="ignore")
+            e[1].download_button("⬇ STEP – all sheets in one file (stacked)", lambda: all_sheets_step(_sheets_now(), thickness=step_t),
+                                 "nest_all_sheets.step", "application/step", width="stretch", key="dl_step_all", on_click="ignore")
 
         # 3. the sheets
         edit = st.toggle("✋ Edit parts: move, rotate, flip", key="edit_mode",
