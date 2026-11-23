@@ -56,3 +56,30 @@ def test_sheet_is_a_half_mm_plate_under_the_parts(sheets):
     assert max(z for _, _, z in pts) == 3.0                              # part thickness as typed
     flat = se.sheet_step(sh, 1, thickness=0.0).decode("latin1")          # 0 in the box: the parts are 2D faces on z = 0
     assert flat.count("MANIFOLD_SOLID_BREP") == 1 and flat.count("ADVANCED_FACE") >= n_parts
+
+
+def test_colours_touching_parts_differ_and_no_part_has_the_sheet_colour():
+    import re
+    from shapely.geometry import box
+    from nesting import Placement, Sheet
+    from shapes import geom_to_json
+    # a 4 x 3 grid of parts 3 mm apart (every part touches its neighbours, diagonals too) + two far-away parts
+    pl = []
+    for r in range(3):
+        for c in range(4):
+            g = box(c * 203, r * 153, c * 203 + 200, r * 153 + 150)
+            pl.append(Placement("grid" if (r + c) % 2 else "other", g.bounds[0], g.bounds[1], 200, 150, False, 0.0, g.area, geom_to_json(g)))
+    sh = Sheet(1000, 600, pl)
+    cols = se.assign_colors(sh.placements, touch=6.0)
+    from shapely.strtree import STRtree  # noqa: F401
+    geoms = [se.placement_geom(se._as_dict(p)) for p in sh.placements]
+    for i in range(len(pl)):
+        for j in range(i):
+            if geoms[i].distance(geoms[j]) <= 6.0:
+                assert cols[i] != cols[j], (i, j)                       # touching parts never share a colour
+    assert se.SHEET_COLOR not in se.PART_COLORS                         # no part can have the sheet's colour
+    data = se.sheet_step(sh, 1, thickness=2.0).decode("latin1")
+    rgb = re.findall(r"COLOUR_RGB\('[^']*',([\d.E+-]+),([\d.E+-]+),([\d.E+-]+)\)", data)
+    got = {tuple(round(float(v), 2) for v in c) for c in rgb}
+    assert tuple(round(v, 2) for v in se.SHEET_COLOR) in got            # the sheet colour is written
+    assert len(got) >= 3                                                # and several different part colours
