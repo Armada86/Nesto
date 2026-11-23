@@ -40,5 +40,5 @@ def draw_sheet(sheet, title="", scrap=None):
     ax.set_ylim(-0.02 * sheet.height, sheet.height * 1.02)
     ax.set_aspect("equal")
     extra = f"  ·  largest offcut {scrap[0][2]:.0f} × {scrap[0][3]:.0f}" if scrap else ""
-    ax.set_title(f"{title}  –  {sheet.utilization:.2%} used{extra}")
+    ax.set_title(f"{title}  –  {sheet.utilization:.2%} used  ·  cut length {sheet.cut_length:,.0f}{extra}")
     return fig

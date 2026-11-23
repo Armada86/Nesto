@@ -42,3 +42,17 @@ def test_margin_spacing_no_overlap():
 def test_multi_sheet():
     s = nest([Part("a", 60, 60, 5)], 100, 100)
     assert len(s) == 5
+
+
+def test_cut_length_is_the_border_of_the_parts_including_holes():
+    from nesting import Placement, Sheet, summary
+    from shapely.geometry import box
+    from shapes import geom_to_json
+    rect = Placement("r", 0, 0, 300, 200, False)                              # rectangle engine: 2 * (300 + 200)
+    g = box(400, 0, 700, 300).difference(box(450, 50, 550, 150))              # 300 x 300 plate with a 100 x 100 hole
+    plate = Placement("p", 400, 0, 300, 300, False, 0.0, g.area, geom_to_json(g))
+    assert rect.cut_length == 1000.0
+    assert abs(plate.cut_length - (1200 + 400)) < 1e-6
+    s1, s2 = Sheet(1000, 500, [rect, plate]), Sheet(1000, 500, [rect])
+    assert abs(s1.cut_length - 2600) < 1e-6 and s2.cut_length == 1000.0
+    assert abs(summary([s1, s2])["cut_length"] - 3600) < 1e-6 and summary([])["cut_length"] == 0.0
