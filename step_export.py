@@ -22,9 +22,6 @@ def _ocp():
         raise ValueError("STEP export needs the 'cadquery-ocp' package (pip install cadquery-ocp)") from e
 
 
-SHEET_Z = 0.0
-
-
 def _wire(points, reverse=False, z=0.0):
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon
     from OCP.gp import gp_Pnt
@@ -116,20 +113,11 @@ def _write(named_shapes) -> bytes:
         os.unlink(path)
 
 
-FRAME_WIDTH = 0.05   # mm: the sheet frame is only a hairline, so the model shows just the sheet rectangle
-
-
 def _sheet_entities(sheet, number, dx=0.0, dy=0.0, thickness=0.0):
-    """The sheet is an EMPTY rectangle of zero thickness: a hairline flat frame (0.05 mm) whose inner edge is exactly the
-    sheet outline and which lies outside the sheet, so it never touches a part. It is a face because CAD programs show
-    faces reliably but often ignore a bare outline; at 0.05 mm it only shows up as the rectangle's edge lines."""
-    from shapely.geometry import box
-
+    """The sheet is just its rectangle: four edges (a closed wire) of the sheet's size, no face, no thickness."""
     _ocp()
-    w = FRAME_WIDTH
-    frame = box(dx - w, dy - w, dx + sheet.width + w, dy + sheet.height + w).difference(
-        box(dx, dy, dx + sheet.width, dy + sheet.height))
-    items = [(f"Sheet {number}", _compound(_faces(frame, 0.0, 0.0)))]
+    outline = _wire([(dx, dy), (dx + sheet.width, dy), (dx + sheet.width, dy + sheet.height), (dx, dy + sheet.height)])
+    items = [(f"Sheet {number}", outline)]
     for p in sheet.placements:
         items.append((p.part, _part_shape(p, dx, dy, thickness)))
     return items
