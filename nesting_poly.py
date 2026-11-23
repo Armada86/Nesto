@@ -692,6 +692,30 @@ def free_rectangles(sheet, margin=0.0, k=MAX_SCRAP):
     return [(a * cs, b * cs, (c - a) * cs, (d - b) * cs) for a, b, c, d in rects]
 
 
+def scrap_rectangles(sheet, margin=0.0, k=MAX_SCRAP):
+    """The scrap pieces to show and to export: free_rectangles, but a piece that reaches the edge margin goes on to the
+    sheet edge - the margin strip is scrap too. Next to a part nothing is added (that side is cut by the part spacing)."""
+    rects = free_rectangles(sheet, margin, k)
+    if margin <= 0 or not rects:
+        return rects
+    cell = max(sheet.width, sheet.height) / 700.0
+    nx, ny = int(math.ceil(sheet.width / cell)), int(math.ceil(sheet.height / cell))
+    tol = max(1, round(max(nx, ny) / 160)) * cell * 1.01 + 0.01      # the pieces sit on a grid this coarse
+    out = []
+    for x, y, w, h in rects:
+        x1, y1 = x + w, y + h
+        if x <= margin + tol:
+            x = 0.0
+        if y <= margin + tol:
+            y = 0.0
+        if x1 >= sheet.width - margin - tol:
+            x1 = float(sheet.width)
+        if y1 >= sheet.height - margin - tol:
+            y1 = float(sheet.height)
+        out.append((x, y, x1 - x, y1 - y))
+    return out
+
+
 # ------------------------------------------------------------------- settle pass
 def _sweep(geom, dx, dy):
     """The region material covers while `geom` slides along (dx, dy) - exact, holes included."""

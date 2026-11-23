@@ -502,3 +502,20 @@ def test_extra_orientations_are_added_to_the_variants():
     base = {round(v.ang, 1) for v in npl._variants(p, 15.0, 8.0, 2.0, False)}
     more = {round(v.ang, 1) for v in npl._variants(q, 15.0, 8.0, 2.0, False)}
     assert {7.0, 352.0} <= more and not ({7.0, 352.0} & base) and base <= more
+
+
+def test_scrap_pieces_reach_the_sheet_edge_over_the_margin_but_not_through_parts():
+    import nesting_poly as npl
+    from nesting import Placement, Sheet
+    from shapely.geometry import box
+    from shapes import geom_to_json
+    g = box(5, 5, 305, 495)                                                    # a part against the left margin
+    sh = Sheet(1000, 500, [Placement("a", 5, 5, 300, 490, False, 0.0, g.area, geom_to_json(g), False)])
+    plain = npl.free_rectangles(sh, 5)
+    shown = npl.scrap_rectangles(sh, 5)
+    x, y, w, h = shown[0]
+    assert abs(x + w - 1000) < 1e-6 and abs(y) < 1e-6 and abs(y + h - 500) < 1e-6      # reaches the right, bottom and top edge
+    assert x > 305                                                                    # the part side is NOT extended
+    px, py, pw, ph = plain[0]
+    assert w > pw and h > ph and abs(x - px) < 1e-6                                   # the margin strips were added
+    assert npl.scrap_rectangles(sh, 0) == npl.free_rectangles(sh, 0)                  # no margin, nothing to add
