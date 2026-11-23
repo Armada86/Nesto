@@ -20,6 +20,10 @@ class Part:
     rotate: bool = True
 
 
+def _ring_length(ring) -> float:
+    return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(ring, ring[1:]))
+
+
 @dataclass
 class Placement:
     part: str
@@ -33,16 +37,23 @@ class Placement:
     polys: list | None = None  # absolute outline on the sheet (see shapes.geom_to_json)
     mirrored: bool = False  # the part was turned over
 
+    def cut_parts(self) -> tuple:
+        """(outline length, number of holes, total length of the hole outlines)."""
+        if not self.polys:
+            return 2.0 * (self.w + self.h), 0, 0.0
+        outline, holes, hole_len = 0.0, 0, 0.0
+        for poly in self.polys:
+            outline += _ring_length(poly["ext"])
+            for ring in poly.get("holes", []):
+                holes += 1
+                hole_len += _ring_length(ring)
+        return outline, holes, hole_len
+
     @property
     def cut_length(self) -> float:
         """Border of the part: its outline plus the outlines of its holes."""
-        if not self.polys:
-            return 2.0 * (self.w + self.h)
-        total = 0.0
-        for poly in self.polys:
-            for ring in [poly["ext"], *poly.get("holes", [])]:
-                total += sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(ring, ring[1:]))
-        return total
+        outline, _, hole_len = self.cut_parts()
+        return outline + hole_len
 
 
 @dataclass
