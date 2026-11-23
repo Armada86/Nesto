@@ -818,9 +818,6 @@ with tab_table:
         if _held_now:
             st.warning(f"⚠ {len(_held_now)} part(s) are outside the sheet (hold area) and are NOT in the exports: {', '.join(_held_now)}")
         with_names = st.checkbox("Include part names as text (layer LABELS)", value=True)
-        step_t = st.number_input("STEP thickness (0 = flat faces, otherwise solid plates)", min_value=0.0, value=0.0, step=0.5,
-                                 key="step_thickness", help="Only for the STEP files: 0 exports every part as a flat face; "
-                                 "a thickness (e.g. 3) exports solid plates of that thickness. Part names are kept in the file.")
         meta = st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}
         result_ref, scrap_cache = st.session_state.result, st.session_state.setdefault("scrap_cache", {})
         seconds, nest_parts = st.session_state.get("nest_seconds"), st.session_state.get("nest_parts")
@@ -836,30 +833,31 @@ with tab_table:
 
         d = st.columns(4)
         if len(sheets) == 1:
-            d[0].download_button("⬇ DXF (sheet 1)", lambda: sheet_dxf(_sheets_now()[0], with_names), "sheet_01.dxf",
+            d[0].download_button("⬇ DXF", lambda: sheet_dxf(_sheets_now()[0], with_names), "sheet_01.dxf",
                                  "application/dxf", width="stretch", key="dl_dxf", on_click="ignore")
-            slot = 1
-        else:
-            d[0].download_button(f"⬇ DXF – {len(sheets)} files (ZIP)", lambda: sheets_zip(_sheets_now(), labels=with_names),
-                                 "nest_sheets.zip", "application/zip", width="stretch", key="dl_dxf_zip", on_click="ignore")
-            d[1].download_button("⬇ DXF – all sheets in one file (stacked)",
-                                 lambda: all_sheets_dxf(_sheets_now(), labels=with_names),
-                                 "nest_all_sheets.dxf", "application/dxf", width="stretch", key="dl_dxf_all", on_click="ignore")
-            slot = 2
-        d[slot].download_button("⬇ Cut list (Excel)", _xlsx, f"{safe}_cutlist.xlsx",
-                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch",
-                                key="dl_xlsx", on_click="ignore")
-        d[slot + 1].download_button("⬇ Layout (JSON)", lambda: json.dumps(result_ref), "nest.json", width="stretch",
-                                    key="dl_json", on_click="ignore")
-        e = st.columns(4)
-        if len(sheets) == 1:
-            e[0].download_button("⬇ STEP (sheet 1)", lambda: sheet_step(_sheets_now()[0], 1, step_t), "sheet_01.step",
-                                 "application/step", width="stretch", key="dl_step", on_click="ignore")
-        else:
-            e[0].download_button(f"⬇ STEP – {len(sheets)} files (ZIP)", lambda: sheets_step_zip(_sheets_now(), thickness=step_t),
-                                 "nest_sheets_step.zip", "application/zip", width="stretch", key="dl_step_zip", on_click="ignore")
-            e[1].download_button("⬇ STEP – all sheets in one file (stacked)", lambda: all_sheets_step(_sheets_now(), thickness=step_t),
-                                 "nest_all_sheets.step", "application/step", width="stretch", key="dl_step_all", on_click="ignore")
+        else:                                                 # one button that opens the two DXF options
+            with d[0].popover("⬇ DXF", width="stretch", key="dl_pop_dxf"):
+                st.download_button(f"{len(sheets)} files (ZIP)", lambda: sheets_zip(_sheets_now(), labels=with_names),
+                                   "nest_sheets.zip", "application/zip", width="stretch", key="dl_dxf_zip", on_click="ignore")
+                st.download_button("All sheets in one file (stacked)", lambda: all_sheets_dxf(_sheets_now(), labels=with_names),
+                                   "nest_all_sheets.dxf", "application/dxf", width="stretch", key="dl_dxf_all", on_click="ignore")
+        with d[1].popover("⬇ STEP", width="stretch", key="dl_pop_step"):      # the STEP options and the part thickness
+            step_t = st.number_input("STEP thickness (0 = flat faces, otherwise solid plates)", min_value=0.0, value=0.0,
+                                     step=0.5, key="step_thickness", help="0 exports every part as a flat face; a thickness "
+                                     "(e.g. 3) exports solid plates of that thickness. Part names are kept in the file.")
+            if len(sheets) == 1:
+                st.download_button("STEP file", lambda: sheet_step(_sheets_now()[0], 1, step_t), "sheet_01.step",
+                                   "application/step", width="stretch", key="dl_step", on_click="ignore")
+            else:
+                st.download_button(f"{len(sheets)} files (ZIP)", lambda: sheets_step_zip(_sheets_now(), thickness=step_t),
+                                   "nest_sheets_step.zip", "application/zip", width="stretch", key="dl_step_zip", on_click="ignore")
+                st.download_button("All sheets in one file (stacked)", lambda: all_sheets_step(_sheets_now(), thickness=step_t),
+                                   "nest_all_sheets.step", "application/step", width="stretch", key="dl_step_all", on_click="ignore")
+        d[2].download_button("⬇ Cut list (Excel)", _xlsx, f"{safe}_cutlist.xlsx",
+                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch",
+                             key="dl_xlsx", on_click="ignore")
+        d[3].download_button("⬇ Layout (JSON)", lambda: json.dumps(result_ref), "nest.json", width="stretch",
+                             key="dl_json", on_click="ignore")
 
         # 3. the sheets
         edit = st.toggle("✋ Edit parts: move, rotate, flip", key="edit_mode",
