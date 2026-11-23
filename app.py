@@ -864,14 +864,26 @@ with tab_table:
         with d[1].popover("⬇ STEP", width="stretch", key="dl_pop_step"):      # the STEP options and the part thickness
             step_t = st.number_input("STEP thickness (0 = flat faces, otherwise solid plates)", min_value=0.0, value=0.0,
                                      step=0.5, key="step_thickness", help="0 exports every part as a flat face; a thickness "
-                                     "(e.g. 3) exports solid plates of that thickness. Part names are kept in the file.")
+                                     "(e.g. 3) exports solid plates of that thickness. Part names are kept in the file. "
+                                     "Press Enter after typing a number.")
+            # The download starts the moment the button is clicked, possibly before a number that was just typed has been
+            # applied by the page. The file therefore reads the thickness when it is built, after a short pause during
+            # which the page applies it (the box is also read again on every run).
+            holder = st.session_state.setdefault("_step_t_holder", {"t": 0.0})
+            holder["t"] = float(step_t)
+
+            def _thickness():
+                time.sleep(0.8)
+                return holder["t"]
+
+            tag = f" · {step_t:g} thick" if step_t else " · flat 2D"
             if len(sheets) == 1:
-                st.download_button("STEP file", lambda: sheet_step(_sheets_now()[0], 1, step_t, step_touch), "sheet_01.step",
+                st.download_button("STEP file" + tag, lambda: sheet_step(_sheets_now()[0], 1, _thickness(), step_touch), "sheet_01.step",
                                    "application/step", width="stretch", key="dl_step", on_click="ignore")
             else:
-                st.download_button(f"{len(sheets)} files (ZIP)", lambda: sheets_step_zip(_sheets_now(), thickness=step_t, touch=step_touch),
+                st.download_button(f"{len(sheets)} files (ZIP)" + tag, lambda: sheets_step_zip(_sheets_now(), thickness=_thickness(), touch=step_touch),
                                    "nest_sheets_step.zip", "application/zip", width="stretch", key="dl_step_zip", on_click="ignore")
-                st.download_button("All sheets in one file (stacked)", lambda: all_sheets_step(_sheets_now(), thickness=step_t, touch=step_touch),
+                st.download_button("All sheets in one file (stacked)" + tag, lambda: all_sheets_step(_sheets_now(), thickness=_thickness(), touch=step_touch),
                                    "nest_all_sheets.step", "application/step", width="stretch", key="dl_step_all", on_click="ignore")
         d[2].download_button("⬇ Cut list (Excel)", _xlsx, f"{safe}_cutlist.xlsx",
                              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch",
