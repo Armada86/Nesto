@@ -1,7 +1,7 @@
 """Export nested sheets to STEP (one file per sheet, or all sheets stacked in one file).
 
 Every part becomes a named flat face (outer outline + holes) in the XY plane - or, with a thickness, a solid plate
-extruded in +Z. The sheet is added as an empty rectangle of zero thickness (a thin flat frame whose inner edge is the sheet outline) named "Sheet N". Needs the 'cadquery-ocp' package (the same one
+extruded in +Z. The sheet is added as an empty rectangle of zero thickness (a hairline flat frame, 0.05 mm, whose inner edge is the sheet outline) named "Sheet N". Needs the 'cadquery-ocp' package (the same one
 that reads STEP files).
 """
 from __future__ import annotations
@@ -116,18 +116,17 @@ def _write(named_shapes) -> bytes:
         os.unlink(path)
 
 
-def _frame_width(sheet) -> float:
-    return max(2.0, 0.002 * max(sheet.width, sheet.height))
+FRAME_WIDTH = 0.05   # mm: the sheet frame is only a hairline, so the model shows just the sheet rectangle
 
 
 def _sheet_entities(sheet, number, dx=0.0, dy=0.0, thickness=0.0):
-    """The sheet is an EMPTY rectangle of zero thickness: a thin flat frame whose inner edge is exactly the sheet
-    outline (it lies outside the sheet, so it never touches a part). It is a face, because CAD programs show faces
-    reliably but often ignore a bare outline."""
+    """The sheet is an EMPTY rectangle of zero thickness: a hairline flat frame (0.05 mm) whose inner edge is exactly the
+    sheet outline and which lies outside the sheet, so it never touches a part. It is a face because CAD programs show
+    faces reliably but often ignore a bare outline; at 0.05 mm it only shows up as the rectangle's edge lines."""
     from shapely.geometry import box
 
     _ocp()
-    w = _frame_width(sheet)
+    w = FRAME_WIDTH
     frame = box(dx - w, dy - w, dx + sheet.width + w, dy + sheet.height + w).difference(
         box(dx, dy, dx + sheet.width, dy + sheet.height))
     items = [(f"Sheet {number}", _compound(_faces(frame, 0.0, 0.0)))]
