@@ -4,6 +4,7 @@ Fast exact engine for rectangular parts. Irregular shapes use nesting_poly.py.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from itertools import product
 
@@ -32,6 +33,17 @@ class Placement:
     polys: list | None = None  # absolute outline on the sheet (see shapes.geom_to_json)
     mirrored: bool = False  # the part was turned over
 
+    @property
+    def cut_length(self) -> float:
+        """Border of the part: its outline plus the outlines of its holes."""
+        if not self.polys:
+            return 2.0 * (self.w + self.h)
+        total = 0.0
+        for poly in self.polys:
+            for ring in [poly["ext"], *poly.get("holes", [])]:
+                total += sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(ring, ring[1:]))
+        return total
+
 
 @dataclass
 class Sheet:
@@ -48,6 +60,11 @@ class Sheet:
     @property
     def utilization(self) -> float:
         return self.used_area / (self.width * self.height)
+
+    @property
+    def cut_length(self) -> float:
+        """Border of all the parts on this sheet (what has to be cut)."""
+        return sum(p.cut_length for p in self.placements)
 
 
 class _MaxRectsBin:
@@ -177,11 +194,12 @@ def nest(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0):
 
 def summary(sheets):
     if not sheets:
-        return {"sheets": 0, "parts": 0, "utilization": 0.0}
+        return {"sheets": 0, "parts": 0, "utilization": 0.0, "cut_length": 0.0}
     total = sum(s.width * s.height for s in sheets)
     used = sum(s.used_area for s in sheets)
     return {
         "sheets": len(sheets),
         "parts": sum(len(s.placements) for s in sheets),
         "utilization": used / total,
+        "cut_length": sum(s.cut_length for s in sheets),
     }

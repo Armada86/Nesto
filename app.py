@@ -479,8 +479,9 @@ with tab_table:
 .st-key-metrics_row [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; gap: 0.5rem !important; }
 .st-key-metrics_row [data-testid="stColumn"] { min-width: 0 !important; width: auto !important; flex: 1 1 0 !important; }
 @media (max-width: 640px) {
-  .st-key-metrics_row [data-testid="stMetricLabel"] p { font-size: 0.72rem !important; }
-  .st-key-metrics_row [data-testid="stMetricValue"] { font-size: 1.35rem !important; }
+  .st-key-metrics_row [data-testid="stMetricLabel"] p { font-size: 0.62rem !important; white-space: nowrap; }
+  .st-key-metrics_row [data-testid="stMetricValue"] { font-size: 1.05rem !important; }
+  .st-key-metrics_row [data-testid="stHorizontalBlock"] { gap: 0.25rem !important; }
 }
 /* the three main tabs look like bordered cards */
 [data-testid="stTabs"] [role="tablist"] { gap: 0.5rem !important; border-bottom: none !important; box-shadow: none !important; }
@@ -727,7 +728,7 @@ def sheets_area(meta, scrap_cache):
                 apply_edits(i - 1, mv.get("ops") or [], meta, history)
         scrap = scrap_lists_for(result, i - 1, scrap_cache)
         best = scrap[0] if scrap else None
-        title = (f"Sheet {i} – {sh.utilization:.2%} used"
+        title = (f"Sheet {i} – {sh.utilization:.2%} used · cut length {sh.cut_length:,.0f}"
                  + (f" · largest offcut {best[2]:.0f} × {best[3]:.0f}" if best else ""))
         if not edit:
             st.pyplot(draw_sheet(sh, f"Sheet {i}", scrap))
@@ -796,15 +797,19 @@ with tab_table:
 
         # 1. headline numbers, including how long the nest took
         with st.container(key="metrics_row"):
-            m1, m2, m3, m4 = st.columns(4)
+            m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("Sheets", s["sheets"])
             m2.metric("Parts placed", s["parts"])
             m3.metric("Utilization", f"{s['utilization']:.2%}")
             m4.metric("Time taken", fmt_time(st.session_state.get("nest_seconds")))
+            m5.metric("Cut length", f"{s['cut_length']:,.0f}")
         if info:
             st.caption(f"Best of {info['runs']} layouts "
                        f"({'paired parts' if info['set'] == 'paired' else 'single parts'}, placement rule: {info['rule']}"
                        f"{', scrap-aware' if info.get('protect') else ''}). Green dashed boxes = usable scrap.")
+
+        st.caption("Cut length = the border of all the parts (every outline and hole); it is also shown in each sheet's title. "
+                   "Where two parts touch, the shared edge counts once for each part.")
 
         # 2. export, right above the nest. The files are built when you click (deferred), from the layout as it is
         #    at that moment, so hand edits are always included and every edit stays cheap.
