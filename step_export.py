@@ -1,7 +1,7 @@
 """Export nested sheets to STEP (one file per sheet, or all sheets stacked in one file).
 
 Every part becomes a named flat face (outer outline + holes) in the XY plane - or, with a thickness, a solid plate
-extruded in +Z. The sheet outline is added as a wire named "Sheet N". Needs the 'cadquery-ocp' package (the same one
+extruded in +Z. The sheet is added as a flat rectangular face named "Sheet N", 0.5 mm below the parts, so that it frames them. Needs the 'cadquery-ocp' package (the same one
 that reads STEP files).
 """
 from __future__ import annotations
@@ -22,7 +22,10 @@ def _ocp():
         raise ValueError("STEP export needs the 'cadquery-ocp' package (pip install cadquery-ocp)") from e
 
 
-def _wire(points, reverse=False):
+SHEET_Z = -0.5   # the sheet face lies this far below the parts, so that it frames them without covering them
+
+
+def _wire(points, reverse=False, z=0.0):
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon
     from OCP.gp import gp_Pnt
 
@@ -33,7 +36,7 @@ def _wire(points, reverse=False):
         pts = pts[::-1]
     mk = BRepBuilderAPI_MakePolygon()
     for x, y in pts:
-        mk.Add(gp_Pnt(float(x), float(y), 0.0))
+        mk.Add(gp_Pnt(float(x), float(y), float(z)))
     mk.Close()
     return mk.Wire()
 
@@ -115,8 +118,10 @@ def _write(named_shapes) -> bytes:
 
 def _sheet_entities(sheet, number, dx=0.0, dy=0.0, thickness=0.0):
     _ocp()
-    items = [(f"Sheet {number}", _compound([_wire([(dx, dy), (dx + sheet.width, dy), (dx + sheet.width, dy + sheet.height),
-                                                   (dx, dy + sheet.height)])]))]
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+
+    outline = _wire([(dx, dy), (dx + sheet.width, dy), (dx + sheet.width, dy + sheet.height), (dx, dy + sheet.height)], z=SHEET_Z)
+    items = [(f"Sheet {number}", _compound([BRepBuilderAPI_MakeFace(outline, True).Face()]))]
     for p in sheet.placements:
         items.append((p.part, _part_shape(p, dx, dy, thickness)))
     return items

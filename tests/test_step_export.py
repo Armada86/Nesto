@@ -42,3 +42,17 @@ def test_stacked_file_and_zip(sheets):
     assert "Sheet 1" in stacked.decode("latin1") and "Sheet 2" in stacked.decode("latin1")
     names = zipfile.ZipFile(io.BytesIO(se.sheets_step_zip(two))).namelist()
     assert names == ["sheet_01.step", "sheet_02.step"]
+
+
+def test_sheet_is_a_zero_thickness_rectangle_face_and_parts_get_the_thickness(sheets):
+    import re
+    sh = sheets[0]
+    solid = se.sheet_step(sh, 1, thickness=3.0).decode("latin1")
+    n_parts = len(sh.placements)
+    assert solid.count("MANIFOLD_SOLID_BREP") == n_parts                 # only the parts are solids: the sheet has no thickness
+    pts = re.findall(r"CARTESIAN_POINT\('',\(([-\d.E+]+),([-\d.E+]+),([-\d.E+]+)\)\)", solid)
+    sheet_pts = [(float(x), float(y)) for x, y, z in pts if abs(float(z) - se.SHEET_Z) < 1e-9]
+    xs, ys = [p[0] for p in sheet_pts], [p[1] for p in sheet_pts]
+    assert (min(xs), max(xs), min(ys), max(ys)) == (0.0, 1000.0, 0.0, 700.0)       # the whole sheet rectangle
+    zs = sorted({round(float(z), 3) for _, _, z in pts})
+    assert zs[-1] == 3.0                                                  # part thickness as typed
