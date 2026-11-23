@@ -15,7 +15,7 @@ from nest_job import NestJob, start_job
 from layout_edit import apply_move, apply_transform, ensure_polys, is_held
 from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
-from nesting_poly import PolyPart, free_rectangles, nest_polygons
+from nesting_poly import PolyPart, nest_polygons, scrap_rectangles
 from part_view import fmt as fmt_dim, part_png, part_stats
 from render import draw_sheet
 from step_io import read_step
@@ -656,7 +656,7 @@ def scrap_lists(result, margin, cache) -> list:
         if k not in cache:
             if len(cache) > 300:
                 cache.clear()
-            cache[k] = free_rectangles(sh, margin)
+            cache[k] = scrap_rectangles(sh, margin)
         out.append(cache[k])
     return out
 
@@ -744,7 +744,7 @@ def scrap_lists_for(result, k, cache):
     if key not in cache:
         if len(cache) > 300:
             cache.clear()
-        cache[key] = free_rectangles(sh, margin)
+        cache[key] = scrap_rectangles(sh, margin)
     return cache[key]
 
 
