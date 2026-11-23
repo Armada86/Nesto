@@ -816,9 +816,9 @@ with tab_table:
         step_t = st.number_input("STEP thickness (0 = flat faces, otherwise solid plates)", min_value=0.0, value=0.0, step=0.5,
                                  key="step_thickness", help="Only for the STEP files: 0 exports every part as a flat face; "
                                  "a thickness (e.g. 3) exports solid plates of that thickness. Part names are kept in the file.")
-        step_sheet_label = st.selectbox("Sheet in the STEP files", ["Solid plate, 1 mm thick (from the parts' lower level)", "Flat surface (zero thickness)", "Outline only (four edges)"],
-                                        key="step_sheet_mode", help="The sheet rectangle of the STEP files. Plate: a 1 mm solid of the sheet size that starts at "
-                                        "the parts' lower level and goes up. Surface: a flat face 0.5 mm below the parts. Outline: only four "
+        step_sheet_label = st.selectbox("Sheet in the STEP files", ["Solid plate, 1 mm thick (under the parts)", "Flat surface (zero thickness)", "Outline only (four edges)"],
+                                        key="step_sheet_mode", help="The sheet rectangle of the STEP files. Plate: a 1 mm solid of the sheet size whose upper "
+                                        "face is the plane the parts start on (the parts sit on top of it). Surface: a flat face 0.5 mm below the parts. Outline: only four "
                                         "edges, which some CAD programs do not display.")
         step_sheet = "outline" if step_sheet_label.startswith("Outline") else "surface" if step_sheet_label.startswith("Flat") else "plate"
         meta = st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}

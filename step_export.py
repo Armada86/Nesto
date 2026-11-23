@@ -114,12 +114,12 @@ def _write(named_shapes) -> bytes:
 
 
 SHEET_Z = -0.5            # a sheet surface lies this far below the parts: at their lower level, but not on top of their faces
-SHEET_PLATE = 1.0         # thickness of the sheet plate (mm); it starts at the parts' lower level (z = 0) and goes up
+SHEET_PLATE = 1.0         # thickness of the sheet plate (mm): its TOP face is the plane z = 0 where the parts start
 
 
 def _sheet_entities(sheet, number, dx=0.0, dy=0.0, thickness=0.0, mode="plate"):
-    """The sheet of a STEP file. mode "plate" = a solid rectangular plate of the sheet size, 1 mm thick, from the parts'
-    lower level (z = 0) up; "surface" = a flat zero-thickness face 0.5 mm below the parts; "outline" = only its four
+    """The sheet of a STEP file. mode "plate" = a solid rectangular plate of the sheet size, 1 mm thick, below the parts:
+    its upper face is the plane z = 0 where the parts start (the plate spans z = -1 .. 0); "surface" = a flat zero-thickness face 0.5 mm below the parts; "outline" = only its four
     edges (some CAD programs do not display free edges)."""
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
     from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
@@ -132,7 +132,7 @@ def _sheet_entities(sheet, number, dx=0.0, dy=0.0, thickness=0.0, mode="plate"):
     elif mode == "surface":
         sheet_shape = BRepBuilderAPI_MakeFace(_wire(corners, z=SHEET_Z), True).Face()
     else:
-        face = BRepBuilderAPI_MakeFace(_wire(corners), True).Face()
+        face = BRepBuilderAPI_MakeFace(_wire(corners, z=-SHEET_PLATE), True).Face()
         sheet_shape = BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, SHEET_PLATE)).Shape()
     items = [(f"Sheet {number}", sheet_shape)]
     for p in sheet.placements:

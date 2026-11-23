@@ -50,10 +50,10 @@ def test_sheet_modes_plate_surface_outline(sheets):
     n_parts = len(sh.placements)
     pt_re = r"CARTESIAN_POINT\('',\(([-\d.E+]+),([-\d.E+]+),([-\d.E+]+)\)\)"
 
-    plate = se.sheet_step(sh, 1, thickness=3.0).decode("latin1")          # default: a 1 mm solid plate from z = 0 up
+    plate = se.sheet_step(sh, 1, thickness=3.0).decode("latin1")          # default: a 1 mm solid plate whose top face is z = 0, the parts' lower level
     assert plate.count("MANIFOLD_SOLID_BREP") == n_parts + 1             # the parts and the sheet plate
     pts = {(round(float(x), 3), round(float(y), 3), round(float(z), 3)) for x, y, z in re.findall(pt_re, plate)}
-    assert {(0.0, 0.0, 0.0), (1000.0, 700.0, 0.0), (0.0, 0.0, 1.0), (1000.0, 700.0, 1.0)} <= pts   # 1000 x 700 x 1 mm
+    assert {(0.0, 0.0, 0.0), (1000.0, 700.0, 0.0), (0.0, 0.0, -1.0), (1000.0, 700.0, -1.0)} <= pts   # 1000 x 700 x 1 mm, z -1 .. 0
     assert max(z for _, _, z in pts) == 3.0                               # part thickness as typed
 
     flat = se.sheet_step(sh, 1, thickness=0.0, mode="surface").decode("latin1")   # zero-thickness surface below the parts
