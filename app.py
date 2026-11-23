@@ -841,6 +841,7 @@ with tab_table:
         result_ref, scrap_cache = st.session_state.result, st.session_state.setdefault("scrap_cache", {})
         seconds, nest_parts = st.session_state.get("nest_seconds"), st.session_state.get("nest_parts")
         pname = proj["name"]
+        step_touch = meta["spacing"] + 3.0               # parts closer than this count as touching: they get different colours
         safe = re.sub(r"[^A-Za-z0-9_-]+", "_", pname).strip("_") or "nest"
 
         def _sheets_now():
@@ -865,12 +866,12 @@ with tab_table:
                                      step=0.5, key="step_thickness", help="0 exports every part as a flat face; a thickness "
                                      "(e.g. 3) exports solid plates of that thickness. Part names are kept in the file.")
             if len(sheets) == 1:
-                st.download_button("STEP file", lambda: sheet_step(_sheets_now()[0], 1, step_t), "sheet_01.step",
+                st.download_button("STEP file", lambda: sheet_step(_sheets_now()[0], 1, step_t, step_touch), "sheet_01.step",
                                    "application/step", width="stretch", key="dl_step", on_click="ignore")
             else:
-                st.download_button(f"{len(sheets)} files (ZIP)", lambda: sheets_step_zip(_sheets_now(), thickness=step_t),
+                st.download_button(f"{len(sheets)} files (ZIP)", lambda: sheets_step_zip(_sheets_now(), thickness=step_t, touch=step_touch),
                                    "nest_sheets_step.zip", "application/zip", width="stretch", key="dl_step_zip", on_click="ignore")
-                st.download_button("All sheets in one file (stacked)", lambda: all_sheets_step(_sheets_now(), thickness=step_t),
+                st.download_button("All sheets in one file (stacked)", lambda: all_sheets_step(_sheets_now(), thickness=step_t, touch=step_touch),
                                    "nest_all_sheets.step", "application/step", width="stretch", key="dl_step_all", on_click="ignore")
         d[2].download_button("⬇ Cut list (Excel)", _xlsx, f"{safe}_cutlist.xlsx",
                              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch",
