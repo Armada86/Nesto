@@ -38,7 +38,7 @@ def _wire(points, reverse=False, z=0.0):
     return mk.Wire()
 
 
-def _faces(geom, dx, dy):
+def _faces(geom, dx, dy, z=0.0):
     """Planar faces (outer ring CCW, holes CW) of a shapely geometry shifted by (dx, dy)."""
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
     from shapely import affinity
@@ -49,9 +49,9 @@ def _faces(geom, dx, dy):
     out = []
     for poly in polys:
         poly = orient(poly, 1.0)
-        mk = BRepBuilderAPI_MakeFace(_wire(poly.exterior.coords), True)
+        mk = BRepBuilderAPI_MakeFace(_wire(poly.exterior.coords, z=z), True)
         for ring in poly.interiors:
-            mk.Add(_wire(ring.coords))
+            mk.Add(_wire(ring.coords, z=z))
         if mk.IsDone():
             out.append(mk.Face())
     return out
@@ -72,9 +72,11 @@ def _part_shape(p, dx, dy, thickness):
     from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
     from OCP.gp import gp_Vec
 
-    faces = _faces(placement_geom(_as_dict(p)), dx, dy)
     if thickness and thickness > 0:
+        faces = _faces(placement_geom(_as_dict(p)), dx, dy)
         faces = [BRepPrimAPI_MakePrism(f, gp_Vec(0, 0, float(thickness))).Shape() for f in faces]
+    else:   # flat 2D parts float a hair above the sheet's top face: on the same plane the two faces flicker in a CAD view
+        faces = _faces(placement_geom(_as_dict(p)), dx, dy, z=FLAT_LIFT)
     return _compound(faces)
 
 
@@ -155,6 +157,7 @@ def _write(named_shapes) -> bytes:
         os.unlink(path)
 
 
+FLAT_LIFT = 0.2   # mm: flat (thickness 0) parts lie this far above the sheet top, so that the faces do not z-fight
 SHEET_PLATE = 0.5   # thickness of the sheet plate (mm): its TOP face is the plane z = 0 where the parts start
 
 

@@ -83,3 +83,13 @@ def test_colours_touching_parts_differ_and_no_part_has_the_sheet_colour():
     got = {tuple(round(float(v), 2) for v in c) for c in rgb}
     assert tuple(round(v, 2) for v in se.SHEET_COLOR) in got            # the sheet colour is written
     assert len(got) >= 3                                                # and several different part colours
+
+
+def test_flat_parts_float_above_the_sheet_plane_but_solid_parts_start_on_it(sheets):
+    import re
+    sh = sheets[0]
+    pt_re = r"CARTESIAN_POINT\('',\([-\d.E+]+,[-\d.E+]+,([-\d.E+]+)\)\)"
+    flat = {round(float(z), 3) for z in re.findall(pt_re, se.sheet_step(sh, 1, thickness=0.0).decode("latin1"))}
+    assert flat == {-0.5, 0.0, se.FLAT_LIFT}                              # sheet plate -0.5..0, parts 0.2 above its top
+    solid = {round(float(z), 3) for z in re.findall(pt_re, se.sheet_step(sh, 1, thickness=3.0).decode("latin1"))}
+    assert solid == {-0.5, 0.0, 3.0}                                      # solid parts sit exactly on z = 0
