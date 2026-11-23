@@ -44,7 +44,7 @@ def test_stacked_file_and_zip(sheets):
     assert names == ["sheet_01.step", "sheet_02.step"]
 
 
-def test_sheet_is_a_1_mm_plate_under_the_parts(sheets):
+def test_sheet_is_a_half_mm_plate_under_the_parts(sheets):
     import re
     sh = sheets[0]
     n_parts = len(sh.placements)
@@ -52,7 +52,7 @@ def test_sheet_is_a_1_mm_plate_under_the_parts(sheets):
     plate = se.sheet_step(sh, 1, thickness=3.0).decode("latin1")
     assert plate.count("MANIFOLD_SOLID_BREP") == n_parts + 1             # the parts and the sheet plate
     pts = {(round(float(x), 3), round(float(y), 3), round(float(z), 3)) for x, y, z in re.findall(pt_re, plate)}
-    assert {(0.0, 0.0, 0.0), (1000.0, 700.0, 0.0), (0.0, 0.0, -1.0), (1000.0, 700.0, -1.0)} <= pts   # 1000 x 700 x 1 mm, z -1 .. 0
+    assert {(0.0, 0.0, 0.0), (1000.0, 700.0, 0.0), (0.0, 0.0, -0.5), (1000.0, 700.0, -0.5)} <= pts   # 1000 x 700 x 0.5 mm, z -0.5 .. 0
     assert max(z for _, _, z in pts) == 3.0                              # part thickness as typed
     flat = se.sheet_step(sh, 1, thickness=0.0).decode("latin1")          # 0 in the box: the parts are 2D faces on z = 0
     assert flat.count("MANIFOLD_SOLID_BREP") == 1 and flat.count("ADVANCED_FACE") >= n_parts
