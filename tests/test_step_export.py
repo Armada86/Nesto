@@ -83,3 +83,11 @@ def test_colours_touching_parts_differ_and_no_part_has_the_sheet_colour():
     got = {tuple(round(float(v), 2) for v in c) for c in rgb}
     assert tuple(round(v, 2) for v in se.SHEET_COLOR) in got            # the sheet colour is written
     assert len(got) >= 3                                                # and several different part colours
+
+
+def test_part_colours_are_green_and_blue_and_clearly_differ_from_the_sheet():
+    import math
+    for r, g, b in se.PART_COLORS:
+        assert b >= r and g >= r - 0.05 or g >= r + 0.2                  # green / blue family: never red, orange or yellow
+        assert math.dist((r, g, b), se.SHEET_COLOR) > 0.35               # far from the sheet's grey
+    assert len(set(se.PART_COLORS)) == len(se.PART_COLORS)
