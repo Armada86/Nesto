@@ -143,3 +143,27 @@ def test_js_rotate_and_flip_agree_with_the_server_transform():
         from shapes import geom_from_json as gj
         g = gj(got)
         assert g.symmetric_difference(want).area < 1e-2 * max(want.area, 1) * 0.01 + 0.05
+
+
+def test_part_names_are_placed_inside_the_part_and_shrunk_to_fit():
+    from shapely.geometry import box as sbox
+    cases = [("big", sbox(0, 0, 1500, 1000)),                      # plenty of room: full size, in the middle
+             ("small", sbox(0, 0, 60, 30)),                         # a name of 5 characters does not fit at full size
+             ("tall", sbox(0, 0, 20, 400)),                         # thin and tall: the name is turned by 90 degrees
+             ("tri", Polygon([(0, 0), (160, 0), (80, 120)])),
+             ("holey", sbox(0, 0, 500, 400).difference(sbox(100, 100, 400, 300)))]
+    payload = {"pairs": [], "moves": [], "turns": [], "labels": [
+        {"polys": geom_to_json(g), "name": nm if nm != "small" else "H-105", "maxFs": 40.0, "minFs": 3.0} for nm, g in cases]}
+    out = run_node(payload)["labels"]
+    got = dict(zip([c[0] for c in cases], out))
+    assert got["big"]["fs"] == 40.0 and got["big"]["rot"] == 0 and abs(got["big"]["x"] - 750) < 1e-6 and abs(got["big"]["y"] - 500) < 1e-6
+    assert got["small"]["fs"] < 40.0 and got["tall"]["rot"] == 90
+    for nm, g in cases:
+        lb = got[nm]
+        assert lb is not None, nm
+        n = len("H-105" if nm == "small" else nm)
+        w, h = n * 0.66 * lb["fs"], 0.8 * lb["fs"]
+        if lb["rot"] == 90:
+            w, h = h, w
+        text = sbox(lb["x"] - w / 2, lb["y"] - h / 2, lb["x"] + w / 2, lb["y"] + h / 2)
+        assert g.buffer(0.01).contains(text), (nm, lb)              # the whole (estimated) text rectangle lies inside the part
