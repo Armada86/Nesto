@@ -843,6 +843,8 @@ with tab_table:
         pname = proj["name"]
         step_touch = meta["spacing"] + 3.0               # parts closer than this count as touching: they get different colours
         safe = re.sub(r"[^A-Za-z0-9_-]+", "_", pname).strip("_") or "nest"
+        run_no = st.session_state.get("run_id")
+        file_base = f"{safe}_run{run_no}" if run_no else safe     # every downloaded file starts with the project name and the run number
 
         def _sheets_now():
             return _sheets_from(result_ref)
@@ -853,14 +855,14 @@ with tab_table:
 
         d = st.columns(4)
         if len(sheets) == 1:
-            d[0].download_button("⬇ DXF", lambda: sheet_dxf(_sheets_now()[0], with_names), "sheet_01.dxf",
+            d[0].download_button("⬇ DXF", lambda: sheet_dxf(_sheets_now()[0], with_names), f"{file_base}_sheet_01.dxf",
                                  "application/dxf", width="stretch", key="dl_dxf", on_click="ignore")
         else:                                                 # one button that opens the two DXF options
             with d[0].popover("⬇ DXF", width="stretch", key="dl_pop_dxf"):
-                st.download_button(f"{len(sheets)} files (ZIP)", lambda: sheets_zip(_sheets_now(), labels=with_names),
-                                   "nest_sheets.zip", "application/zip", width="stretch", key="dl_dxf_zip", on_click="ignore")
+                st.download_button(f"{len(sheets)} files (ZIP)", lambda: sheets_zip(_sheets_now(), prefix=f"{file_base}_sheet", labels=with_names),
+                                   f"{file_base}_sheets_dxf.zip", "application/zip", width="stretch", key="dl_dxf_zip", on_click="ignore")
                 st.download_button("All sheets in one file (stacked)", lambda: all_sheets_dxf(_sheets_now(), labels=with_names),
-                                   "nest_all_sheets.dxf", "application/dxf", width="stretch", key="dl_dxf_all", on_click="ignore")
+                                   f"{file_base}_all_sheets.dxf", "application/dxf", width="stretch", key="dl_dxf_all", on_click="ignore")
         with d[1].popover("⬇ STEP", width="stretch", key="dl_pop_step"):      # the STEP options and the part thickness
             step_t = st.number_input("STEP thickness (0 = flat faces, otherwise solid plates)", min_value=0.0, value=0.0,
                                      step=0.5, key="step_thickness", help="0 exports every part as a flat face; a thickness "
@@ -878,17 +880,17 @@ with tab_table:
 
             tag = f" · {step_t:g} thick" if step_t else " · flat 2D"
             if len(sheets) == 1:
-                st.download_button("STEP file" + tag, lambda: sheet_step(_sheets_now()[0], 1, _thickness(), step_touch), "sheet_01.step",
+                st.download_button("STEP file" + tag, lambda: sheet_step(_sheets_now()[0], 1, _thickness(), step_touch), f"{file_base}_sheet_01.step",
                                    "application/step", width="stretch", key="dl_step", on_click="ignore")
             else:
-                st.download_button(f"{len(sheets)} files (ZIP)" + tag, lambda: sheets_step_zip(_sheets_now(), thickness=_thickness(), touch=step_touch),
-                                   "nest_sheets_step.zip", "application/zip", width="stretch", key="dl_step_zip", on_click="ignore")
+                st.download_button(f"{len(sheets)} files (ZIP)" + tag, lambda: sheets_step_zip(_sheets_now(), prefix=f"{file_base}_sheet", thickness=_thickness(), touch=step_touch),
+                                   f"{file_base}_sheets_step.zip", "application/zip", width="stretch", key="dl_step_zip", on_click="ignore")
                 st.download_button("All sheets in one file (stacked)" + tag, lambda: all_sheets_step(_sheets_now(), thickness=_thickness(), touch=step_touch),
-                                   "nest_all_sheets.step", "application/step", width="stretch", key="dl_step_all", on_click="ignore")
-        d[2].download_button("⬇ Cut list (Excel)", _xlsx, f"{safe}_cutlist.xlsx",
+                                   f"{file_base}_all_sheets.step", "application/step", width="stretch", key="dl_step_all", on_click="ignore")
+        d[2].download_button("⬇ Cut list (Excel)", _xlsx, f"{file_base}_cutlist.xlsx",
                              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch",
                              key="dl_xlsx", on_click="ignore")
-        d[3].download_button("⬇ Layout (JSON)", lambda: json.dumps(result_ref), "nest.json", width="stretch",
+        d[3].download_button("⬇ Layout (JSON)", lambda: json.dumps(result_ref), f"{file_base}_layout.json", width="stretch",
                              key="dl_json", on_click="ignore")
 
         # 3. the sheets
