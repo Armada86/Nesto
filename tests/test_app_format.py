@@ -71,7 +71,7 @@ def test_sheet_size_is_labelled_length_and_width(fake_db):
     assert at.number_input(key="sheet_h").value == 1500.0      # the vertical side is the width
 
 
-def _label_sheet(n_small):
+def _label_sheet():
     from nesting import Placement, Sheet
     from shapely.geometry import box
     from shapes import geom_to_json
@@ -79,29 +79,36 @@ def _label_sheet(n_small):
     def pl(name, g):
         b = g.bounds
         return Placement(name, b[0], b[1], b[2] - b[0], b[3] - b[1], False, 0.0, g.area, geom_to_json(g))
-    parts = [pl("BIG", box(10, 10, 2400, 900))]
-    parts += [pl(f"s{k}", box(20 + k * 90, 950, 20 + k * 90 + 22, 950 + 14)) for k in range(n_small)]
-    parts += [pl("T-90", box(2450, 10, 2490, 700))]                              # tall and thin: the name is turned
-    return Sheet(2500, 1250, parts)
+    return Sheet(2500, 1250, [pl("BIG", box(200, 200, 2300, 1000)),
+                              pl("MID", box(20, 1100, 160, 1160)),                  # smaller than BIG but still readable inside
+                              pl("L1", box(5, 600, 25, 612)), pl("R1", box(2470, 300, 2490, 312)),
+                              pl("T1", box(1200, 1230, 1220, 1243)), pl("B1", box(1200, 6, 1220, 19))])
 
 
-def test_every_name_is_inside_its_part_and_small_parts_get_a_smaller_font():
+def test_small_parts_get_their_name_outside_on_the_nearest_sheet_edge_big_parts_inside():
+    from matplotlib.text import Annotation
     from render import draw_sheet
     import matplotlib.pyplot as plt
-    sh = _label_sheet(5)
-    fig = draw_sheet(sh, "Sheet 1")
+    fig = draw_sheet(_label_sheet(), "Sheet 1")
     ax = fig.axes[0]
-    renderer = fig.canvas.get_renderer()
-    texts = {t.get_text(): t for t in ax.texts if not t.get_text().startswith("scrap")}
-    assert set(texts) == {"BIG", "s0", "s1", "s2", "s3", "s4", "T-90"}                 # every part has its name
-    assert texts["BIG"].get_fontsize() == 7.0                                          # big part: normal size
-    for p in sh.placements:
-        t = texts[p.part]
-        bb = t.get_window_extent(renderer)
-        (x0, y0), (x1, y1) = ax.transData.transform((p.x, p.y)), ax.transData.transform((p.x + p.w, p.y + p.h))
-        assert bb.x0 >= x0 - 1 and bb.x1 <= x1 + 1 and bb.y0 >= y0 - 1 and bb.y1 <= y1 + 1, p.part     # inside the part
-        if p.part.startswith("s"):
-            assert t.get_fontsize() < 7.0                                              # small part: smaller font
-    assert texts["T-90"].get_rotation() == 90                                          # a thin tall part: the name is turned
-    assert ax.get_xlim()[1] < 2600                                                     # no column of labels beside the sheet
+    out = {t.get_text(): t.xyann for t in ax.texts if isinstance(t, Annotation)}
+    inside = {t.get_text(): t for t in ax.texts if not isinstance(t, Annotation) and not t.get_text().startswith("scrap")}
+    assert set(out) == {"L1", "R1", "T1", "B1"}                                        # the four tiny parts
+    assert out["L1"][0] < 0 and out["R1"][0] > 2500 and out["T1"][1] > 1250 and out["B1"][1] < 0    # spread round the sheet
+    assert {"BIG", "MID"} <= set(inside) and inside["BIG"].get_fontsize() == 7.0        # readable parts keep their name inside
+    assert inside["MID"].get_fontsize() >= 5.0
+    xl, yl = ax.get_xlim(), ax.get_ylim()
+    assert xl[0] < 0 and xl[1] > 2500 and yl[0] < 0 and yl[1] > 1250                  # room was made on all four sides
+    plt.close(fig)
+
+
+def test_a_sheet_without_small_parts_has_no_outside_names_and_no_extra_room():
+    from matplotlib.text import Annotation
+    from render import draw_sheet
+    import matplotlib.pyplot as plt
+    sh = _label_sheet()
+    sh.placements = sh.placements[:2]
+    fig = draw_sheet(sh, "Sheet 1")
+    assert not [t for t in fig.axes[0].texts if isinstance(t, Annotation)]
+    assert abs(fig.axes[0].get_xlim()[1] - 2550) < 1e-6 and abs(fig.axes[0].get_xlim()[0] + 50) < 1e-6
     plt.close(fig)
