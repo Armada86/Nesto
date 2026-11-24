@@ -232,7 +232,60 @@
     return fitsRect(parts, offs, i, part, ox, oy, [margin, margin, W - margin, H - margin], gap);
   }
 
-  return { insideRect: insideRect, shiftIntoRect: shiftIntoRect, fitsRect: fitsRect, moveInRect: moveInRect,
+  /** Where and how large to write a part's name so that it lies entirely inside the part: {x, y, fs, rot} (rot 0 or 90),
+   *  the largest font size between minFs and maxFs that fits (the name may be turned by 90 degrees). The text is
+   *  estimated as a rectangle: 0.66 em per character wide, 0.8 em high. null when even minFs does not fit anywhere. */
+  function bestLabel(part, name, maxFs, minFs) {
+    const CW = 0.66, CH = 0.8, n = Math.max(1, name.length);
+    const b = part.bbox;
+    const cands = [];
+    // the middle of the bounding box first (a rectangle gets its name in the middle), then a grid of points inside the part
+    const add = function (x, y) { if (pointInPart(x, y, part)) cands.push([x, y]); };
+    add((b[0] + b[2]) / 2, (b[1] + b[3]) / 2);
+    let cx = 0, cy = 0, ca = 0;
+    for (const poly of part.polys) {                       // centre of mass of the outer rings
+      const r = poly.ext;
+      for (let i = 0; i + 1 < r.length; i++) {
+        const c = r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1];
+        ca += c; cx += (r[i][0] + r[i + 1][0]) * c; cy += (r[i][1] + r[i + 1][1]) * c;
+      }
+    }
+    if (Math.abs(ca) > 1e-9) add(cx / (3 * ca), cy / (3 * ca));
+    const fits = function (x, y, w, h) {                   // the text rectangle, sampled along its border and inside
+      const xs = [-1, -0.5, 0, 0.5, 1], ys = [-1, -0.5, 0, 0.5, 1];
+      for (const u of xs) for (const v of ys) {
+        if (!pointInPart(x + u * w / 2, y + v * h / 2, part)) return false;
+      }
+      return true;
+    };
+    const search = function (x, y, rot) {                  // best font size at this centre
+      const w1 = n * CW, h1 = CH, tw = rot ? h1 : w1, th = rot ? w1 : h1;
+      if (fits(x, y, tw * maxFs, th * maxFs)) return maxFs;
+      if (!fits(x, y, tw * minFs, th * minFs)) return 0;
+      let lo = minFs, hi = maxFs;
+      for (let k = 0; k < 9; k++) {
+        const mid = (lo + hi) / 2;
+        if (fits(x, y, tw * mid, th * mid)) lo = mid; else hi = mid;
+      }
+      return lo;
+    };
+    let best = null;
+    const consider = function (x, y) {
+      for (const rot of [0, 90]) {
+        const f = search(x, y, rot);
+        if (f > 0 && (!best || f > best.fs + 1e-9)) best = { x: x, y: y, fs: f, rot: rot };
+      }
+    };
+    for (const c of cands) { consider(c[0], c[1]); if (best && best.fs >= maxFs) return best; }
+    const G = 4;                                           // not found at full size in the middle: look around
+    for (let i = 0; i < G; i++) for (let j = 0; j < G; j++) {
+      const x = b[0] + (b[2] - b[0]) * (i + 0.5) / G, y = b[1] + (b[3] - b[1]) * (j + 0.5) / G;
+      if (pointInPart(x, y, part)) consider(x, y);
+    }
+    return best;
+  }
+
+  return { bestLabel: bestLabel, insideRect: insideRect, shiftIntoRect: shiftIntoRect, fitsRect: fitsRect, moveInRect: moveInRect,
            transformPolys: transformPolys, translatePolys: translatePolys, shiftIntoSheet: shiftIntoSheet, fits: fits,
            makePart: makePart, collides: collides, insideSheet: insideSheet, moveConstrained: moveConstrained,
            segSeg2: segSeg2, pointInPart: pointInPart };

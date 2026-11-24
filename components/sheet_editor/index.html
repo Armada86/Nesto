@@ -156,9 +156,11 @@
         });
       });
       el("path", { d: d, fill: p.color || "#8ab4d8", "fill-rule": "evenodd", "stroke-width": sw * 1.4, "stroke-linejoin": "round" }, g);
-      var b = S.parts[idx].bbox;
-      if ((b[2] - b[0]) > p.name.length * fs * 0.55 && (b[3] - b[1]) > fs * 1.4) {
-        var t = el("text", { x: (b[0] + b[2]) / 2, y: H - (b[1] + b[3]) / 2 + fs * 0.35, "text-anchor": "middle", "font-size": fs }, g);
+      var lb = Geom.bestLabel(S.parts[idx], p.name, fs, fs * 0.08);            // the name inside the part, as large as fits
+      if (lb) {
+        var tx = lb.x, ty = H - lb.y;
+        var t = el("text", { x: tx, y: ty + lb.fs * 0.35, "text-anchor": "middle", "font-size": lb.fs }, g);
+        if (lb.rot) t.setAttribute("transform", "rotate(-90 " + tx + " " + ty + ")");
         t.textContent = p.name;
       }
     }
