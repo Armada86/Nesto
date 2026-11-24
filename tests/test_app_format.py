@@ -69,3 +69,33 @@ def test_sheet_size_is_labelled_length_and_width(fake_db):
     assert "Height" not in [n.label for n in at.number_input]
     assert at.number_input(key="sheet_w").value == 3000.0      # the horizontal side is the length
     assert at.number_input(key="sheet_h").value == 1500.0      # the vertical side is the width
+
+
+def _label_sheet(n_small):
+    from nesting import Placement, Sheet
+    from shapely.geometry import box
+    from shapes import geom_to_json
+
+    def pl(name, g):
+        b = g.bounds
+        return Placement(name, b[0], b[1], b[2] - b[0], b[3] - b[1], False, 0.0, g.area, geom_to_json(g))
+    parts = [pl("BIG", box(10, 10, 2400, 900))]
+    parts += [pl(f"s{k}", box(20 + k * 90, 950, 20 + k * 90 + 40, 1020)) for k in range(n_small)]
+    return Sheet(2500, 1250, parts)
+
+
+def test_names_of_small_parts_go_outside_the_sheet_with_a_leader_line():
+    from matplotlib.text import Annotation
+    from render import draw_sheet
+    import matplotlib.pyplot as plt
+    fig = draw_sheet(_label_sheet(5), "Sheet 1")
+    ax = fig.axes[0]
+    outside = [t for t in ax.texts if isinstance(t, Annotation)]
+    inside = [t.get_text() for t in ax.texts if not isinstance(t, Annotation)]
+    assert sorted(t.get_text() for t in outside) == [f"s{k}" for k in range(5)]            # the five small parts
+    assert "BIG" in inside and not any(n.startswith("s") for n in inside)                   # the big part keeps its name inside
+    assert all(t.xyann[0] > 2500 for t in outside)                                           # written to the right of the sheet
+    plt.close(fig)
+    fig = draw_sheet(_label_sheet(0), "Sheet 1")                                             # nothing small: unchanged drawing
+    assert not [t for t in fig.axes[0].texts if isinstance(t, Annotation)] and fig.axes[0].get_xlim()[1] < 2600
+    plt.close(fig)
