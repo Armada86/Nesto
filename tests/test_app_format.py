@@ -80,22 +80,28 @@ def _label_sheet(n_small):
         b = g.bounds
         return Placement(name, b[0], b[1], b[2] - b[0], b[3] - b[1], False, 0.0, g.area, geom_to_json(g))
     parts = [pl("BIG", box(10, 10, 2400, 900))]
-    parts += [pl(f"s{k}", box(20 + k * 90, 950, 20 + k * 90 + 40, 1020)) for k in range(n_small)]
+    parts += [pl(f"s{k}", box(20 + k * 90, 950, 20 + k * 90 + 22, 950 + 14)) for k in range(n_small)]
+    parts += [pl("T-90", box(2450, 10, 2490, 700))]                              # tall and thin: the name is turned
     return Sheet(2500, 1250, parts)
 
 
-def test_names_of_small_parts_go_outside_the_sheet_with_a_leader_line():
-    from matplotlib.text import Annotation
+def test_every_name_is_inside_its_part_and_small_parts_get_a_smaller_font():
     from render import draw_sheet
     import matplotlib.pyplot as plt
-    fig = draw_sheet(_label_sheet(5), "Sheet 1")
+    sh = _label_sheet(5)
+    fig = draw_sheet(sh, "Sheet 1")
     ax = fig.axes[0]
-    outside = [t for t in ax.texts if isinstance(t, Annotation)]
-    inside = [t.get_text() for t in ax.texts if not isinstance(t, Annotation)]
-    assert sorted(t.get_text() for t in outside) == [f"s{k}" for k in range(5)]            # the five small parts
-    assert "BIG" in inside and not any(n.startswith("s") for n in inside)                   # the big part keeps its name inside
-    assert all(t.xyann[0] > 2500 for t in outside)                                           # written to the right of the sheet
-    plt.close(fig)
-    fig = draw_sheet(_label_sheet(0), "Sheet 1")                                             # nothing small: unchanged drawing
-    assert not [t for t in fig.axes[0].texts if isinstance(t, Annotation)] and fig.axes[0].get_xlim()[1] < 2600
+    renderer = fig.canvas.get_renderer()
+    texts = {t.get_text(): t for t in ax.texts if not t.get_text().startswith("scrap")}
+    assert set(texts) == {"BIG", "s0", "s1", "s2", "s3", "s4", "T-90"}                 # every part has its name
+    assert texts["BIG"].get_fontsize() == 7.0                                          # big part: normal size
+    for p in sh.placements:
+        t = texts[p.part]
+        bb = t.get_window_extent(renderer)
+        (x0, y0), (x1, y1) = ax.transData.transform((p.x, p.y)), ax.transData.transform((p.x + p.w, p.y + p.h))
+        assert bb.x0 >= x0 - 1 and bb.x1 <= x1 + 1 and bb.y0 >= y0 - 1 and bb.y1 <= y1 + 1, p.part     # inside the part
+        if p.part.startswith("s"):
+            assert t.get_fontsize() < 7.0                                              # small part: smaller font
+    assert texts["T-90"].get_rotation() == 90                                          # a thin tall part: the name is turned
+    assert ax.get_xlim()[1] < 2600                                                     # no column of labels beside the sheet
     plt.close(fig)

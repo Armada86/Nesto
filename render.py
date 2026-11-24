@@ -17,28 +17,55 @@ def _poly_patch(poly, **kw):
     return PathPatch(Path(verts, codes), **kw)
 
 
-def _anchor(p):
-    """A point inside the part (for the leader line of an outside label)."""
-    if p.polys:
-        from shapes import geom_from_json
-        pt = geom_from_json(p.polys).representative_point()
-        return pt.x, pt.y
-    return p.x + p.w / 2, p.y + p.h / 2
+REF_FONT = 7.0      # pt: the size a name gets when the part is big enough
+MIN_FONT = 1.5      # pt: the smallest size a name is shrunk to
 
 
-def _fits(ax, renderer, t, p, share=0.92):
-    """Does the text t fit inside the bounding box of the part?"""
-    bb = t.get_window_extent(renderer)
-    (x0, y0), (x1, y1) = ax.transData.transform((p.x, p.y)), ax.transData.transform((p.x + p.w, p.y + p.h))
-    return bb.width <= share * abs(x1 - x0) and bb.height <= share * abs(y1 - y0)
+def _part_geom(p):
+    from shapely.geometry import box
+    from shapes import geom_from_json
+    return geom_from_json(p.polys) if p.polys else box(p.x, p.y, p.x + p.w, p.y + p.h)
+
+
+def _label_spot(geom, w7, h7):
+    """(centre x, centre y, font size, rotation) of the biggest text that fits entirely inside the part. w7 / h7 are the
+    width / height (in drawing units) of the name at REF_FONT; the text scales linearly with the font size."""
+    from shapely.geometry import Point, box
+    from shapely.ops import polylabel
+
+    # the middle of the bounding box and the centre of mass first (a big rectangle gets its name in the middle), then the
+    # point farthest from the outline, then any point inside
+    cands = [geom.centroid, box(*geom.bounds).centroid, polylabel(geom, tolerance=max(geom.length, 1e-6) / 200.0),
+             geom.representative_point()]
+    best = (cands[2].x, cands[2].y, MIN_FONT, 0)
+    for rot, (tw, th) in ((0, (w7, h7)), (90, (h7, w7))):
+        for c in cands:
+            if not geom.contains(Point(c.x, c.y)):
+                continue
+
+            def ok(f, c=c, tw=tw, th=th):
+                k = f / REF_FONT
+                return geom.contains(box(c.x - tw * k / 2, c.y - th * k / 2, c.x + tw * k / 2, c.y + th * k / 2))
+            if not ok(MIN_FONT):
+                continue
+            lo, hi = MIN_FONT, REF_FONT
+            if ok(hi):
+                lo = hi
+            else:
+                for _ in range(14):
+                    mid = (lo + hi) / 2
+                    lo, hi = (mid, hi) if ok(mid) else (lo, mid)
+            if lo > best[2] + 1e-9:
+                best = (c.x, c.y, lo, rot)
+    return best
 
 
 def draw_sheet(sheet, title="", scrap=None):
     """scrap: optional list of free rectangles (x, y, w, h) to outline as usable offcuts.
-    A part name that does not fit inside its (small) part is written outside the sheet, in a column to the right, with a
-    leader line to the part."""
+    Every part carries its name inside it: at the normal size when the part is big enough, otherwise as large as
+    fits (rotated by 90 degrees when that gives a larger size)."""
     W, H = sheet.width, sheet.height
-    fig, ax = plt.subplots(figsize=(8, 8 * H / W if W else 5))
+    fig, ax = plt.subplots(figsize=(8, 8 * H / W if W else 5), dpi=170)
     ax.add_patch(Rectangle((0, 0), W, H, fill=False, lw=2, color="black"))
     cmap = plt.get_cmap("tab20")
     names = {}
@@ -54,52 +81,24 @@ def draw_sheet(sheet, title="", scrap=None):
         if w > 0.12 * W and h > 0.05 * H:
             ax.text(x + w / 2, y + h / 2, f"scrap {w:.0f} × {h:.0f}", ha="center", va="center",
                     fontsize=8, color="#2a9d4a")
+    ax.set_xlim(-0.02 * W, W * 1.02)
     ax.set_ylim(-0.02 * H, H * 1.02)
     ax.set_aspect("equal")
     ax.set_title(f"{title}  –  {sheet.utilization:.2%} used  ·  cut length {sheet.cut_length:,.0f}"
                  + (f"  ·  largest offcut {scrap[0][2]:.0f} × {scrap[0][3]:.0f}" if scrap else ""))
 
-    # part names: inside the part when they fit, otherwise outside the sheet with a leader line
+    fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
-    outside = []
-    margin = 0.0
-    for _ in range(3):                                   # the extra room on the right shrinks the drawing a little: re-check
-        ax.set_xlim(-0.02 * W, W * (1.02 + margin))
-        fig.canvas.draw()
-        outside = []
-        for p in sheet.placements:
-            t = ax.text(p.x + p.w / 2, p.y + p.h / 2, p.part, ha="center", va="center", fontsize=7)
-            if not _fits(ax, renderer, t, p):
-                t.remove()
-                outside.append(p)
-        need = 0.17 if outside else 0.0
-        if need == margin:
-            break
-        margin = need
-    if outside:
-        _outside_labels(ax, renderer, sheet, outside)
+    px_x = abs(ax.transData.transform((1, 0))[0] - ax.transData.transform((0, 0))[0])      # pixels per drawing unit
+    px_y = abs(ax.transData.transform((0, 1))[1] - ax.transData.transform((0, 0))[1])
+    probe_cache = {}
+    for p in sheet.placements:
+        if p.part not in probe_cache:
+            probe = ax.text(0, 0, p.part, fontsize=REF_FONT)
+            bb = probe.get_window_extent(renderer)
+            probe.remove()
+            probe_cache[p.part] = (bb.width / px_x, bb.height / px_y)
+        w7, h7 = probe_cache[p.part]
+        cx, cy, fs, rot = _label_spot(_part_geom(p), w7, h7)
+        ax.text(cx, cy, p.part, ha="center", va="center", fontsize=fs, rotation=rot, rotation_mode="anchor")
     return fig
-
-
-def _outside_labels(ax, renderer, sheet, small):
-    W, H = sheet.width, sheet.height
-    probe = ax.text(0, 0, "Hg", fontsize=7)
-    px_per_y = abs(ax.transData.transform((0, 1))[1] - ax.transData.transform((0, 0))[1])
-    line7 = probe.get_window_extent(renderer).height / px_per_y * 1.35          # data units one 7 pt label needs
-    probe.remove()
-    # many labels: a smaller font so that they fit next to the sheet's height (not below 4 pt)
-    fs = max(4.0, min(7.0, 7.0 * 1.1 * H / (len(small) * line7))) if len(small) * line7 > 1.1 * H else 7.0
-    line_h = line7 * fs / 7.0
-    # top to bottom; in a row the rightmost part gets the highest label, so that the leader lines cross as little as possible
-    items = sorted(((*_anchor(p), p.part) for p in small), key=lambda a: (-round(a[1] / max(line_h, 1e-9)), -a[0]))
-    ys = []
-    for _, ay, _ in items:                                                     # near the part, but never on top of each other
-        ys.append(min(ay, ys[-1] - line_h) if ys else min(ay, H))
-    if ys and ys[-1] < 0 and ys[0] - ys[-1] <= H:                              # keep the column beside the sheet, not below it
-        ys = [y - ys[-1] for y in ys]
-    x_label = W * 1.03
-    for (ax_, ay, name), y in zip(items, ys):
-        ax.annotate(name, xy=(ax_, ay), xytext=(x_label, y), textcoords="data", ha="left", va="center", fontsize=fs,
-                    arrowprops=dict(arrowstyle="-", lw=0.5, color="0.35", shrinkA=1, shrinkB=0, relpos=(0, 0.5)),
-                    annotation_clip=False)
-        ax.plot([ax_], [ay], marker="o", ms=2, color="0.2", zorder=5)
