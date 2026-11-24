@@ -18,7 +18,7 @@ from dxf_io import read_dxf
 from nesting import Part, Placement, Sheet, nest, summary
 from nesting_poly import PolyPart, nest_polygons, scrap_rectangles
 from part_view import fmt as fmt_dim, part_png, part_stats
-from render import draw_sheet
+from render import draw_sheet, part_color_indices
 from step_io import read_step
 from sheet_editor import sheet_editor
 from shapes import SHAPES, geom_to_json, part_geometry, stored_geometry
@@ -686,6 +686,7 @@ def sheets_area(meta, scrap_cache):
     function, not the whole page, so the page does not grey out and a move feels immediate."""
     result = st.session_state.result
     sheets = _sheets_from(result)
+    cidx = part_color_indices(r["placements"] for r in result)       # a part has the same colour on every sheet
     edit = st.session_state.get("edit_mode", False)
     history = st.session_state.get("edit_history", [])
     top = st.container()                      # drawn below, after the sheets have handled the latest edit
@@ -748,13 +749,13 @@ def sheets_area(meta, scrap_cache):
         title = (f"Sheet {i} – {sh.utilization:.2%} used · cut length {sh.cut_length:,.0f}"
                  + (f" · largest offcut {best[2]:.0f} × {best[3]:.0f}" if best else ""))
         if not edit:
-            st.pyplot(draw_sheet(sh, f"Sheet {i}", scrap))
+            st.pyplot(draw_sheet(sh, f"Sheet {i}", scrap, color_index=cidx))
             cut_breakdown(sh, i)
             continue
         st.markdown(f"**{title}**")
         cut_breakdown(sh, i)
         ensure_polys(result[i - 1])
-        sheet_editor(result[i - 1], meta["margin"], meta["spacing"], scrap, st.session_state.edit_rev.get(i - 1, 0), key=ekey)
+        sheet_editor(result[i - 1], meta["margin"], meta["spacing"], scrap, st.session_state.edit_rev.get(i - 1, 0), key=ekey, color_index=cidx)
 
     with top:
         draw_toolbar()

@@ -22,8 +22,14 @@ def palette(names):
     return {n: matplotlib.colors.to_hex(cmap(i % 20)) for n, i in order.items()}
 
 
-def parts_payload(sheet: dict) -> list[dict]:
-    colors = palette([p["part"] for p in sheet["placements"]])
+def parts_payload(sheet: dict, color_index: dict | None = None) -> list[dict]:
+    """color_index: {part name: colour index} for the whole run, so a part has the same colour on every sheet."""
+    if color_index:
+        cmap = matplotlib.colormaps["tab20"]
+        colors = {n: matplotlib.colors.to_hex(cmap(i % 20)) for n, i in color_index.items()}
+        colors.update({n: c for n, c in palette([p["part"] for p in sheet["placements"] if p["part"] not in colors]).items()})
+    else:
+        colors = palette([p["part"] for p in sheet["placements"]])
     out = []
     for p in sheet["placements"]:
         polys = p.get("polys") or geom_to_json(placement_geom(p))
@@ -31,8 +37,8 @@ def parts_payload(sheet: dict) -> list[dict]:
     return out
 
 
-def sheet_editor(sheet: dict, margin: float, spacing: float, scrap, rev: int, key: str):
+def sheet_editor(sheet: dict, margin: float, spacing: float, scrap, rev: int, key: str, color_index: dict | None = None):
     """Show one sheet whose parts can be dragged. Returns the last reported move
     {"id", "rev", "part", "dx", "dy"} (or None)."""
     return _component(width=sheet["width"], height=sheet["height"], margin=margin, spacing=spacing,
-                      parts=parts_payload(sheet), hold=list(hold_rect(sheet)), scrap=[list(r) for r in scrap], rev=rev, key=key, default=None)
+                      parts=parts_payload(sheet, color_index), hold=list(hold_rect(sheet)), scrap=[list(r) for r in scrap], rev=rev, key=key, default=None)

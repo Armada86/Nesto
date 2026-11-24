@@ -87,7 +87,17 @@ def _side_of(ax_, ay, W, H):
     return min(d, key=d.get)
 
 
-def draw_sheet(sheet, title="", scrap=None):
+def part_color_indices(sheets_placements) -> dict:
+    """One colour index per part NAME for a whole run: in the order the names first appear over all the sheets, so a
+    part has the same colour on every sheet. `sheets_placements`: an iterable of placement lists (objects or dicts)."""
+    idx = {}
+    for placements in sheets_placements:
+        for p in placements:
+            idx.setdefault(p["part"] if isinstance(p, dict) else p.part, len(idx))
+    return idx
+
+
+def draw_sheet(sheet, title="", scrap=None, color_index=None):
     """scrap: optional list of free rectangles (x, y, w, h) to outline as usable offcuts.
     Part names: inside the part, as large as fits, but not smaller than OUT_BELOW pt. A part too small for that gets
     its name OUTSIDE the sheet, on the sheet edge nearest to it (so the names are spread around the sheet, not
@@ -98,7 +108,7 @@ def draw_sheet(sheet, title="", scrap=None):
     cmap = plt.get_cmap("tab20")
     names = {}
     for p in sheet.placements:
-        c = cmap(names.setdefault(p.part, len(names)) % 20)
+        c = cmap((color_index[p.part] if color_index and p.part in color_index else names.setdefault(p.part, len(names))) % 20)
         if p.polys:
             for poly in p.polys:
                 ax.add_patch(_poly_patch(poly, facecolor=c, alpha=0.5, edgecolor="black", lw=0.8))
