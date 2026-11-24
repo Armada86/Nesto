@@ -112,3 +112,31 @@ def test_a_sheet_without_small_parts_has_no_outside_names_and_no_extra_room():
     assert not [t for t in fig.axes[0].texts if isinstance(t, Annotation)]
     assert abs(fig.axes[0].get_xlim()[1] - 2550) < 1e-6 and abs(fig.axes[0].get_xlim()[0] + 50) < 1e-6
     plt.close(fig)
+
+
+def test_a_part_has_the_same_colour_on_every_sheet():
+    from matplotlib.colors import to_hex
+    from nesting import Placement, Sheet
+    from render import draw_sheet, part_color_indices
+    import matplotlib.pyplot as plt
+    import sheet_editor as se
+
+    def sheet(*names):
+        return Sheet(1000, 500, [Placement(n, 10 + 160 * k, 10, 150, 100, False) for k, n in enumerate(names)])
+    s1, s2 = sheet("A", "B", "C"), sheet("D", "C", "A")                  # "C" and "A" sit in other places on sheet 2
+    idx = part_color_indices([s1.placements, s2.placements])
+    assert idx == {"A": 0, "B": 1, "C": 2, "D": 3}                          # order of first appearance over the whole run
+
+    def face(fig, k):
+        return to_hex(fig.axes[0].patches[1 + k].get_facecolor(), keep_alpha=False)
+    f1, f2 = draw_sheet(s1, "1", color_index=idx), draw_sheet(s2, "2", color_index=idx)
+    assert face(f1, 0) == face(f2, 2)                                       # A on sheet 1 == A on sheet 2
+    assert face(f1, 2) == face(f2, 1)                                       # C on sheet 1 == C on sheet 2
+    assert len({face(f1, 0), face(f1, 1), face(f1, 2), face(f2, 0)}) == 4   # different parts, different colours
+    plt.close(f1), plt.close(f2)
+    # the edit view uses the same colours
+    d1 = [{"part": p.part, "x": p.x, "y": p.y, "w": p.w, "h": p.h} for p in s1.placements]
+    d2 = [{"part": p.part, "x": p.x, "y": p.y, "w": p.w, "h": p.h} for p in s2.placements]
+    c1 = {x["name"]: x["color"] for x in se.parts_payload({"width": 1000, "height": 500, "placements": d1}, idx)}
+    c2 = {x["name"]: x["color"] for x in se.parts_payload({"width": 1000, "height": 500, "placements": d2}, idx)}
+    assert c1["A"] == c2["A"] and c1["C"] == c2["C"] and len(set(c1.values())) == 3
