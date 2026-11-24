@@ -519,3 +519,44 @@ def test_scrap_pieces_reach_the_sheet_edge_over_the_margin_but_not_through_parts
     px, py, pw, ph = plain[0]
     assert w > pw and h > ph and abs(x - px) < 1e-6                                   # the margin strips were added
     assert npl.scrap_rectangles(sh, 0) == npl.free_rectangles(sh, 0)                  # no margin, nothing to add
+
+
+def test_irregular_free_region_is_cut_into_usable_scrap_rectangles():
+    """An L-shaped free region (strips along two edges) was thrown away as irregular; now its usable rectangles count."""
+    import nesting_poly as npl
+    from nesting import Placement, Sheet
+    from shapely.geometry import box
+    from shapes import geom_to_json
+    g = box(5, 5, 4600, 1200)                                  # one big part in the lower left: free space = L along top + right
+    sh = Sheet(6250, 1500, [Placement("p", 5, 5, 4595, 1195, False, 0.0, g.area, geom_to_json(g))])
+    pieces = npl.free_rectangles(sh, 5)
+    assert len(pieces) >= 2                                    # the top strip and the right strip
+    assert any(w > 1500 and h > 1400 for _, _, w, h in pieces)       # the right strip over the full height
+    assert any(w > 4000 and 240 < h < 330 for _, _, w, h in pieces)  # the top strip
+
+
+def test_mixed_pair_of_two_different_parts_is_tighter_than_apart():
+    import nesting_poly as npl
+    from nesting_poly import PolyPart
+    from shapely.geometry import Polygon
+    wedge = PolyPart("wedge", Polygon([(0, 0), (400, 0), (150, 1300), (0, 1300)]), 1)       # tall wedge, slanted right edge
+    trap = PolyPart("trap", Polygon([(0, 0), (900, 0), (1100, 1100), (200, 1100)]), 1)       # trapezoid with slanted sides
+    cl = npl._best_pair_mixed(wedge, trap, 15.0, 8.0, 3.0)
+    assert cl is not None and {n for n, _ in cl.members} == {"wedge", "trap"}
+    x0, y0, x1, y1 = cl.geom.bounds
+    assert (x1 - x0) * (y1 - y0) < wedge.geom.bounds[2] * wedge.geom.bounds[3] + trap.geom.bounds[2] * trap.geom.bounds[3]
+    areas = [g.area for _, g in cl.members]
+    assert abs(sum(areas) - (wedge.geom.area + trap.geom.area)) < 0.01 * sum(areas) + 5      # both parts are in it, unchanged
+    assert abs(cl.geom.area - sum(areas)) < 1e-6 * sum(areas) + 1e-3                         # and they do not overlap
+
+
+def test_repack_never_changes_the_number_of_sheets_or_loses_parts():
+    import nesting_poly as npl
+    from nesting_poly import PolyPart
+    from shapely.geometry import Polygon, box
+    parts = [PolyPart("a", box(0, 0, 1500, 1100), 3), PolyPart("wedge", Polygon([(0, 0), (400, 0), (150, 1300), (0, 1300)]), 1),
+             PolyPart("trap", Polygon([(0, 0), (900, 0), (1100, 1100), (200, 1100)]), 1)]
+    info = {}
+    sheets = npl.nest_polygons(parts, 6250, 1500, 5, 3, rot_step=90, cell=8.0, info=info)
+    assert sum(len(s.placements) for s in sheets) == 5 and "repacked_sheets" in info
+    assert sorted(p.part for s in sheets for p in s.placements) == ["a", "a", "a", "trap", "wedge"]

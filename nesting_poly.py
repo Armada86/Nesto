@@ -254,12 +254,16 @@ def _coarsen(free, f):
     return free[:cy * f, :cx * f].reshape(cy, f, cx, f).all(axis=(1, 3))
 
 
-def _regular_rects(free, f, cell, sheet_w, sheet_h, bounds, max_n=MAX_SCRAP):
+def _regular_rects(free, f, cell, sheet_w, sheet_h, bounds, max_n=MAX_SCRAP, split=False):
     """Regular scrap of a free map: for every connected free region that
       * touches the usable sheet edge (enclosed pockets and holes in parts are not offcuts),
       * is at least as big as the size thresholds, and
       * is rectangular (its biggest rectangle fills >= REGULAR of it),
-    the biggest rectangle in it. Returns [(x0, y0, x1, y1)] in coarse cells, best score (area x squareness) first."""
+    the biggest rectangle in it. Returns [(x0, y0, x1, y1)] in coarse cells, best score (area x squareness) first.
+
+    split=True: a region that is NOT rectangular (an L or U shape along two edges, say) is not thrown away: usable
+    rectangles that reach the sheet edge are cut out of it one after the other (biggest first), as long as they pass
+    the size thresholds. Used to show / compare the real offcuts of a finished sheet."""
     min_side, min_area = scrap_thresholds(sheet_w, sheet_h)
     cs = f * cell
     min_side_c, min_cells = math.ceil(min_side / cs), math.ceil(min_area / (cs * cs))
@@ -276,10 +280,20 @@ def _regular_rects(free, f, cell, sheet_w, sheet_h, bounds, max_n=MAX_SCRAP):
         if not (sl[1].start <= bx0 + 1 or sl[1].stop >= bx1 - 1 or sl[0].start <= by0 + 1 or sl[0].stop >= by1 - 1):
             continue  # does not reach the sheet edge: a pocket, not an offcut
         area, x0, y0, x1, y1 = _largest_rect(sub)
-        if area < min_cells or min(x1 - x0, y1 - y0) < min_side_c or area / region < REGULAR:
+        if area >= min_cells and min(x1 - x0, y1 - y0) >= min_side_c and area / region >= REGULAR:
+            out.append((scrap_score(x1 - x0, y1 - y0), sl[1].start + x0, sl[0].start + y0, sl[1].start + x1, sl[0].start + y1))
             continue
-        score = scrap_score(x1 - x0, y1 - y0)
-        out.append((score, sl[1].start + x0, sl[0].start + y0, sl[1].start + x1, sl[0].start + y1))
+        if not split:
+            continue
+        rest = sub.copy()
+        for _ in range(max_n):                       # cut regular pieces out of the irregular region
+            area, x0, y0, x1, y1 = _largest_rect(rest)
+            if area < min_cells or min(x1 - x0, y1 - y0) < min_side_c:
+                break
+            gx0, gy0, gx1, gy1 = sl[1].start + x0, sl[0].start + y0, sl[1].start + x1, sl[0].start + y1
+            if gx0 <= bx0 + 1 or gx1 >= bx1 - 1 or gy0 <= by0 + 1 or gy1 >= by1 - 1:      # only pieces that reach the edge
+                out.append((scrap_score(x1 - x0, y1 - y0), gx0, gy0, gx1, gy1))
+            rest[y0:y1, x0:x1] = False
     out.sort(reverse=True)
     return [r[1:] for r in out[:max_n]]
 
@@ -521,6 +535,52 @@ def _best_pair(part: PolyPart, step, cell, spacing):
     return PolyPart(part.name + " x2", union, 1, part.rotate, mem_a + mem_b, flip=part.flip), eff_pair, eff_single
 
 
+def _best_pair_mixed(pa: PolyPart, pb: PolyPart, step, cell, spacing):
+    """Tightest 2-up of two DIFFERENT parts (e.g. a tall wedge and a trapezoid whose slanted edges mate): `pa` stays in
+    its own orientation, `pb` is tried in every orientation; the placement with the smallest bounding box wins.
+    Returns a rigid cluster PolyPart (named "A+B") or None."""
+    gx0, gy0, gx1, gy1 = pa.geom.bounds
+    bx0_, by0_, bx1_, by1_ = pb.geom.bounds
+    big = max(gx1 - gx0, gy1 - gy0, bx1_ - bx0_, by1_ - by0_)
+    pcell = min(cell, max(cell / 2.0, big / 260.0))                      # a little finer than the sheet grid
+    pad = spacing / 2 + PAD_FACTOR * pcell
+    a = _variants(PolyPart(pa.name, pa.geom, 1, pa.rotate, flip=False), step, pcell, pad, False)[0]
+    base = _variants(PolyPart(pb.name, pb.geom, 1, pb.rotate, flip=pb.flip), step, pcell, pad)
+    mb = max(max(v.mask.shape) for v in base)
+    ha, wa = a.mask.shape
+    gh, gw = ha + 2 * mb, wa + 2 * mb
+    ax0 = ay0 = mb
+    occ = np.zeros((gh, gw), dtype=np.float32)
+    occ[ay0:ay0 + ha, ax0:ax0 + wa][a.mask] = 1.0
+    best = None
+    for v in base:
+        h, w = v.mask.shape
+        ov = fftconvolve(occ, v.mask[::-1, ::-1].astype(np.float32), mode="valid")
+        feas = ov < 0.5
+        if not feas.any():
+            continue
+        ys, xs = np.nonzero(feas)
+        bw = np.maximum(ax0 + wa, xs + w) - np.minimum(ax0, xs)
+        bh = np.maximum(ay0 + ha, ys + h) - np.minimum(ay0, ys)
+        area = bw * bh
+        i = int(np.argmin(area))
+        if best is None or area[i] < best[0]:
+            best = (area[i], xs[i], ys[i], v)
+    if best is None:
+        return None
+    _, ox, oy, v = best
+    cb = pb.geom.centroid
+    ga = affinity.translate(a.geom, -a.off[0] + ax0 * pcell, -a.off[1] + ay0 * pcell)
+    gb = affinity.translate(v.geom, -v.off[0] + ox * pcell, -v.off[1] + oy * pcell)
+    x0, y0 = min(ga.bounds[0], gb.bounds[0]), min(ga.bounds[1], gb.bounds[1])
+    ga, gb = affinity.translate(ga, -x0, -y0), affinity.translate(gb, -x0, -y0)
+    mem = [(nm, affinity.translate(mg, -a.off[0] + ax0 * pcell - x0, -a.off[1] + ay0 * pcell - y0)) for nm, mg in _flat_members(pa)]
+    for nm, mg in _flat_members(pb):
+        rg = _orient(mg, v.mirror, v.ang, cb)
+        mem.append((nm, affinity.translate(rg, -v.off[0] + ox * pcell - x0, -v.off[1] + oy * pcell - y0)))
+    return PolyPart(f"{pa.name}+{pb.name}", ga.union(gb), 1, True, mem, flip=False)
+
+
 def _flat_members(part):
     return part.members or [(part.name, part.geom)]
 
@@ -688,7 +748,7 @@ def free_rectangles(sheet, margin=0.0, k=MAX_SCRAP):
             occ[sy0:sy1, sx0:sx1] |= m[sy0 - oy:sy1 - oy, sx0 - ox:sx1 - ox]
     f = max(1, round(max(nx, ny) / 160))
     cs = f * cell
-    rects = _regular_rects(~occ, f, cell, sheet.width, sheet.height, (x0, y0, x1, y1), k)
+    rects = _regular_rects(~occ, f, cell, sheet.width, sheet.height, (x0, y0, x1, y1), k, split=True)
     return [(a * cs, b * cs, (c - a) * cs, (d - b) * cs) for a, b, c, d in rects]
 
 
@@ -714,6 +774,135 @@ def scrap_rectangles(sheet, margin=0.0, k=MAX_SCRAP):
             y1 = float(sheet.height)
         out.append((x, y, x1 - x, y1 - y))
     return out
+
+
+# ------------------------------------------------------------------- re-pack pass
+def _free_edge_of(sheet, margin):
+    """Length of the boundary between free and occupied space of a finished sheet (same meaning as _Grid.free_edge)."""
+    cell = max(sheet.width, sheet.height) / 700.0
+    nx, ny = int(math.ceil(sheet.width / cell)), int(math.ceil(sheet.height / cell))
+    occ = np.ones((ny, nx), dtype=bool)
+    x0, x1 = max(0, math.ceil(margin / cell)), min(nx, math.floor((sheet.width - margin) / cell))
+    y0, y1 = max(0, math.ceil(margin / cell)), min(ny, math.floor((sheet.height - margin) / cell))
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    occ[y0:y1, x0:x1] = False
+    from shapes import geom_from_json
+    from shapely.geometry import box
+    for p in sheet.placements:
+        g = geom_from_json(p.polys) if p.polys else box(p.x, p.y, p.x + p.w, p.y + p.h)
+        m, (minx, miny) = _mask(g, cell, 0.5 * cell)
+        ox, oy = int(math.floor(minx / cell)), int(math.floor(miny / cell))
+        h, w = m.shape
+        sx0, sy0, sx1, sy1 = max(0, ox), max(0, oy), min(nx, ox + w), min(ny, oy + h)
+        if sx1 > sx0 and sy1 > sy0:
+            occ[sy0:sy1, sx0:sx1] |= m[sy0 - oy:sy1 - oy, sx0 - ox:sx1 - ox]
+    free = ~occ
+    near = binary_dilation(occ, structure=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], bool))
+    return float((free & near).sum()) * cell
+
+
+def sheet_quality(sheet, margin):
+    """Rank key of ONE finished sheet (smaller is better), the same order of criteria as _fitness: its offcuts
+    (irregular free regions are cut into usable rectangles), compactness of the free space, lowest layout ..."""
+    probe = Sheet(sheet.width, sheet.height, sheet.placements)
+    probe.scrap = free_rectangles(probe, margin)
+    probe.free_edge = _free_edge_of(probe, margin)
+    return _fitness([probe])
+
+
+def repack_sheets(sheets, parts, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, seconds, progress=None):
+    """Second look at every finished sheet that carries two or more irregular parts: take those parts off and place them
+    again - in every order, and also as a rigid pair of two DIFFERENT parts whose edges mate (a tall wedge against a
+    trapezoid, say) - keeping a new arrangement only when the sheet is better than before (see sheet_quality).
+    The parts of a sheet stay on that sheet, so the number of sheets never changes. Returns (sheets, improved)."""
+    import itertools
+    t0 = time.monotonic()
+    by_name = {}
+    for p in parts:
+        by_name.setdefault(p.name, p)
+
+    def irregular(p):
+        x0, y0, x1, y1 = p.geom.bounds
+        return p.geom.area < 0.985 * (x1 - x0) * (y1 - y0) or p.geom.geom_type != "Polygon" or bool(getattr(p.geom, "interiors", ()))
+
+    jobs_by_sheet = []
+    for si, sh in enumerate(sheets):
+        singles = []
+        for pl in sh.placements:
+            orig = by_name.get(pl.part)
+            if orig is None:
+                singles = None
+                break
+            singles.append(replace(orig, qty=1, members=None))
+        if not singles:
+            continue
+        irr = [p for p in singles if irregular(p)]
+        if len(irr) < 2:
+            continue
+        jobs_by_sheet.append((sh.utilization, si, singles, irr))
+    jobs_by_sheet.sort(key=lambda a: a[0])            # the emptiest sheets first: they have the most to gain
+    clusters = {}
+    improved = 0
+    out = list(sheets)
+    for n_done, (_u, si, singles, irr) in enumerate(jobs_by_sheet):
+        if time.monotonic() - t0 >= seconds:
+            break
+        # every sheet gets its fair share of the time that is left (but at least a few seconds)
+        sheet_end = time.monotonic() + max(4.0, (seconds - (time.monotonic() - t0)) / (len(jobs_by_sheet) - n_done))
+        if progress:
+            progress(0.96, f"re-packing sheet {si + 1}…")
+        rects = sorted((p for p in singles if p not in irr), key=lambda p: -p.geom.area)
+        irr = sorted(irr, key=lambda p: -p.geom.area)
+        best_key, best_sheet = sheet_quality(sheets[si], margin), None
+        cands = []                                        # (jobs, rule)
+        names = list(dict.fromkeys(p.name for p in irr))
+        uniq = [next(p for p in irr if p.name == n) for n in names][:4]       # the biggest few different irregular parts
+        for i, j in itertools.combinations(range(len(uniq)), 2):          # mating pairs of two different parts
+            pa, pb = uniq[i], uniq[j]
+            if not (pa.rotate and pb.rotate):
+                continue
+            key = (pa.name, pb.name)
+            if key not in clusters:
+                if time.monotonic() - t0 >= seconds or time.monotonic() >= sheet_end:
+                    continue
+                try:
+                    clusters[key] = _best_pair_mixed(pa, pb, rot_step, cell, spacing)
+                except Exception:  # noqa: BLE001 - pairing is only an optimisation
+                    clusters[key] = None
+            cl = clusters[key]
+            if cl is None:
+                continue
+            rest = list(irr)
+            for p in (pa, pb):
+                rest.remove(p)
+            for first in (False, True):
+                for rule in ("xend", "env", "yend"):
+                    cands.append(([cl, *rects, *rest] if first else [*rects, cl, *rest], rule))
+        if len(irr) <= 3:                                 # every order of the irregular parts
+            seen = set()
+            for perm in itertools.permutations(irr):
+                key = tuple(p.name for p in perm)
+                if key not in seen:
+                    seen.add(key)
+                    for rule in ("xend", "env"):
+                        cands.append(([*rects, *perm], rule))
+        for jobs, rule in cands:
+            if time.monotonic() - t0 >= seconds or time.monotonic() >= sheet_end:
+                break
+            try:
+                res = _nest_once(jobs, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad, rule, None, 0.0, False, False)
+            except ValueError:
+                continue
+            if len(res) != 1:
+                continue
+            key = sheet_quality(res[0], margin)
+            if key < best_key:
+                best_key, best_sheet = key, res[0]
+        if best_sheet is not None:
+            out[si] = best_sheet
+            improved += 1
+    return out, improved
 
 
 # ------------------------------------------------------------------- settle pass
@@ -973,6 +1162,12 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
             progress(frac, f"layouts tried: {runs} · best: {best_fit[0]} sheet(s){big}")
     if best is None:
         raise errors[0]
+    repacked = 0
+    if best and time_limit >= 0:
+        # a second look at the sheets with several irregular parts (see repack_sheets); the time it may take grows with
+        # the search effort: 10 s in Quick, 22 s in Normal, 58 s in Thorough
+        best, repacked = repack_sheets(best, parts, sheet_w, sheet_h, margin, spacing, rot_step, cell, pad,
+                                       10.0 + 0.8 * time_limit, progress)
     fine_gain = False
     if fine and best_jobs:
         half = int(FINE_BELOW / 2 / fine + 1e-9)
@@ -1003,6 +1198,6 @@ def nest_polygons(parts, sheet_w, sheet_h, margin=0.0, spacing=0.0, rot_step=90.
     moved, changed = settle_layout(best, margin, spacing, seconds=min(20.0, max(5.0, 0.3 * time_limit)))
     if info is not None:
         info.update(runs=runs, seconds=time.monotonic() - t0, fitness=best_fit, settled_parts=moved, settled_sheets=changed,
-                    flipped_parts=sum(1 for sh in best for p in sh.placements if p.mirrored),
+                    flipped_parts=sum(1 for sh in best for p in sh.placements if p.mirrored), repacked_sheets=repacked,
                     fine_step=fine, fine_improved=fine_gain)
     return best
