@@ -165,3 +165,20 @@ def test_two_tools_make_a_tool_change_and_the_machine_limits_match_the_machine_f
 
 def test_number_format():
     assert [pf.num(v) for v in (12.0, -3.5, 0.0, -0.0004, 1.23456, 100.0)] == ["12.", "-3.5", "0.", "0.", "1.235", "100."]
+
+
+def test_reload_changed_picks_up_a_new_version_of_a_module_that_is_already_loaded(tmp_path, monkeypatch):
+    import importlib
+    import os
+    import fresh_modules
+    monkeypatch.syspath_prepend(str(tmp_path))
+    f = tmp_path / "stale_demo_mod.py"
+    f.write_text("VALUE = 1\n")
+    mod = importlib.import_module("stale_demo_mod")
+    assert mod.VALUE == 1 and fresh_modules.reload_changed(["stale_demo_mod"]) == ["stale_demo_mod"]      # unknown version: reloaded once
+    assert fresh_modules.reload_changed(["stale_demo_mod"]) == []                                         # unchanged: left alone
+    f.write_text("VALUE = 2\nNEW = True\n")                                                               # a deploy
+    os.utime(f, (os.path.getmtime(f) + 5, os.path.getmtime(f) + 5))
+    assert fresh_modules.reload_changed(["stale_demo_mod"]) == ["stale_demo_mod"]
+    assert importlib.import_module("stale_demo_mod").VALUE == 2 and hasattr(mod, "NEW")                   # the module object got the new code
+    assert fresh_modules.reload_changed(["not_loaded_module"]) == []
