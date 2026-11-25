@@ -333,7 +333,13 @@ if st.session_state.get("loaded_pid") != pid:
     st.session_state.loaded_pid = pid
 parts_state: list[dict] = st.session_state.parts
 
-tab_table, tab_dxf, tab_lib, tab_cam = st.tabs(["Nesting", "Import files", "Parts details", "Machining"])
+# The Machining tab (tool library, toolpaths, G-code: cam.py, post_fanuc.py, cam_ui.py) is switched off for now while its
+# flow is being redesigned: set SHOW_MACHINING = True to bring it back. Nothing of it was removed.
+SHOW_MACHINING = False
+_tab_names = ["Nesting", "Import files", "Parts details"] + (["Machining"] if SHOW_MACHINING else [])
+_tabs = st.tabs(_tab_names)
+tab_table, tab_dxf, tab_lib = _tabs[:3]
+tab_cam = _tabs[3] if SHOW_MACHINING else None
 
 with tab_table:
     with st.expander("Expand parts"):          # the table is folded away: one line until you open it
@@ -421,12 +427,13 @@ with tab_dxf:
             st.rerun()
 
 
-with tab_cam:
-    _run_no = st.session_state.get("run_id")
-    _safe = re.sub(r"[^A-Za-z0-9_-]+", "_", proj["name"]).strip("_") or "nest"
-    machining_tab(db, pid, proj["name"], st.session_state.get("result"),
-                  st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}, _run_no,
-                  f"{_safe}_run{_run_no}" if _run_no else _safe)
+if SHOW_MACHINING:
+    with tab_cam:
+        _run_no = st.session_state.get("run_id")
+        _safe = re.sub(r"[^A-Za-z0-9_-]+", "_", proj["name"]).strip("_") or "nest"
+        machining_tab(db, pid, proj["name"], st.session_state.get("result"),
+                      st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}, _run_no,
+                      f"{_safe}_run{_run_no}" if _run_no else _safe)
 
 
 with tab_lib:
