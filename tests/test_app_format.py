@@ -37,6 +37,10 @@ def fake_db(monkeypatch):
     db.list_runs = lambda i: list(runs)
     db.load_run = lambda i: None
     db.delete_runs = lambda *a: 0
+    db.list_tools = lambda: []
+    db.save_tools = lambda *a: None
+    db.get_cam = lambda i: None
+    db.save_cam = lambda *a: None
     monkeypatch.setitem(sys.modules, "db", db)
     return db
 

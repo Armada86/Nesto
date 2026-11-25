@@ -110,3 +110,23 @@ def test_save_run_returns_its_id_and_a_layout_can_be_updated_only_inside_its_pro
     finally:
         db.delete_project(a)
         db.delete_project(b)
+
+
+def test_tool_library_and_project_machining_settings_round_trip(db):
+    keep = db.list_tools()                                       # the library is shared: put it back afterwards
+    pid = db.create_project("cam-test")
+    try:
+        db.save_tools([{"number": 2, "name": "FINISH", "diameter": 3.0, "flutes": 2, "rpm": 14000, "feed": 3000, "plunge": 1000,
+                        "step_down": 3.0, "coolant": "none"},
+                       {"number": 1, "name": "EM 6", "diameter": 6.0, "flutes": 2, "rpm": 12000, "feed": 4000, "plunge": 1500,
+                        "step_down": 6.0, "coolant": "flood"}])
+        tools = db.list_tools()
+        assert [t["number"] for t in tools] == [1, 2] and tools[0]["coolant"] == "flood" and tools[1]["diameter"] == 3.0
+        assert db.get_cam(pid) is None
+        db.save_cam(pid, {"thickness": 18.0, "tabs": 2, "climb": True})
+        assert db.get_cam(pid) == {"thickness": 18.0, "tabs": 2, "climb": True}
+        db.save_tools([])
+        assert db.list_tools() == []
+    finally:
+        db.save_tools(keep)
+        db.delete_project(pid)

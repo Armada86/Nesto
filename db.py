@@ -26,6 +26,19 @@ CREATE TABLE IF NOT EXISTS parts (
 ALTER TABLE parts ADD COLUMN IF NOT EXISTS shape TEXT NOT NULL DEFAULT 'rectangle';
 ALTER TABLE parts ADD COLUMN IF NOT EXISTS flip BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS settings JSONB;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS cam JSONB;
+CREATE TABLE IF NOT EXISTS cam_tools (
+    id SERIAL PRIMARY KEY,
+    number INT NOT NULL UNIQUE,
+    name TEXT NOT NULL DEFAULT '',
+    diameter DOUBLE PRECISION NOT NULL,
+    flutes INT NOT NULL DEFAULT 2,
+    rpm DOUBLE PRECISION NOT NULL,
+    feed DOUBLE PRECISION NOT NULL,
+    plunge DOUBLE PRECISION NOT NULL,
+    step_down DOUBLE PRECISION NOT NULL,
+    coolant TEXT NOT NULL DEFAULT 'none'
+);
 CREATE TABLE IF NOT EXISTS nest_runs (
     id SERIAL PRIMARY KEY,
     project_id INT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -168,3 +181,34 @@ def delete_runs(pid: int, run_ids) -> int:
 def load_run(run_id: int):
     with connect() as c:
         return c.execute("SELECT * FROM nest_runs WHERE id=%s", (run_id,)).fetchone()
+
+
+# ---------------------------------------------------------------------------------------------- machining (CAM)
+def list_tools():
+    """The tool library (one library for all projects), ordered by tool number."""
+    with connect() as c:
+        return c.execute("SELECT number, name, diameter, flutes, rpm, feed, plunge, step_down, coolant FROM cam_tools"
+                         " ORDER BY number").fetchall()
+
+
+def save_tools(tools: list[dict]):
+    """Replace the whole tool library."""
+    with connect() as c:
+        c.execute("DELETE FROM cam_tools")
+        for t in tools:
+            c.execute("INSERT INTO cam_tools(number,name,diameter,flutes,rpm,feed,plunge,step_down,coolant)"
+                      " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                      (int(t["number"]), t.get("name", ""), float(t["diameter"]), int(t.get("flutes", 2)), float(t["rpm"]),
+                       float(t["feed"]), float(t["plunge"]), float(t["step_down"]), t.get("coolant", "none")))
+
+
+def get_cam(pid: int):
+    """The machining settings of a project (dict) or None."""
+    with connect() as c:
+        row = c.execute("SELECT cam FROM projects WHERE id=%s", (pid,)).fetchone()
+        return row["cam"] if row else None
+
+
+def save_cam(pid: int, settings: dict):
+    with connect() as c:
+        c.execute("UPDATE projects SET cam=%s WHERE id=%s", (json.dumps(settings), pid))

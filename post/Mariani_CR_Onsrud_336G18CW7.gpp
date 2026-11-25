@@ -1,0 +1,970 @@
+;#region Post Notes ----------------------------
+; Post Processor to Suit a CR Onsrud 336G18CW7 with FANUC control
+; Created from Doosan BVM Post
+
+; Machine Manufacturer 	- CR Onsrud
+; Machine Model			- 336G18CW7
+; Machine Type 			- Mill/Router
+; Control				- FANUC
+; Axes					- XYZ
+; Options				- 
+; Production Year		- N/A
+
+; Post Created By		- WKE 29/08/2025
+; Post Created For		- Mariani
+; Post Tested On Site	- N/A
+; Post Test Version		- SolidCAM 2025 SP3 HF1
+
+
+;#region Dev Notes
+; 29/08/2025 - V0.0 - WKE 	- Post created
+; 29/08/2025 - V0.1 - WKE 	- Post delivered to customer
+; 02/09/2025 - V0.2	- WKE	- Vacuum output removed
+;							- Hardcoded WO to G56
+;							- Removed modality for @arc, @line, @rapid_move etc
+;03/09/2025 - V0.2.1 - TSB 	- Changed T1 M6 to M6 T1 on @usr_starttool
+;31/07/2026 - V0.3 	 - TSB 	- Added RAH support to @usr_starttool and @arc
+;06/08/2026 - V0.4 	 - WKE	- Added programmable C axis
+;==================================================================================================
+
+
+;#region CORE PRG
+inc 'SSG Comment Output'
+
+@init_post
+	global string post_version
+	post_version = '0.4'
+	
+	global logical 	l_FirstJob l_ChangeTool l_FirstSpin l_FirstMove
+	global logical 	l_ChangePlane l_FourthAxis
+	global string 	ipos_f jpos_f kpos_f rpos_f
+	global string 	spin_f tcode_f d_comp_f q_step_f
+	global string 	p_delay_f h_comp_f xpos_inc_f ypos_inc_f
+	global string 	zpos_inc_f radius_f
+	global numeric 	n_SmoothingFactor	;Smoothing factor for G05.1
+	global logical 	l_VacuumOn 			;flag for vacuum on
+	global logical 	l_BrushDown 		;flag for Brushes Down
+	global string 	s_ProgramName 		;manipulated program name
+
+	gcode_f         = '<G>2.2(p)< >'
+	mcode_f         = '<M>2.0(p)< >'
+	xpos_f          = '<X>5.3< >'
+	ypos_f          = '<Y>5.3< >'
+	zpos_f          = '<Z>5.3< >'
+	ipos_f          = '<I>5.3< >'
+	jpos_f          = '<J>5.3< >'
+	kpos_f          = '<K>5.3< >'
+	rpos_f          = '<R>5.3< >'
+	spin_f          = '<S>5.3(p)< >'
+	feed_f          = '<F>5.3< >'
+	tcode_f         = '<T>2.0(p)< >'
+	d_comp_f        = '<D>5.0(p)< >'
+	q_step_f        = '<Q>5.3(*1000p)< >'
+	p_delay_f       = '<P>5.3(*1000p)< >'
+	h_comp_f        = '<H>5.0(p)< >'
+	xpos_inc_f      = '<U>5.3< >'
+	ypos_inc_f      = '<V>5.3< >'
+	zpos_inc_f      = '<W>5.3< >'
+	apos_f          = '<C>5.3< >'
+	radius_f        = '<R>5.3(p)< >'
+	  
+	blknum_f        = '5.0(p)'
+	blknum_gen      = false
+	blknum_exist    = true
+	blknum_letter   = 'N'
+	end_block_text  = ''
+	blknum          = 1
+	blknum_delta    = 1
+	blknum_max      = 999999
+	  
+	;SSG GLOBAL VARIABLES============================================================================
+	global integer 	solidcam_year trace_level text_length orig_length 
+	global string 	sv tod_date tod_time pre_setup_name stored_job_name op_time pgminfo toolinfo
+	global logical	first_setup sort_tools lathe rplane
+	global string 	Machine Controller tooldef_f tool_strings<<200,40>> drill_f User 
+	global integer 	r_plane_gcode
+	global numeric	total_time
+	global integer hours minutes seconds 
+	;================================================================================================
+	
+	l_FirstJob = true
+	
+	;SSG DECLARED VARIABLES==========================================================================
+	tooldef_f = '5.1(p)'
+	drill_f   = '5.3(p)'
+	
+	licensed_to 	= "Mariani"
+	machine			= "CR Onsrud 336G18CW7"
+	controller		= "FANUC"
+	spv = 2025
+	
+	aligned_text = true
+	oc = '('
+	cc = ')'
+	seperator = '|'
+	oclen = strlen(oc)
+	cclen = strlen(cc)
+	seplen = strlen(seperator)
+
+	first_setup = true
+	output_tool_length_in_list = true
+	tot_comment_length = 50
+	tool_no_length = 4
+	tool_length_length = 10
+	
+	lathe = false
+	
+	if supported_CAM_Modules eq 'All CAM modules'
+		input 'Trace Level (1-5)' trace_level
+		trace "all":trace_level
+	endif
+
+	;================================================================================================
+	  
+endp
+
+@def_tool
+	len1 = strlen(tool_work_time)
+	separator = instr(tool_work_time,':')
+	hours = tonum(left(tool_work_time,(separator-1)))
+	tool_work_time = right(tool_work_time,(len1 - separator))
+	separator = instr(tool_work_time,':')
+	minutes = tonum(left(tool_work_time,(separator-1)))
+	len2 =  strlen(tool_work_time)
+	tool_work_time = right(tool_work_time,(len2 - separator))
+	seconds = tonum(tool_work_time)
+	total_time = total_time + (3600*hours) + (60*minutes) + seconds
+	
+	call @SSG_ToolTable((0)) ;Milling Tool Table
+endp
+
+@start_of_file
+	local string sL_FileName
+	local numeric nL_ProgramNumber
+	local numeric nL_FileNameLength
+
+	solidcam_year = 1990 + solidcam_version
+
+	nL_FileNameLength = strlen(g_file_name)
+	s_ProgramName = right(full_g_file_name,nL_FileNameLength)
+
+	{"%"}
+	sL_FileName = g_file_name
+	if instr(g_file_name,'.') gt 0
+		sL_FileName = left(g_file_name, instr(g_file_name,'.')-1)
+	endif
+	nL_ProgramNumber = tonum(sL_FileName)
+	if sL_FileName eq part_name or nL_ProgramNumber eq 0
+		nL_ProgramNumber = program_number
+	endif
+	  
+	; {nl, nL_ProgramNumber:'<O>5/4.0(p)'}
+	{nl, '<'s_ProgramName, '>'}
+endp
+
+@start_program
+	call @usr_FormatString
+	call @SSG_Post_Info
+	call @SSG_Prog_Info
+
+	call @SSG_Toollist
+	; {nl,'(------------------------------)'}
+	
+	if inch_system eq 0
+		{nb, "G90 G21 G40 G49 G80 G94 G98 G17"}
+		{nb, '(METRIC PROGRAM)'}
+	else
+		{nb, "G90 G20 G40 G49 G80 G94 G98 G17"}
+		{nb, '(INCHES PROGRAM)'}
+	endif 
+
+	call @usr_PlaneRotation((0)) ;Plane reset
+	call @usr_SafePosition((0)) ;Tool retract in Z axis
+	; {nb, 'G90'}
+endp
+
+@end_of_file
+	{nl, "%"}
+
+
+endp
+
+@end_program
+	call @usr_Cooling((2)) ;Coolant off
+	{nb, (5):mcode_f}
+	call @usr_PlaneRotation((0)) ;Plane reset
+	call @usr_SafePosition((0)) ;Tool retract in Z axis
+	{nb, gcode, (0):apos_f}
+	{nb, (30):mcode_f}
+endp
+
+;#endregion 
+
+;#region Job
+
+@start_of_job
+	call @SSG_Operation_Info
+	call @SSG_toolinfo
+	
+	blknum_gen = true
+	{nb}
+	blknum_gen = false
+	
+	call @usr_Cooling((2)) ;Coolant off
+	if l_ChangeTool and !l_FirstJob
+		{nb, "M1"}
+		call @usr_Cooling((4)) ;reset states
+	endif
+	  
+
+	  
+	l_FirstSpin = true
+	l_FirstMove = true
+endp
+
+@setup
+	
+	; call @SSG_Setup
+	
+endp
+
+@end_of_job
+	; {nb, 'G69'}
+	call @usr_G05((0))
+	call @usr_SafePosition((0))
+	
+	if l_VacuumOn
+		; {nl, (140):mcode_f, '(VACUUM OFF)'}
+	endif 
+	
+	if l_BrushDown
+		{nl, (97):mcode_f, '(BRUSHES UP)'}
+	endif 
+	
+	l_ChangeTool = false
+	l_FirstJob = false
+	l_ChangePlane = false
+endp
+
+;#endregion
+
+;#region Spindle Nose
+
+@change_tool
+	l_ChangeTool = true
+endp
+
+@relative_mode
+	{nb, (91):gcode_f}
+endp
+
+@absolute_mode
+	{nb, (90):gcode_f}
+endp
+
+@m_feed_spin
+	if !l_FirstSpin and (change(spin) or change(spin_direction))
+		{nb}
+		if spin ne 0 and spin_direction ne 2
+			{spin}
+		endif
+		if change(spin_direction)
+			{(3+spin_direction):mcode_f}
+		endif
+	endif
+	l_FirstSpin = false
+endp
+
+@controlled_coolant
+	if coolant_control eq true
+		call @usr_Cooling((1)) ;Set coolant on
+	else
+		call @usr_Cooling((2)) ;Coolant off
+	endif
+endp
+
+;#endregion
+
+
+;#region Movement
+
+@arc
+	if l_FirstMove
+		call @rapid_move
+	endif
+	  
+	gcode = 2+arc_direction
+
+	if position ne 1
+		{nb, gcode, xpos:xpos_f, ypos:ypos_f, [zpos:zpos_f], xlcenter_rel:ipos_f, ylcenter_rel:jpos_f, zlcenter_rel:kpos_f }
+	else
+		{nb, gcode, xpos:xpos_f, ypos:ypos_f, [zpos:zpos_f], xlcenter_rel:ipos_f, ylcenter_rel:jpos_f}
+	endif
+
+	{[feed:feed_f]}
+endp
+
+@line
+	if l_FirstMove
+		call @rapid_move
+	endif
+	
+	gcode=1
+
+	{nb, gcode, [xpos:xpos_f], [ypos:ypos_f], [zpos:zpos_f]}
+
+	{[feed:feed_f]}
+
+	if !l_VacuumOn
+		; {nl, (130):mcode_f, '(VACUUM ZONE 1)'}
+		l_VacuumOn = true
+	endif 
+
+	if !l_BrushDown
+		{nl, (96):mcode_f, '(BRUSHES DOWN)'}
+		l_BrushDown = true 
+	endif 
+endp
+
+@line_5x
+	if submachine_ID eq 1
+		{nb, '####### ERROR - Wrong Submachine selection code output stopped #######'}
+		call @usr_ErrorMessage((2),(job_name),(""),(""), true) 
+		abort
+	endif
+
+	gcode = 1
+	{nb, gcode, [xhpos:xpos_f], [yhpos:ypos_f], [zhpos:zpos_f]}
+	{[feed:feed_f]}
+endp
+
+@move_5x
+	if submachine_ID eq 1 
+		{nb, '####### ERROR - Wrong Submachine selection code output stopped #######'}
+		call @usr_ErrorMessage((2),(job_name),(""),(""), true) 
+		abort
+	endif
+
+	gcode = 0
+	if l_FirstMove
+		call @usr_PlaneRotation((0)) ;Plane reset
+		call @usr_SafePosition((0)) ;Tool retract in Z axis
+		{nb, (56):gcode_f}
+		call @usr_StartTool ;Tool call and spin definition
+		; {nb, 'G68 X0 Y0 R#580'}
+		{nb, gcode, xhpos:xpos_f, yhpos:ypos_f}
+		call @usr_Cooling((1)) ;Set coolant on
+		{nb, gcode, (43):gcode_f, tool_number:h_comp_f, zhpos:zpos_f}
+		{nb, 'D', d_offset}
+		call @usr_accuracy ; G05 and Smooth Machining data
+
+		l_FirstMove = false
+	else
+		{nb, gcode, [xhpos:xpos_f], [yhpos:ypos_f], [zhpos:zpos_f]}
+	endif
+endp
+
+@compensation
+	change(xlpos) = true
+	change(ylpos) = true
+	{nb, (42-side):gcode_f}
+	
+	if (42-side) ne 40
+		{tool_number:d_comp_f}
+	endif
+	
+	skipline=false
+endp
+
+@rapid_move
+	gcode = 0
+	if l_FirstMove
+		call @usr_PlaneRotation((2)) ;Resets plane if plane rotation is active
+		if l_ChangeTool or l_ChangePlane or l_FourthAxis 
+			if !l_FirstJob
+				call @usr_SafePosition((0)) ;Tool retract in Z axis
+			endif 
+		endif
+		{nb, (56):gcode_f}
+		call @usr_StartTool ;Tool call and spin definition
+		if rotate_angle_x ne 0
+			call @usr_PlaneRotation((1)) ;Rotate plane
+		endif 
+
+		; {nb, 'G68 X0 Y0 R#580'}
+
+		if feed_unit eq mm_min
+			{nb, (94):gcode_f}
+		else
+			{nb, (95):gcode_f}
+		endif 
+
+		{ gcode, xpos:xpos_f, ypos:ypos_f}  
+		
+		call @usr_accuracy ; G05 and Smooth Machining data
+
+		call @usr_Cooling((1)) ;Set coolant on
+		{nb, gcode, (43):gcode_f, tool_number:h_comp_f, zpos:zpos_f}
+		; {nb, 'D', d_offset}
+
+		l_FirstMove = false
+	else
+
+		{nb, gcode, [xpos:xpos_f], [ypos:ypos_f], zpos:zpos_f}
+	endif
+endp
+
+;#endregion
+
+;#region Canned Point Cycle
+@drill
+	local numeric nL_DistanceR nL_DepthZ
+	
+	call @rapid_move
+	 
+	nL_DistanceR = drill_upper_zl
+	nL_DepthZ = drill_lower_zl
+	
+	;Siemens specific	 
+	local numeric DP RFP RTP SDIS DPR
+	local numeric FDPR PIT DMODE
+	 
+	;G81
+	if drill_cycle_name eq 'Drilling' and down_step eq 0 then
+		gcode = 81	
+	endif
+	
+	;G82
+	
+	;G83
+	if drill_cycle_name eq 'Drilling' and down_step ne 0 then
+		if release_type eq false
+			gcode = 73
+		else
+			gcode = 83
+		endif
+	endif
+	
+	;G84
+	if drill_cycle_name eq 'rigid_tapping' and spin_direction eq cw then
+		gcode = 84
+		{nb,'G95'}
+		{nb,'M29 S'spin:integer_def_f}
+	endif
+	    
+	if drill_cycle_name eq 'rigid_tapping' and spin_direction eq ccw then
+		gcode = 84
+		{nb,'G95'}
+		{nb,'M29 S'spin:integer_def_f}
+		{nb, 'M72'}
+	endif
+	
+	;G85
+	if drill_cycle_name eq 'Boring' or drill_cycle_name eq 'Reaming'
+		gcode = 85
+	endif
+	
+	;G86
+	
+	;G87
+	
+	;G88
+	
+	;G89
+
+	
+	if rplane eq true
+		r_plane_gcode = 99
+	else
+		r_plane_gcode = 98
+	endif
+	
+	{nb,gcode, r_plane_gcode:gcode_f}
+	   
+	{drill_lower_z:zpos_f, 'R'drill_upper_z:drill_f}
+	  
+	if dwell ne 0 
+		{' P'(1000*dwell)}
+	endif
+	    
+	if drill_cycle_name eq 'Drilling' and down_step ne 0 then
+		{' Q'down_step:drill_f}
+	endif
+	    
+	if drill_cycle_name eq 'rigid_tapping' and peck_depth ne 0 then
+		{' Q'peck_depth:drill_f}
+	endif
+	    
+	if drill_cycle_name eq 'Boring' and radial_retract ne 0 then
+		{' Q'radial_retract}
+	endif
+	    
+	if drill_cycle_name eq 'rigid_tapping'
+		{[' F'feed_teeth]}
+	else
+		{[' 'feed:feed_f]}
+	endif
+	    
+	if drill_cycle_name eq 'Boring' and repeats ne 0 then
+		{' K'repeats}
+	endif
+
+	if xnext eq xpos
+		skipline = false
+	endif
+endp
+
+@drill_point
+
+	{nb, [xpos:xpos_f], [ypos:ypos_f]}
+	skipline = true
+endp
+
+@end_drill
+	{nb, (80):gcode_f}
+	if drill_cycle_name eq 'rigid_tapping'
+		{nb, (94):gcode_f}
+	endif
+	
+endp
+
+@call_proc
+	{nb, (98):mcode_f, label:'<P>5/4.0(p)'}
+	
+endp
+
+@proc
+	{nb}
+	{nb, label:'<O>5/4.0(p)'}
+endp
+
+@end_proc
+	{nb, (99):mcode_f}
+endp
+
+@dwell
+	{nb, (4):gcode_f, delay_period:p_delay_f}
+endp
+
+;#endregion
+
+;#region Transforms
+
+@delay
+	{nb, (4):gcode_f, delay_period:p_delay_f}
+endp
+
+;#endregion
+
+;#region Planes
+
+@home_number
+	; if !l_FirstJob
+	; 	call @usr_SafePosition((0)) ;Tool retract in XYZ axis
+	; endif
+	; {nb, (53+home_number):gcode_f}
+
+endp
+
+@fourth_axis
+	l_FourthAxis = true
+endp
+
+@rotate_to_plane
+	l_ChangePlane = true
+endp
+
+;#endregion
+
+;#region Turn Cycles
+
+;#endregion
+
+;#region Probing
+
+;#endregion 
+
+;#region User
+
+@usr_SafePosition(integer type)
+	local numeric nL_HomePosX nL_HomePosY nL_HomePosZ
+	
+	gcode = 0
+	nL_HomePosX = 0
+	nL_HomePosY = 0
+	nL_HomePosZ = 0
+	
+	if type eq 0
+		{nb, gcode:gcode_f, "G28 G91 ", nL_HomePosZ:zpos_f}
+		{nb, 'G90'}
+	elseif type eq 1
+		{nb, gcode:gcode_f, "G28 G91 ", nL_HomePosZ:zpos_f}
+		{nb, gcode:gcode_f, "G28 G91 ", nL_HomePosX:xpos_f, nL_HomePosY:ypos_f}
+		{nb, 'G90'}
+	endif
+endp
+
+@usr_StartTool
+	local numeric n_rah_angle
+
+	if l_ChangeTool
+		{nb, (6):mcode_f tool_number:tcode_f}
+	
+	endif
+
+	; if position ne 1
+	; 	if spindle_direction_z ne 1
+	; 		{nb, 'M01'}
+
+	; 		n_rah_angle = norm360(atan2((0-spindle_direction_y), (0-spindle_direction_x))) ;* (180 / pi)
+	; 		{nb, divide}
+	; 		{nb, '(RIGHT ANGLE HEAD USED  -  CHECK TOOL ORIENTATION)'}
+	; 		{nb, '(ORIENTATION SHOULD BE SET TO ' n_rah_angle ' DEGREES       )'}
+	; 		{nb, 'M01'}
+	; 		{nb, divide}
+
+	; 	endif 
+	; endif 
+
+	{nb, (0):gcode_f, first_axis_angle:apos_f}
+	; if spin_unit eq rpm 
+	; 	{nb, (96):gcode_f}
+	; else 
+	; 	{nb, (97):gcode_f}
+	; endif 
+
+	{nb, spin, (3 + tool_direction):mcode_f}
+endp
+
+@usr_PlaneRotation(integer type)
+	; global logical l_PlaneActive
+	; ;type - input:
+	; ;0 - Reset plane
+	; ;1 - Rotate plane - Index operations
+	; ;2 - Reset plane - only if plane rotation is active
+
+	; if submachine_ID eq 1   
+	; 	if type eq 0 or (type eq 2 and l_PlaneActive) ;Plane reset
+	; 		{nb, "G69"}
+	; 		l_PlaneActive = false
+	; 	endif
+		
+	; 	if type eq 1 ;Plane rotation
+	; 		{nb, "G68.2 P1 Q123 "}
+	; 		{shift_x:'<X>5.3< >'}
+	; 		{shift_y:'<Y>5.3< >'}
+	; 		{shift_z:'<Z>5.3< >'}
+	; 		if !x5_job
+	; 			{(-rotate_angle_x):'<I>5.3< >'}
+	; 			{rotate_angle_y:'<J>5.3< >'}
+	; 			{(-rotate_angle_z):'<K>5.3< >'}
+	; 		else
+	; 			{(-rotate_next_x):'<I>5.3< >'}
+	; 			{rotate_next_y:'<J>5.3< >'}
+	; 			{(-rotate_next_z):'<K>5.3< >'}
+	; 		endif
+	; 		{nb, "G53.1"}
+	; 		l_PlaneActive = true
+	; 	endif
+	;  endif
+endp
+
+@usr_Cooling(integer type)
+	;Input parameters:
+	;1 - cooling ON
+	;2 - cooling OFF (Only if needed)
+	;3 - cooling OFF (Allways)
+	;3 - reset coolant states
+	  
+	global string s_CoolantMFunctions<<18,2>>
+	global logical l_CoolantState<<18>>
+	global integer i_CoolantValues<<18>>
+	local string sL_MCodesToWrite<<18>> 
+	local integer iL_CoolantNumber
+	  
+	;Flood Coolant
+	s_CoolantMFunctions<<8,1>> = "M08"
+	s_CoolantMFunctions<<8,2>> = "M09"
+	i_CoolantValues<<8>> = flood_coolant
+	
+	;Flood Coolant
+	s_CoolantMFunctions<<7,1>> = "M07"
+	s_CoolantMFunctions<<7,2>> = "M09"
+	i_CoolantValues<<8>> = flood_coolant
+
+	;Air Blast
+	s_CoolantMFunctions<<17,1>> = "M14"
+	s_CoolantMFunctions<<17,2>> = "M09"
+	i_CoolantValues<<17>> = air_blast_coolant
+
+	
+	   
+	iL_CoolantNumber = 1  
+	while iL_CoolantNumber le 18
+		;Coolant ON;
+		if type eq 1 and i_CoolantValues<<iL_CoolantNumber>> eq 1 and !l_CoolantState<<iL_CoolantNumber>>
+			sL_MCodesToWrite<<iL_CoolantNumber>> = s_CoolantMFunctions<<iL_CoolantNumber,1>>
+			l_CoolantState<<iL_CoolantNumber>> = true;
+			;Coolant OFF (Only if needed);
+		elseif type eq 2 and i_CoolantValues<<iL_CoolantNumber>> eq 0 and l_CoolantState<<iL_CoolantNumber>>
+			sL_MCodesToWrite<<iL_CoolantNumber>> = s_CoolantMFunctions<<iL_CoolantNumber,2>>
+			l_CoolantState<<iL_CoolantNumber>> = false;
+			;Coolant OFF
+		elseif type eq 3 and l_CoolantState<<iL_CoolantNumber>>
+			sL_MCodesToWrite<<iL_CoolantNumber>> = s_CoolantMFunctions<<iL_CoolantNumber,2>>
+			l_CoolantState<<iL_CoolantNumber>> = false;
+			;Reset all coolant states
+		elseif type eq 4
+			l_CoolantState<<iL_CoolantNumber>> = false;
+		endif
+		    
+		iL_CoolantNumber = iL_CoolantNumber + 1
+	endw
+	  
+	;Writes each M code only once   
+	if type ne 4  
+		iL_CoolantNumber = 1
+		while iL_CoolantNumber le 18      
+			if sL_MCodesToWrite<<iL_CoolantNumber>> ne ""               
+				local integer i
+				i = 1        
+				while i le 18 ;Clean same M codes from array and reset coolant states
+					if i ne iL_CoolantNumber
+						if (type eq 2 or type eq 3) and s_CoolantMFunctions<<iL_CoolantNumber,2>> eq s_CoolantMFunctions<<i,2>>
+							l_CoolantState<<i>> = false
+						endif          
+						if sL_MCodesToWrite<<iL_CoolantNumber>> eq sL_MCodesToWrite<<i>>
+							sL_MCodesToWrite<<i>> = ""
+						endif
+					endif
+					i = i + 1
+				endw       
+				{nb, sL_MCodesToWrite<<iL_CoolantNumber>>}
+			endif      
+			iL_CoolantNumber = iL_CoolantNumber + 1 
+		endw
+	endif
+endp
+
+@usr_SpecCharChange(string s_InputString)
+	s_InputString = replace(s_InputString,"\xE1","a")
+	s_InputString = replace(s_InputString,"\xC1","A")
+	s_InputString = replace(s_InputString,"\xE8","c")
+	s_InputString = replace(s_InputString,"\xC8","C")
+	s_InputString = replace(s_InputString,"\xEF","d")
+	s_InputString = replace(s_InputString,"\xCF","D")
+	s_InputString = replace(s_InputString,"\xE9","e")
+	s_InputString = replace(s_InputString,"\xC9","E")
+	s_InputString = replace(s_InputString,"\xEC","e")
+	s_InputString = replace(s_InputString,"\xCC","E")
+	s_InputString = replace(s_InputString,"\xED","i")
+	s_InputString = replace(s_InputString,"\xCD","I")
+	s_InputString = replace(s_InputString,"\xF2","n")
+	s_InputString = replace(s_InputString,"\xD2","N")
+	s_InputString = replace(s_InputString,"\xF3","o")
+	s_InputString = replace(s_InputString,"\xD3","O")
+	s_InputString = replace(s_InputString,"\xF8","r")
+	s_InputString = replace(s_InputString,"\xD8","R")
+	s_InputString = replace(s_InputString,"\x9A","s")
+	s_InputString = replace(s_InputString,"\x8A","S")
+	s_InputString = replace(s_InputString,"\x9D","t")
+	s_InputString = replace(s_InputString,"\x8D","T")
+	s_InputString = replace(s_InputString,"\xFA","u")
+	s_InputString = replace(s_InputString,"\xDA","U")
+	s_InputString = replace(s_InputString,"\xF9","u")
+	s_InputString = replace(s_InputString,"\xD9","U")
+	s_InputString = replace(s_InputString,"\xFD","y")
+	s_InputString = replace(s_InputString,"\xDD","Y")
+	s_InputString = replace(s_InputString,"\x9E","z")
+	s_InputString = replace(s_InputString,"\x8E","Z")
+endp
+
+@usr_ErrorMessage(integer i_ErrorID, string s_msg1, string s_msg2, string s_msg3, logical l_abort)
+	local string  sL_ErrorList<<15>> sL_ErrorMessage sL_LineToPrint
+	local integer iL_ErrorMessageLength iL_EndCharIndex
+		
+	if i_ErrorID gt 15 or i_ErrorID lt 1
+		print "!!! Procedure @usr_ErrorMessage: Wrong 'Error ID' input parameter!!!"
+		abort
+	endif
+	
+	;Error list 
+	sL_ErrorList<<1>> = "Error: Operation '" + s_msg1 + "' is not supported. Contact your technical support."
+	sL_ErrorList<<2>> = "Error: Operation '" + s_msg1 + "' uses 4 axes. Please change to 4 Axis mode sub machine."
+	; (Add custom errors)
+	;--------------------------------------------------------------------
+		
+	sL_ErrorMessage = sL_ErrorList<<i_ErrorID>>
+		
+	;Splits error message by "\x0D" (new line character)
+	iL_ErrorMessageLength = strlen(sL_ErrorMessage)
+	while iL_ErrorMessageLength gt 0
+		iL_EndCharIndex = instr(sL_ErrorMessage, "\x0D")
+		
+		if iL_EndCharIndex eq 0
+			sL_LineToPrint = sL_ErrorMessage
+			iL_ErrorMessageLength = 0
+		else
+			sL_LineToPrint = left(sL_ErrorMessage, (iL_EndCharIndex - 1))
+			sL_ErrorMessage = substr(sL_ErrorMessage,(iL_EndCharIndex + 2), iL_ErrorMessageLength)
+			iL_ErrorMessageLength = strlen(sL_ErrorMessage)
+		endif
+		
+		print sL_LineToPrint
+		{nb, "(" sL_LineToPrint , ")"}
+	endw
+	
+	if l_abort eq true
+		{nb, "M30"}
+		abort
+	endif
+endp
+
+@usr_accuracy
+
+	if left(job_type,6) eq 'spiral' ; Imachining
+		if wall_offset gt 0.3
+			n_SmoothingFactor = 3 ; Roughing
+		else
+			n_SmoothingFactor = 5 ; Roughing
+		endif 
+		
+		call @usr_G05((2))
+	endif
+
+	if instr(job_type,"rough") gt 0 ;HM Roughing/Rest Roughing
+		if Drive_surface_Offset gt 0.3 
+			n_SmoothingFactor = 3 ; Roughing
+		else
+			n_SmoothingFactor = 5 ; Roughing
+		endif
+		call @usr_G05((2))
+	endif
+
+	if left(job_type,3) eq 'HSS' or left(job_type,3) eq 'hss'
+		if Drive_surface_Offset le 0 
+			n_SmoothingFactor = 10 ;finishing
+		else
+			n_SmoothingFactor = 7 ; semi finish
+		endif
+		call @usr_G05((2))
+	endif
+
+	if HSM_job eq true
+		if instr(job_type,"rough") gt 0 ;HM Roughing/Rest Roughing
+			if wall_offset gt 0.3 
+				n_SmoothingFactor = 3 ; Roughing
+			else
+				n_SmoothingFactor = 5 ; Roughing
+			endif
+
+		elseif instr(job_type, "clearance") gt 0 ;Countour/Hatch Roughing
+			if wall_offset gt 0.3 
+				n_SmoothingFactor = 3 ; Roughing
+			else
+				n_SmoothingFactor = 5 ; Roughing
+			endif
+
+		elseif instr(job_type, "hsm_hm_rib") gt 0 ;Rib Roughing
+			if wall_offset gt 0.3 
+				n_SmoothingFactor = 3 ; Roughing
+			else
+				n_SmoothingFactor = 5 ; Roughing
+			endif
+
+		else
+			if Drive_surface_Offset le 0 
+				n_SmoothingFactor = 10 ;finishing
+			else
+				n_SmoothingFactor = 7 ; semi finish
+			endif
+		endif
+		
+		call @usr_G05((2))
+	endif
+
+	if X5_job eq true
+		if Drive_surface_Offset le 0 
+			n_SmoothingFactor = 10 ;finishing
+		else
+			n_SmoothingFactor = 7 ; semi finish
+		endif
+
+		call @usr_G05((2))
+	endif
+
+	;2.5D Toolpaths
+	if job_type eq 'pocket' or job_type eq 'profile'
+		n_SmoothingFactor = n_SmoothValue 
+		call @usr_G05((2))
+
+	endif
+
+endp
+
+@usr_G05(integer type)
+	if type eq 2 
+		if n_SmoothingFactor ne 0
+			{nb,'G05.1 Q1 '}
+			{n_SmoothingFactor:'<R>2.0(p)'}
+			{' (AICC/AIAPC HIGH SPEED MODE ON)'}
+		endif
+	endif
+
+	if type eq 0 
+		{nb,'G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)'}
+	endif
+
+endp
+
+@usr_FormatString
+	;added in case of format differences when in inches
+
+	if inch_system eq 0
+		gcode_f         = '<G>2.2(p)< >'
+		mcode_f         = '<M>2.0(p)< >'
+		xpos_f          = '<X>5.3< >'
+		ypos_f          = '<Y>5.3< >'
+		zpos_f          = '<Z>5.3< >'
+		ipos_f          = '<I>5.3< >'
+		jpos_f          = '<J>5.3< >'
+		kpos_f          = '<K>5.3< >'
+		rpos_f          = '<R>5.3< >'
+		spin_f          = '<S>5.0(p)< >'
+		feed_f          = '<F>5.3< >'
+		tcode_f         = '<T>2.0(p)< >'
+		d_comp_f        = '<D>5.0(p)< >'
+		q_step_f        = '<Q>5.3(*1000p)< >'
+		p_delay_f       = '<P>5.3(*1000p)< >'
+		h_comp_f        = '<H>5.0(p)< >'
+		xpos_inc_f      = '<U>5.3< >'
+		ypos_inc_f      = '<V>5.3< >'
+		zpos_inc_f      = '<W>5.3< >'
+		apos_f          = '<C>5.3< >'
+		radius_f        = '<R>5.3(p)< >'
+	else 
+		gcode_f         = '<G>2.2(p)< >'
+		mcode_f         = '<M>2.0(p)< >'
+		xpos_f          = '<X>5.3< >'
+		ypos_f          = '<Y>5.3< >'
+		zpos_f          = '<Z>5.3< >'
+		ipos_f          = '<I>5.3< >'
+		jpos_f          = '<J>5.3< >'
+		kpos_f          = '<K>5.3< >'
+		rpos_f          = '<R>5.3< >'
+		spin_f          = '<S>5.3(p)< >'
+		feed_f          = '<F>5.3< >'
+		tcode_f         = '<T>2.0(p)< >'
+		d_comp_f        = '<D>5.0(p)< >'
+		q_step_f        = '<Q>5.3(*1000p)< >'
+		p_delay_f       = '<P>5.3(*1000p)< >'
+		h_comp_f        = '<H>5.0(p)< >'
+		xpos_inc_f      = '<U>5.3< >'
+		ypos_inc_f      = '<V>5.3< >'
+		zpos_inc_f      = '<W>5.3< >'
+		apos_f          = '<C>5.3< >'
+		radius_f        = '<R>5.3(p)< >'
+
+	endif 
+endp 
+;#region SSG

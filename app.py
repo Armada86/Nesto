@@ -19,6 +19,7 @@ from nesting import Part, Placement, Sheet, nest, summary
 from nesting_poly import PolyPart, nest_polygons, scrap_rectangles
 from part_view import fmt as fmt_dim, part_png, part_stats
 from render import draw_sheet, part_color_indices
+from cam_ui import machining_tab
 from step_io import read_step
 from sheet_editor import sheet_editor
 from shapes import SHAPES, geom_to_json, part_geometry, stored_geometry
@@ -325,7 +326,7 @@ if st.session_state.get("loaded_pid") != pid:
     st.session_state.loaded_pid = pid
 parts_state: list[dict] = st.session_state.parts
 
-tab_table, tab_dxf, tab_lib = st.tabs(["Nesting", "Import files", "Parts details"])
+tab_table, tab_dxf, tab_lib, tab_cam = st.tabs(["Nesting", "Import files", "Parts details", "Machining"])
 
 with tab_table:
     with st.expander("Expand parts"):          # the table is folded away: one line until you open it
@@ -411,6 +412,14 @@ with tab_dxf:
             st.session_state.parts = parts_state
             db.save_parts(pid, parts_state)
             st.rerun()
+
+
+with tab_cam:
+    _run_no = st.session_state.get("run_id")
+    _safe = re.sub(r"[^A-Za-z0-9_-]+", "_", proj["name"]).strip("_") or "nest"
+    machining_tab(db, pid, proj["name"], st.session_state.get("result"),
+                  st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing}, _run_no,
+                  f"{_safe}_run{_run_no}" if _run_no else _safe)
 
 
 with tab_lib:
