@@ -15,8 +15,8 @@ from layout_edit import is_held, placement_geom
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-PURPLE = "#8b1fc7"
-PICTURE_VERSION = 6  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
+PURPLE = "#dc2626"   # the colour of the geometry (bottom contour): red, it becomes the toolpath
+PICTURE_VERSION = 7  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
                      # older picture of the same sheet would still be shown after an update
 ZOOM = 1.0          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
 STEPS = [("geometry", "1 · Geometry")]       # the next steps are added here, one by one
@@ -101,7 +101,7 @@ def isometric_raw_png(width: float, height: float, thickness: float, parts: tupl
 def _isometric(width: float, height: float, thickness: float, parts: tuple, k: float, room: float) -> bytes:
     """The whole sheet in an isometric view, seen from the origin corner (X to the right-back, Y to the left-back, Z up, like
     a CAD isometric view), drawn to scale (k = 1; k > 1 draws the height k times larger): the stock slab, every part as a
-    solid of its height with its bottom contour (the geometry) in purple, the sheet dimensions outside the sheet and the
+    solid of its height with its bottom contour (the geometry) in red, the sheet dimensions outside the sheet and the
     coordinate system at the origin, the lower left corner of the sheet in plan view."""
     from matplotlib.patches import PathPatch
     from matplotlib.path import Path
@@ -133,12 +133,14 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
             c = list(ring.coords)
             verts += c
             codes += [Path.MOVETO] + [Path.LINETO] * (len(c) - 2) + [Path.CLOSEPOLY]
-        patch = PathPatch(Path(verts, codes), facecolor="#ddd6fe", edgecolor="#6d28d9", lw=0.5)
+        patch = PathPatch(Path(verts, codes), facecolor="#ddd6fe", edgecolor="#a78bfa", lw=0.4)
         ax.add_patch(patch)
         art3d.pathpatch_2d_to_3d(patch, z=z, zdir="z")
         for ring in (ext, *holes):                           # the geometry: the bottom contour
             xs, ys = zip(*ring)
-            ax.plot(xs, ys, [0] * len(xs), color=PURPLE, lw=1.2)
+            ax.plot(xs, ys, [0] * len(xs), color=PURPLE, lw=1.5)
+
+    texts = []                                                # dimension texts, placed after the view is set so they follow the arrow
 
     def dimension(p, q, text, shift=(0, 0, 0), **kw):             # a dimension line with arrowheads and its text, outside the sheet
         dx, dy, dz = (q[0] - p[0], q[1] - p[1], q[2] - p[2])
@@ -147,26 +149,27 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
         head = min(0.5, 0.02 * big / n * 1.0)
         for start, vec in ((mid, (dx / 2, dy / 2, dz / 2)), (mid, (-dx / 2, -dy / 2, -dz / 2))):
             ax.quiver(*start, *vec, color="#334155", linewidth=0.8, arrow_length_ratio=head, normalize=False)
-        ax.text(mid[0] + shift[0], mid[1] + shift[1], mid[2] + shift[2], text, fontsize=9, color="#0f172a", **kw)
+        texts.append(((mid[0] + shift[0], mid[1] + shift[1], mid[2] + shift[2]), p, q, text, kw))
 
     ext_c = "#94a3b8"
     ax.plot([0, 0], [0, -off * 1.2], [0, 0], color=ext_c, lw=0.6)                       # extension lines of the length
     ax.plot([width, width], [0, -off * 1.2], [0, 0], color=ext_c, lw=0.6)
-    dimension((0, -off, 0), (width, -off, 0), f"{width:g}", shift=(0, -off * 0.35, 0), ha="center", va="top")
+    dimension((0, -off, 0), (width, -off, 0), f"{width:g}", shift=(0, -off * 0.12, 0), ha="center", va="top")
     ax.plot([width, width + off * 1.2], [0, 0], [0, 0], color=ext_c, lw=0.6)           # of the width
     ax.plot([width, width + off * 1.2], [height, height], [0, 0], color=ext_c, lw=0.6)
-    dimension((width + off, 0, 0), (width + off, height, 0), f"{height:g}", shift=(off * 0.35, 0, 0), ha="left", va="center")
+    dimension((width + off, 0, 0), (width + off, height, 0), f"{height:g}", shift=(off * 0.12, 0, 0), ha="center", va="top")
     ax.plot([0, -off * 1.2], [height, height], [z, z], color=ext_c, lw=0.6)           # of the thickness (at the back left corner)
     ax.plot([0, -off * 1.2], [height, height], [0, 0], color=ext_c, lw=0.6)
     dimension((-off, height, 0), (-off, height, max(z, 1e-6)), "", ha="right")
     ax.text(-off * 1.15, height, z / 2, f"{thickness:g}", fontsize=9, color="#0f172a", ha="right", va="center")
 
     # the coordinate system at the origin: small, thin, no boxes; the letters sit outside the sheet
-    for vec, col, lab, lpos in (((arm, 0, 0), "#dc2626", "X", (arm * 1.3, -arm * 0.35, 0)),
-                                ((0, arm, 0), "#16a34a", "Y", (-arm * 0.35, arm * 1.3, 0)),
-                                ((0, 0, arm), "#2563eb", "Z", (-arm * 0.3, 0, arm * 1.25))):
+    for vec, col, lab, lpos in (((arm, 0, 0), "#dc2626", "X", (arm * 1.35, -arm * 0.7, 0)),
+                                ((0, arm, 0), "#16a34a", "Y", (-arm * 0.7, arm * 1.35, 0)),
+                                ((0, 0, arm), "#2563eb", "Z", (-arm * 0.6, -arm * 0.6, arm * 0.9))):
         ax.quiver(0, 0, 0, *vec, color=col, linewidth=1.1, arrow_length_ratio=0.22, normalize=False)
-        ax.text(*lpos, lab, color=col, fontsize=9, fontweight="bold", ha="center", va="center")
+        if lab != "Z":
+            ax.text(*lpos, lab, color=col, fontsize=6, fontweight="normal", ha="center", va="center")
 
     zr = max(z, arm * 1.6)
     xr0, xr1 = -0.30 * big * room, width + 0.12 * big * room
@@ -177,7 +180,25 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
     ax.set_box_aspect((xr1 - xr0, yr1 - yr0, zr), zoom=ZOOM)          # equal scale on all three axes: nothing is stretched
     ax.view_init(elev=30, azim=-135)
     ax.set_axis_off()
-    fig.subplots_adjust(0, 0, 1, 1)
+    import math
+    from mpl_toolkits.mplot3d import proj3d
+    fig.canvas.draw()
+    zx, zy = ax.transData.transform(proj3d.proj_transform(0, 0, arm, ax.get_proj())[:2])     # the Z letter, on top of everything
+    fig.text(zx / fig.bbox.width, (zy + 0.018 * fig.bbox.height) / fig.bbox.height, "Z", color="#2563eb", fontsize=6,
+             ha="center", va="center")
+    cx, cy = ax.transData.transform(proj3d.proj_transform(width / 2, height / 2, 0, ax.get_proj())[:2])
+    for pos, p, q, text, kw in texts:                          # the text runs along its arrow, on the outer side of it
+        (x1, y1), (x2, y2) = [ax.transData.transform(proj3d.proj_transform(*c, ax.get_proj())[:2]) for c in (p, q)]
+        ang = math.degrees(math.atan2(y2 - y1, x2 - x1))
+        ang = ang + 180 if ang > 90 else ang - 180 if ang < -90 else ang
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        nx, ny = -(y2 - y1), x2 - x1                              # a normal to the arrow, pointing away from the sheet
+        nl = math.hypot(nx, ny) or 1.0
+        if nx * (mx - cx) + ny * (my - cy) < 0:
+            nx, ny = -nx, -ny
+        gap = 0.016 * fig.get_figheight() * fig.dpi
+        fig.text((mx + nx / nl * gap) / fig.bbox.width, (my + ny / nl * gap) / fig.bbox.height, text, fontsize=9,
+                 color="#0f172a", rotation=ang, rotation_mode="anchor", ha="center", va="center")
     return _png(fig)
 
 
@@ -188,7 +209,7 @@ def plan_png(width: float, height: float, chain_pts: tuple, kinds: tuple, versio
     for pts, kind in zip(chain_pts, kinds):
         xs, ys = zip(*pts)
         ax.plot(xs, ys, color=PURPLE, lw=1.0, ls="-" if kind == "Outline" else "--")
-    ax.plot([0], [0], "o", color="#dc2626", ms=4)
+    ax.plot([0], [0], "o", color="black", ms=4)
     ax.set_aspect("equal")
     ax.set_xlim(-0.02 * width, width * 1.02)
     ax.set_ylim(-0.02 * height, height * 1.02)
@@ -243,9 +264,9 @@ def step_geometry(db, pid, result):
     k = float(st.session_state.camming_zk)
     st.image(isometric_png(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness), solids(sheet), k, PICTURE_VERSION),
              caption="The whole sheet seen from the origin corner (lower left corner in plan view), drawn to scale: X to the right, "
-                     "Y to the back, Z up. Every part is a solid of its height; its bottom contour (the geometry) is purple.")
+                     "Y to the back, Z up. Every part is a solid of its height; its bottom contour (the geometry) is red.")
     st.image(plan_png(float(sheet["width"]), float(sheet["height"]), pts, tuple(c["type"] for c in ch), PICTURE_VERSION),
-             caption="Plan view: outlines solid, holes dashed. The red dot is the origin.")
+             caption="Plan view: outlines solid, holes dashed. The black dot is the origin.")
     st.dataframe(pd.DataFrame([{"No.": i, "Part": c["part"], "Type": c["type"], "Length": round(c["length"], 1), "Z": 0.0}
                                for i, c in enumerate(ch, 1)]), hide_index=True, width="stretch")
 
