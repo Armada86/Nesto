@@ -21,10 +21,12 @@ def thickness_of(db, pid) -> float:
 
 
 def get_levels(db, pid, thickness: float | None = None) -> dict:
-    """The levels of the project (the later steps read them from here). upper = the top of the material (the thickness, copied from the
-    Geometry step); depth = how far the tool goes into the material from the upper level (the thickness unless it was changed)."""
+    """The levels of the project (the later steps read them from here). upper = the top of the part: the material thickness of the
+    Geometry step unless it was changed here; depth = how far the tool goes into the material from the upper level (the whole
+    upper level unless it was changed)."""
     s = _saved(db, pid).get("levels", {})
-    up = float(thickness if thickness is not None else _saved(db, pid).get("thickness", 18.0))
+    thk = float(thickness if thickness is not None else _saved(db, pid).get("thickness", 18.0))
+    up = float(s["upper"]) if s.get("upper") is not None else thk
     return {"clearance": float(s.get("clearance", DEFAULTS["clearance"])), "safety": float(s.get("safety", DEFAULTS["safety"])),
             "upper": up, "depth": float(s["depth"]) if s.get("depth") is not None else up}
 
@@ -33,6 +35,8 @@ def validate(lv: dict) -> list[str]:
     p = []
     if not lv["safety"] >= 0:
         p.append("The safety distance cannot be negative.")
+    if not lv["upper"] > 0:
+        p.append("The upper level must be more than 0.")
     if not lv["depth"] > 0:
         p.append("The profile depth must be more than 0.")
     if lv["clearance"] <= lv["upper"] + lv["safety"]:
@@ -46,23 +50,27 @@ def step_levels(db, pid):
     saved = _saved(db, pid).get("levels", {})
     if ss.get("levels_loaded_pid") != pid:
         lv = get_levels(db, pid, thk)
-        ss[PREFIX + "clearance"], ss[PREFIX + "safety"], ss[PREFIX + "depth"] = lv["clearance"], lv["safety"], lv["depth"]
+        ss[PREFIX + "clearance"], ss[PREFIX + "safety"] = lv["clearance"], lv["safety"]
+        ss[PREFIX + "upper"], ss[PREFIX + "depth"] = lv["upper"], lv["depth"]
         ss.levels_loaded_pid, ss.levels_thk, ss.levels_problems = pid, thk, []
-    elif ss.get("levels_thk") != thk:                        # the thickness changed: a profile depth that was never set follows it
-        if saved.get("depth") is None:
-            ss[PREFIX + "depth"] = thk
+    elif ss.get("levels_thk") != thk:                        # the thickness changed: what was never changed here follows it
+        lv = get_levels(db, pid, thk)
+        ss[PREFIX + "upper"], ss[PREFIX + "depth"] = lv["upper"], lv["depth"] if saved.get("depth") is not None else lv["upper"]
         ss.levels_thk = thk
 
     def _save():
-        lv = {"clearance": float(ss[PREFIX + "clearance"]), "safety": float(ss[PREFIX + "safety"]), "upper": thk,
-              "depth": float(ss[PREFIX + "depth"])}
+        lv = {"clearance": float(ss[PREFIX + "clearance"]), "safety": float(ss[PREFIX + "safety"]),
+              "upper": float(ss[PREFIX + "upper"]), "depth": float(ss[PREFIX + "depth"])}
         problems = validate(lv)
         if problems:
             ss.levels_problems = problems
             return
         try:
             cam = db.get_cam(pid) or {}
-            cam["camming"] = {**cam.get("camming", {}), "levels": {"clearance": lv["clearance"], "safety": lv["safety"], "depth": lv["depth"]}}
+            cam["camming"] = {**cam.get("camming", {}), "levels": {
+                "clearance": lv["clearance"], "safety": lv["safety"],
+                "upper": None if lv["upper"] == thk else lv["upper"],           # None: always the geometry value
+                "depth": None if lv["depth"] == lv["upper"] else lv["depth"]}}  # None: the whole upper level
             db.save_cam(pid, cam)
         except Exception as e:  # noqa: BLE001
             ss.levels_problems = [f"Could not save: {e}"]
@@ -74,24 +82,23 @@ def step_levels(db, pid):
     msg = ss.pop("levels_msg", None)
     if msg:
         st.toast(msg, icon=":material/check_circle:")
-    col, info = st.columns([1, 3])
-    with col, st.form("levels_form", border=False):         # nothing is sent until Save levels: typing never reruns the page
-        st.number_input("Clearance level", min_value=0.0, step=1.0, format="%.2f", key=PREFIX + "clearance",
-                        help="The Z level where the tool moves in rapid mode, above the parts, to go to another location.")
-        st.number_input("Safety distance", min_value=0.0, step=0.5, format="%.2f", key=PREFIX + "safety",
-                        help="The distance above the top of the part where the tool slows down from the rapid move to the feed Z speed.")
-        st.number_input("Upper level", value=float(thk), format="%.2f", disabled=True,
-                        help="The top of the part. It is copied from the material thickness of the Geometry step; change it there.")
-        st.number_input("Profile depth", min_value=0.0, step=0.5, format="%.2f", key=PREFIX + "depth",
-                        help="How far the tool goes into the material, measured down from the upper level. "
-                             "The material thickness cuts the parts through to Z = 0.")
+    c, s_, u, d = (float(ss[PREFIX + k]) for k in ("clearance", "safety", "upper", "depth"))
+    notes = [f"Rapid moves at Z = {c:g}",
+             f"Feed Z speed starts at Z = {u + s_:g} (upper level + safety distance)",
+             f"Top of the part. The default is the material thickness of the Geometry step ({thk:g})",
+             f"The tool cuts down to Z = {u - d:g} (upper level − profile depth)" + ("  ·  below Z = 0, the bottom of the parts" if u - d < 0 else "")]
+    with st.form("levels_form", border=False):             # nothing is sent until Save levels: typing never reruns the page
+        for i, (label, key, step, hlp) in enumerate((
+                ("Clearance level", "clearance", 1.0, "The Z level where the tool moves in rapid mode, above the parts, to go to another location."),
+                ("Safety distance", "safety", 0.5, "The distance above the top of the part where the tool slows down from the rapid move to the feed Z speed."),
+                ("Upper level", "upper", 0.5, "The top of the part. By default it is the material thickness of the Geometry step."),
+                ("Profile depth", "depth", 0.5, "How far the tool goes into the material, measured down from the upper level. "
+                                                "The upper level itself cuts the parts through to Z = 0."))):
+            col, note = st.columns([1, 3])
+            col.number_input(label, min_value=0.0, step=step, format="%.2f", key=PREFIX + key, help=hlp)
+            note.markdown(f"<div style='padding-top:2.1rem'>{notes[i]}</div>", unsafe_allow_html=True)    # level with the box, not its label
         for p in ss.get("levels_problems", []):
             st.error(p)
         st.form_submit_button("Save levels", type="primary", on_click=_save, key="levels_save")
-    with info:
-        c, s_, d = float(ss[PREFIX + "clearance"]), float(ss[PREFIX + "safety"]), float(ss[PREFIX + "depth"])
-        st.markdown(f"**Rapid moves** at Z = {c:g}")
-        st.markdown(f"**Feed Z speed starts** at Z = {thk + s_:g} (upper level + safety distance)")
-        st.markdown(f"**The tool cuts down to** Z = {thk - d:g} (upper level − profile depth)")
-        if thk - d < 0:
-            st.caption("The tool goes below Z = 0, the bottom of the parts.")
+    if abs(u - thk) > 1e-9:
+        st.caption(f"The upper level differs from the geometry value ({thk:g}). Type {thk:g} to use the geometry value again.")
