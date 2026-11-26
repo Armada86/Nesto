@@ -79,6 +79,7 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
 
     name = f"{file_stem(operation)}.{ext}"
     gtext = gcode_cam.text(name, sheet, sheet_no, tool, data, lv, thk, project, run_id, margin, spacing, operation, order_ids)
-    with st.expander(f"G-code of {name} ({len(gtext.splitlines()):,} lines)", expanded=True):
-        st.code("\n".join(gtext.splitlines()[:200]) + ("\n..." if len(gtext.splitlines()) > 200 else ""), language=None)
+    shown = gtext.replace("\r\n", "\n")                       # the file has CR LF line ends; the page shows normal lines
+    with st.expander(f"G-code of {name} ({len(shown.splitlines()):,} lines)", expanded=False):      # hidden until it is opened
+        st.code(shown, language=None, height=600)               # the whole text, in a box that scrolls
     st.download_button(f"⬇ {name}", lambda: gtext.encode("ascii", "replace"), name, "text/plain", key="dl_nc", on_click="ignore")
