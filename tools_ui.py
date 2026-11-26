@@ -126,6 +126,7 @@ def step_tools(db, pid):
 
     def _open(n):
         ss.tools_sel = n
+        ss.tools_confirm = False
         ss.tools_edit = n not in by_no                          # an existing tool is read-only until Edit is pressed
         ss.tools_problems = []
         _load_form(by_no[n] if n in by_no else blank(max(by_no, default=0) + 1))
@@ -167,6 +168,7 @@ def step_tools(db, pid):
         except Exception as e:  # noqa: BLE001
             ss.tools_problems = [f"Could not delete: {e}"]
             return
+        ss.tools_confirm = False
         ss.tools_msg = f"Tool T{n} deleted."
         ss.tools_sel = None
         _reset_list()
@@ -181,6 +183,12 @@ def step_tools(db, pid):
             ss.tools_edit = False
         else:
             ss.tools_sel = None
+
+    def _ask_delete():
+        ss.tools_confirm = True
+
+    def _keep():
+        ss.tools_confirm = False
 
     def _use(n):
         try:
@@ -234,17 +242,27 @@ def step_tools(db, pid):
         return
     old = ss.tools_sel or None
     with detail_col:
-        h1, h2 = st.columns([3, 2])
-        h1.subheader("New tool" if old is None else f"Tool T{old}")
         editing = bool(ss.get("tools_edit"))
-        if old is not None and not editing:
-            h2.button("✏️ Edit", on_click=_edit, key="tools_edit_btn")
-        elif editing:
-            h2.button("Cancel", on_click=_cancel, key="tools_cancel")
         lock = not editing
         left, right = st.columns([3, 2])
         with left:
-            with st.form("tools_form", border=False):            # nothing is sent until Save tool: typing never reruns the page
+            with st.form("tools_form", border=False):            # nothing is sent until a button is pressed: typing never reruns the page
+                st.subheader("New tool" if old is None else f"Tool T{old}")
+                bar = st.columns([1, 1, 1, 2])
+                if editing:
+                    bar[0].form_submit_button("Cancel", on_click=_cancel, key="tools_cancel")
+                else:
+                    bar[0].form_submit_button("✏️ Edit", on_click=_edit, key="tools_edit_btn")
+                bar[1].form_submit_button("Save tool", type="primary", on_click=_save, key="tools_save", disabled=lock)
+                if old is not None:
+                    bar[2].form_submit_button("Delete", on_click=_ask_delete, key="tools_ask_delete")
+                if old is not None and ss.get("tools_confirm"):
+                    st.warning(f"Delete tool T{old} completely?")
+                    y, n_, _ = st.columns([1, 1, 2])
+                    y.form_submit_button("Yes, delete", on_click=_delete, key="tools_delete")
+                    n_.form_submit_button("Keep it", on_click=_keep, key="tools_keep")
+                for p in ss.get("tools_problems", []):
+                    st.error(p)
                 a, b = st.columns(2)
                 a.number_input("Catalog number (T)", min_value=1, step=1, key=PREFIX + "number", help="The tool number used in the G-code (T and H).", disabled=lock)
                 b.text_input("Name (optional)", key=PREFIX + "name", disabled=lock)
@@ -257,14 +275,6 @@ def step_tools(db, pid):
                                                             key=PREFIX + k, help=hlp, disabled=lock)
                 c1.number_input("Helical angle [°]", min_value=0.0, max_value=89.0, step=1.0, format="%.1f", key=PREFIX + "helical_angle",
                                 help="30 is the standard helix.", disabled=lock)
-                st.form_submit_button("Save tool", type="primary", on_click=_save, key="tools_save", disabled=lock)
-            for p in ss.get("tools_problems", []):
-                st.error(p)
-            if old is not None:
-                d, _ = st.columns([1, 3])
-                with d.popover("Delete"):
-                    st.write(f"Delete tool **T{old}** completely?")
-                    st.button("Yes, delete", on_click=_delete, key="tools_delete")
         with right:
             st.image(GUIDE_SVG)
             st.caption("D diameter · SD shoulder diameter · AD arbor diameter · SA shoulder angle · CL cutting length · "

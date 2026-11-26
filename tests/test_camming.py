@@ -123,6 +123,8 @@ def test_tools_tab_list_new_save_choose_and_delete():
         assert saved[0]["diameter"] == 9.0 and at.number_input(key="tl_diameter").disabled
         import tools_ui
         assert tools_ui.chosen_tool(sys.modules["db"], 1)["number"] == 1
+        next(b for b in at.button if b.key == "tools_ask_delete").click().run()
+        assert saved                                                           # asked first, nothing deleted yet
         next(b for b in at.button if b.key == "tools_delete").click().run()   # delete it completely
         assert saved == [] and cam["v"]["camming"]["tool"] is None
         assert tools_ui.chosen_tool(sys.modules["db"], 1) is None
