@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS cam_tools (
     step_down DOUBLE PRECISION NOT NULL,
     coolant TEXT NOT NULL DEFAULT 'none'
 );
+ALTER TABLE nest_runs ADD COLUMN IF NOT EXISTS options JSONB;
 CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS nesto_tools (
     number INT PRIMARY KEY,
@@ -175,13 +176,15 @@ def save_parts(pid: int, parts: list[dict]):
             )
 
 
-def save_run(pid, sheet_w, sheet_h, margin, spacing, sheets, utilization, result, seconds=None):
-    """Store a nest result as a run of the project; returns the new run's id."""
+def save_run(pid, sheet_w, sheet_h, margin, spacing, sheets, utilization, result, seconds=None, options=None):
+    """Store a nest result as a run of the project; returns the new run's id. options: the nesting options of the run (rotation step,
+    precision, search effort) as a dict, so that loading the run shows them again."""
     with connect() as c:
         row = c.execute(
-            "INSERT INTO nest_runs(project_id,sheet_w,sheet_h,margin,spacing,sheets,utilization,result,seconds)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-            (pid, sheet_w, sheet_h, margin, spacing, sheets, utilization, json.dumps(result), seconds),
+            "INSERT INTO nest_runs(project_id,sheet_w,sheet_h,margin,spacing,sheets,utilization,result,seconds,options)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            (pid, sheet_w, sheet_h, margin, spacing, sheets, utilization, json.dumps(result), seconds,
+             json.dumps(options) if options else None),
         ).fetchone()
         return row["id"]
 
