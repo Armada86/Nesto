@@ -219,24 +219,25 @@ def step_tools(db, pid):
         st.subheader("New tool" if old is None else f"Tool T{old}")
         left, right = st.columns([3, 2])
         with left:
-            a, b = st.columns(2)
-            a.number_input("Catalog number (T)", min_value=1, step=1, key=PREFIX + "number", help="The tool number used in the G-code (T and H).")
-            b.text_input("Name (optional)", key=PREFIX + "name")
-            a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type")
-            b.number_input("Number of flutes", min_value=1, step=1, key=PREFIX + "flutes")
-            st.markdown("**Tool parameters** (mm and degrees)")
-            c1, c2 = st.columns(2)
-            for i, (k, lab, hlp, _d) in enumerate(DIMS):
-                (c1 if i % 2 == 0 else c2).number_input(lab + (" [°]" if k in ANGLES else " [mm]"), min_value=0.0, step=0.5, format="%.3f",
-                                                        key=PREFIX + k, help=hlp)
-            c1.number_input("Helical angle [°]", min_value=0.0, max_value=89.0, step=1.0, format="%.1f", key=PREFIX + "helical_angle",
-                            help="30 is the standard helix.")
-            c2.checkbox("Rough", key=PREFIX + "rough", help="A roughing tool (serrated flutes).")
+            with st.form("tools_form", border=False):            # nothing is sent until Save tool: typing never reruns the page
+                a, b = st.columns(2)
+                a.number_input("Catalog number (T)", min_value=1, step=1, key=PREFIX + "number", help="The tool number used in the G-code (T and H).")
+                b.text_input("Name (optional)", key=PREFIX + "name")
+                a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type")
+                b.number_input("Number of flutes", min_value=1, step=1, key=PREFIX + "flutes")
+                st.markdown("**Tool parameters** (mm and degrees)")
+                c1, c2 = st.columns(2)
+                for i, (k, lab, hlp, _d) in enumerate(DIMS):
+                    (c1 if i % 2 == 0 else c2).number_input(lab + (" [°]" if k in ANGLES else " [mm]"), min_value=0.0, step=0.5, format="%.3f",
+                                                            key=PREFIX + k, help=hlp)
+                c1.number_input("Helical angle [°]", min_value=0.0, max_value=89.0, step=1.0, format="%.1f", key=PREFIX + "helical_angle",
+                                help="30 is the standard helix.")
+                c2.checkbox("Rough", key=PREFIX + "rough", help="A roughing tool (serrated flutes).")
+                st.form_submit_button("Save tool", type="primary", on_click=_save, key="tools_save")
             for p in ss.get("tools_problems", []):
                 st.error(p)
-            s, u_, d, _ = st.columns([1, 1.3, 1, 1])
-            s.button("Save tool", type="primary", on_click=_save, key="tools_save")
             if old is not None:
+                u_, d, _ = st.columns([1.3, 1, 2])
                 if used == old:
                     u_.button("Do not use", on_click=_use, args=(None,), key="tools_unuse")
                 else:
