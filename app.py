@@ -337,9 +337,9 @@ parts_state: list[dict] = st.session_state.parts
 # The Machining tab (tool library, toolpaths, G-code: cam.py, post_fanuc.py, cam_ui.py) is switched off for now while its
 # flow is being redesigned: set SHOW_MACHINING = True to bring it back. Nothing of it was removed.
 SHOW_MACHINING = False
-_tab_names = ["Nesting", "Import files", "Parts details", "NestoCAM"] + (["Machining"] if SHOW_MACHINING else [])
+_tab_names = ["1 · Import files", "2 · Parts details", "3 · Nesting", "4 · NestoCAM"] + (["Machining"] if SHOW_MACHINING else [])
 _tabs = st.tabs(_tab_names)
-tab_table, tab_dxf, tab_lib, tab_camming = _tabs[:4]
+tab_dxf, tab_lib, tab_table, tab_camming = _tabs[:4]
 tab_cam = _tabs[4] if SHOW_MACHINING else None
 
 with tab_table:

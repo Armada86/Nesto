@@ -224,16 +224,12 @@ def step_geometry(db, pid, result):
     st.caption("The geometry is the **bottom outline of every part**: the outside contour of each part and the contour of each "
                "of its holes, all at **Z = 0, the bottom of the material**. The work coordinate system is at the lower left corner "
                "of the sheet at the bottom (X along the length, Y along the width, Z up); the top of the material is Z = thickness.")
-    st.session_state.setdefault("camming_zk", 1.0)
     if st.session_state.get("camming_loaded_pid") != pid:
         st.session_state.camming_thickness = float(_saved(db, pid).get("thickness", 18.0))
         st.session_state.camming_loaded_pid = pid
     c1, c2 = st.columns([1, 2])
     c1.number_input("Material thickness", min_value=0.1, step=0.5, key="camming_thickness",
                     help="Height of the stock: the top of the material is at Z = thickness.")
-    c1.number_input("Draw the height larger (x)", min_value=1.0, max_value=40.0, step=1.0, key="camming_zk",
-                    help="Only for the picture: 1 = true scale. A thin sheet is hard to see at true scale; this stretches the height "
-                         "(the dimension text still shows the real thickness).")
     if c1.button("Save", key="camming_save_thickness"):
         try:
             cam = db.get_cam(pid) or {}
@@ -251,14 +247,10 @@ def step_geometry(db, pid, result):
     held = [p["part"] for r in result for p in r["placements"] if is_held(p)]
     if held:
         st.warning(f"{len(held)} part(s) are in the hold area and are not part of the geometry: {', '.join(held)}")
-    n_out, n_hole = sum(1 for c in ch if c["type"] == "Outline"), sum(1 for c in ch if c["type"] == "Hole")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Outlines", n_out)
-    m2.metric("Holes", n_hole)
-    m3.metric("Total length", f"{sum(c['length'] for c in ch):,.0f}")
-    m4.metric("Z of the geometry", "0")
+    n_out = sum(1 for c in ch if c["type"] == "Outline")
+    st.metric("Outlines", n_out)
     pts = tuple(tuple(c["pts"]) for c in ch)
-    k = float(st.session_state.camming_zk)
+    k = 1.0                                                   # always drawn to true scale
     st.image(isometric_png(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness), solids(sheet), k, PICTURE_VERSION),
              caption="The whole sheet seen from the origin corner (lower left corner in plan view), drawn to scale: X to the right, "
                      "Y to the back, Z up. Every part is drawn transparent with dotted edges and its height; its bottom contour (the geometry) is red.")
