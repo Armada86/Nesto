@@ -16,9 +16,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 PURPLE = "#dc2626"   # the colour of the geometry (bottom contour): red, it becomes the toolpath
-PICTURE_VERSION = 7  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
+PICTURE_VERSION = 8  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
                      # older picture of the same sheet would still be shown after an update
-ZOOM = 1.0          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
+ZOOM = 1.0
+FONT_PT = 4.5   # size of the dimension numbers          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
 STEPS = [("geometry", "1 · Geometry")]       # the next steps are added here, one by one
 
 
@@ -123,22 +124,14 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
     for x, y in ((0, 0), (width, 0), (width, height), (0, height)):
         ax.plot([x, x], [y, y], [0, z], color="#475569", lw=0.7)
     for ext, holes in parts:
-        sides = []
-        for ring in (ext, *holes):
-            sides += [[(a[0], a[1], 0), (b[0], b[1], 0), (b[0], b[1], z), (a[0], a[1], z)] for a, b in zip(ring, ring[1:])]
-        ax.add_collection3d(art3d.Poly3DCollection(sides, facecolor="#a78bfa", edgecolor="none", alpha=1.0))
-        poly = orient(Polygon(ext, holes), 1.0)               # outline counter-clockwise, holes clockwise: the holes stay open
-        verts, codes = [], []
-        for ring in (poly.exterior, *poly.interiors):
-            c = list(ring.coords)
-            verts += c
-            codes += [Path.MOVETO] + [Path.LINETO] * (len(c) - 2) + [Path.CLOSEPOLY]
-        patch = PathPatch(Path(verts, codes), facecolor="#ddd6fe", edgecolor="#a78bfa", lw=0.4)
-        ax.add_patch(patch)
-        art3d.pathpatch_2d_to_3d(patch, z=z, zdir="z")
+        for ring in (ext, *holes):                           # transparent part: dotted top outline and dotted vertical edges
+            xs, ys = zip(*ring)
+            ax.plot(xs, ys, [z] * len(xs), color="#7c3aed", lw=0.8, ls=(0, (2, 3)))
+            for x, y in ring[:-1]:
+                ax.plot([x, x], [y, y], [0, z], color="#7c3aed", lw=0.7, ls=(0, (2, 3)))
         for ring in (ext, *holes):                           # the geometry: the bottom contour
             xs, ys = zip(*ring)
-            ax.plot(xs, ys, [0] * len(xs), color=PURPLE, lw=1.5)
+            ax.plot(xs, ys, [0] * len(xs), color=PURPLE, lw=0.9)
 
     texts = []                                                # dimension texts, placed after the view is set so they follow the arrow
 
@@ -147,8 +140,6 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
         n = (dx * dx + dy * dy + dz * dz) ** 0.5 or 1.0
         mid = ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2)
         head = min(0.5, 0.02 * big / n * 1.0)
-        for start, vec in ((mid, (dx / 2, dy / 2, dz / 2)), (mid, (-dx / 2, -dy / 2, -dz / 2))):
-            ax.quiver(*start, *vec, color="#334155", linewidth=0.8, arrow_length_ratio=head, normalize=False)
         texts.append(((mid[0] + shift[0], mid[1] + shift[1], mid[2] + shift[2]), p, q, text, kw))
 
     ext_c = "#94a3b8"
@@ -161,7 +152,7 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
     ax.plot([0, -off * 1.2], [height, height], [z, z], color=ext_c, lw=0.6)           # of the thickness (at the back left corner)
     ax.plot([0, -off * 1.2], [height, height], [0, 0], color=ext_c, lw=0.6)
     dimension((-off, height, 0), (-off, height, max(z, 1e-6)), "", ha="right")
-    ax.text(-off * 1.15, height, z / 2, f"{thickness:g}", fontsize=9, color="#0f172a", ha="right", va="center")
+    ax.text(-off * 1.15, height, z / 2, f"{thickness:g}", fontsize=FONT_PT, color="#0f172a", ha="right", va="center")
 
     # the coordinate system at the origin: small, thin, no boxes; the letters sit outside the sheet
     for vec, col, lab, lpos in (((arm, 0, 0), "#dc2626", "X", (arm * 1.35, -arm * 0.7, 0)),
@@ -192,13 +183,18 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
         ang = math.degrees(math.atan2(y2 - y1, x2 - x1))
         ang = ang + 180 if ang > 90 else ang - 180 if ang < -90 else ang
         mx, my = (x1 + x2) / 2, (y1 + y2) / 2
-        nx, ny = -(y2 - y1), x2 - x1                              # a normal to the arrow, pointing away from the sheet
-        nl = math.hypot(nx, ny) or 1.0
-        if nx * (mx - cx) + ny * (my - cy) < 0:
-            nx, ny = -nx, -ny
-        gap = 0.016 * fig.get_figheight() * fig.dpi
-        fig.text((mx + nx / nl * gap) / fig.bbox.width, (my + ny / nl * gap) / fig.bbox.height, text, fontsize=9,
-                 color="#0f172a", rotation=ang, rotation_mode="anchor", ha="center", va="center")
+        tpx = len(text) * 0.62 * FONT_PT * fig.dpi / 72 * 1.0      # room for the number in the middle of the arrow
+        f = min(0.9, tpx / (math.hypot(x2 - x1, y2 - y1) or 1.0)) if text else 0.0
+        dx, dy, dz = (q[0] - p[0], q[1] - p[1], q[2] - p[2])
+        mid = tuple((a_ + b_) / 2 for a_, b_ in zip(p, q))
+        for sign in (1, -1):                                       # two arrows from the gap to the ends, heads at the ends
+            start = tuple(m + sign * f / 2 * d for m, d in zip(mid, (dx, dy, dz)))
+            vec = tuple(sign * (1 - f) / 2 * d for d in (dx, dy, dz))
+            ax.quiver(*start, *vec, color="#334155", linewidth=0.8, arrow_length_ratio=min(0.5, 0.02 * big / ((dx * dx + dy * dy + dz * dz) ** 0.5 * (1 - f) / 2 or 1)),
+                      normalize=False)
+        if text:
+            fig.text(mx / fig.bbox.width, my / fig.bbox.height, text, fontsize=FONT_PT, color="#0f172a", rotation=ang,
+                     rotation_mode="anchor", ha="center", va="center")
     return _png(fig)
 
 
@@ -264,7 +260,7 @@ def step_geometry(db, pid, result):
     k = float(st.session_state.camming_zk)
     st.image(isometric_png(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness), solids(sheet), k, PICTURE_VERSION),
              caption="The whole sheet seen from the origin corner (lower left corner in plan view), drawn to scale: X to the right, "
-                     "Y to the back, Z up. Every part is a solid of its height; its bottom contour (the geometry) is red.")
+                     "Y to the back, Z up. Every part is drawn transparent with dotted edges and its height; its bottom contour (the geometry) is red.")
     st.image(plan_png(float(sheet["width"]), float(sheet["height"]), pts, tuple(c["type"] for c in ch), PICTURE_VERSION),
              caption="Plan view: outlines solid, holes dashed. The black dot is the origin.")
     st.dataframe(pd.DataFrame([{"No.": i, "Part": c["part"], "Type": c["type"], "Length": round(c["length"], 1), "Z": 0.0}
