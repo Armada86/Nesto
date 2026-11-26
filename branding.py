@@ -24,8 +24,8 @@ CSS = """
 [data-testid="stBaseButton-primary"]:hover, [data-testid="stBaseButton-primaryFormSubmit"]:hover { background-color: var(--nesto-green-dark) !important;
     border-color: var(--nesto-green-dark) !important; }
 /* the Save buttons of the NestoCAM steps (Geometry, Tools, Data, Levels): exactly the same size and colour */
-.st-key-camming_save_thickness, .st-key-tools_save, .st-key-data_save, .st-key-levels_save { width: 9rem !important; max-width: 9rem !important; }
-.st-key-camming_save_thickness button, .st-key-tools_save button, .st-key-data_save button, .st-key-levels_save button {
+.st-key-camming_save, .st-key-tools_save, .st-key-data_save, .st-key-levels_save { width: 9rem !important; max-width: 9rem !important; }
+.st-key-camming_save button, .st-key-tools_save button, .st-key-data_save button, .st-key-levels_save button {
     width: 9rem !important; min-height: 2.6rem !important; }
 /* on a phone Streamlit stacks columns; these rows stay side by side */
 @media (max-width: 640px) {
