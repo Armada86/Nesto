@@ -4,8 +4,14 @@ the same non-modal "G1 X.. Y.. Z.." lines. The post itself cannot be run here, s
 from __future__ import annotations
 
 import datetime
+from zoneinfo import ZoneInfo
 
 import machine_profile as machine
+
+
+def local_time(now: datetime.datetime | None = None) -> datetime.datetime:
+    """The time in the time zone of the machine shop (the server clock is UTC): `now` (a time with a zone, default the current time)."""
+    return (now or datetime.datetime.now(datetime.timezone.utc)).astimezone(ZoneInfo(machine.TIMEZONE))
 
 
 def num(v: float) -> str:
@@ -57,7 +63,7 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
     """The complete program text for one sheet. groups: [(Tool, [moves])] from cam.groups().
     solidcam: the program exactly as the SolidCAM post writes it (header boxes, N blocks, a space at the end of the blocks, CR LF)."""
     w = _Writer()
-    now = datetime.datetime.now()
+    now = local_time()
     w.block("%")
     w.block(f"<{name}>")
     if solidcam:
@@ -175,7 +181,7 @@ def _solidcam_header(w, name: str, groups: list, operation, stats, now) -> None:
     short = machine.NAME.split(" - ")[-1].upper()
     base = name.rsplit(".", 1)[0].upper()
     for line in (_RULE, _box("POST PROCESSOR INFORMATION", True), _RULE,
-                 _box("S-CAM VERSION  : NESTOCAM"), _box("LICENSED TO    : MARIANI"), _box(f"MACHINE        : {short}"),
+                 _box("CAM VERSION    : NESTOCAM 2026"), _box("LICENSED TO    : MARIANI"), _box(f"MACHINE        : {short}"),
                  _box(f"CONTROLLER     : {machine.CONTROLLER}"), _box(f"POST VERSION   : {machine.POST_VERSION}"),
                  _box("POST CREATED BY: SSG"), _RULE, _box("PROGRAM INFORMATION", True), _RULE,
                  _box(f"PART NAME   : {base}"), _box(f"G-CODE DATE : {now.strftime('%d-%b-%Y').upper()}"),

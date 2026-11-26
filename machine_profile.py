@@ -24,6 +24,7 @@ RAPID_XY = 36000.0          # mm/min
 RAPID_Z = 30000.0
 MAX_FEED = 30000.0
 DEFAULT_SMOOTHING = 7.0     # n_SmoothValue default
+TIMEZONE = "America/Toronto"   # the date and time in the header of the program (Canada Eastern, the same as New York)
 
 _VMID = pathlib.Path(__file__).parent / "post" / "Mariani_CR_Onsrud_336G18CW7.vmid"
 

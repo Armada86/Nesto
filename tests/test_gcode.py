@@ -232,6 +232,7 @@ def test_the_program_is_written_like_the_solidcam_file():
     g = raw.split("\r\n")
     box = "(" + "-" * 48 + ")"
     assert g[2:5] == [box, "(           POST PROCESSOR INFORMATION           )", box]
+    assert g[5] == "(CAM VERSION    : NESTOCAM 2026                  )"
     assert g[6:11] == ["(LICENSED TO    : MARIANI                        )", "(MACHINE        : CR ONSRUD 336G18CW7            )",
                        "(CONTROLLER     : FANUC                          )", "(POST VERSION   : 0.4                            )",
                        "(POST CREATED BY: SSG                            )"]
@@ -272,3 +273,15 @@ def test_arcs_have_equal_pieces_like_solidcam():
     arc = ring[1:16]                                                                # the pieces of one arc are all the same length
     d = [math.hypot(a[0] - b[0], a[1] - b[1]) for a, b in zip(arc, arc[1:])]
     assert max(d) - min(d) < 1e-6
+
+
+def test_the_header_date_and_time_are_canada_eastern_time():
+    import datetime
+    import post_fanuc
+    utc = datetime.timezone.utc
+    assert post_fanuc.local_time(datetime.datetime(2026, 11, 27, 0, 30, tzinfo=utc)).strftime("%d-%b-%Y %H:%M:%S") == "26-Nov-2026 19:30:00"   # winter: UTC-5
+    assert post_fanuc.local_time(datetime.datetime(2026, 7, 1, 16, 0, tzinfo=utc)).strftime("%H:%M") == "12:00"                               # summer: UTC-4
+    raw = gcode_cam.text("a.anc", sheet(), 1, TOOL, DATA, LV, 15.0)
+    m = re.search(r"G-CODE TIME : (\d\d):(\d\d):(\d\d)", raw)
+    now = post_fanuc.local_time()
+    assert abs((int(m.group(1)) * 60 + int(m.group(2))) - (now.hour * 60 + now.minute)) <= 1 or abs(int(m.group(1)) - now.hour) in (0, 23)
