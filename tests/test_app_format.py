@@ -220,3 +220,28 @@ def test_loading_a_run_brings_its_sheet_and_nesting_options_into_the_boxes_in_th
                                   "result": [{"width": 2000.0, "height": 1000.0, "placements": []}]}
     next(b for b in at.button if b.label == "Load run").click().run()
     assert at.number_input(key="sheet_w").value == 2000.0 and at.select_slider(key="rot_label").value == "15°"
+
+
+def test_the_sheet_boxes_are_read_when_nest_is_pressed_and_a_part_that_does_not_fit_gives_a_message(fake_db):
+    from streamlit.testing.v1 import AppTest
+    runs, settings = [], []
+    fake_db.save_run = lambda *a, **k: runs.append(a) or 99
+    fake_db.save_settings = lambda pid, s: settings.append(s)
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.session_state["pending_settings"] = {"effort_label": "Quick"}
+    at.run()
+    assert not at.exception
+    assert not runs and not settings                                           # nothing nests or saves by itself
+    at.number_input(key="sheet_w").set_value(1000.0)
+    at.number_input(key="sheet_h").set_value(700.0)
+    next(b for b in at.button if b.key == "nest_btn").click().run()          # Nest reads the numbers and stores them
+    assert not at.exception
+    assert runs and runs[-1][1:3] == (1000.0, 700.0)
+    assert settings and settings[-1]["sheet_w"] == 1000.0 and settings[-1]["sheet_h"] == 700.0
+    at.number_input(key="sheet_w").set_value(100.0)                            # smaller than the parts (300 x 200)
+    at.number_input(key="sheet_h").set_value(100.0)
+    n = len(runs)
+    next(b for b in at.button if b.key == "nest_btn").click().run()
+    assert not at.exception and len(runs) == n                                 # no traceback, no run
+    assert any("does not fit" in e.value for e in at.error)

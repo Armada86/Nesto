@@ -341,6 +341,12 @@ _tabs = st.tabs(_tab_names)
 tab_dxf, tab_lib, tab_table, tab_camming = _tabs[:4]
 tab_cam = _tabs[4] if SHOW_MACHINING else None
 
+@st.cache_resource
+def nest_jobs() -> dict:
+    """Background nesting jobs of the server (project id -> NestJob), shared by every session and page reload."""
+    return {}
+
+
 with tab_table:
     with st.expander("Expand parts"):          # the table is folded away: one line until you open it
         st.caption("Size A = width (or diameter for a circle). Size B = height (ignored for circles). "
@@ -387,28 +393,32 @@ with tab_table:
     # the sheet and the nesting options belong to the run: they sit in the Nesting tab, above the Nest button
     col_hist, col_set = st.columns([1.3, 3])
     history_box = col_hist.container(border=True)           # the run history (filled further down), the first column
-    with col_set.container(border=True):
-        st.caption("Sheet and nesting settings are saved with the project automatically.")
-        col_sheet, col_nest = st.columns(2)
-        with col_sheet:
-            st.subheader("Sheet")
-            sheet_w = st.number_input("Length", min_value=1.0, step=10.0, key="sheet_w", on_change=autosave_settings,
-                                      help="Sheet length: the horizontal side in the drawings.")
-            sheet_h = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_h", on_change=autosave_settings,
-                                      help="Sheet width: the vertical side in the drawings.")
-            margin = st.number_input("Edge margin", min_value=0.0, step=1.0, key="margin", on_change=autosave_settings)
-            spacing = st.number_input("Part spacing (kerf)", min_value=0.0, step=0.5, key="spacing", on_change=autosave_settings)
-        with col_nest:
-            st.subheader("Nesting")
-            rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), key="rot_label", on_change=autosave_settings,
-                                         help="Finer steps pack irregular shapes better but take longer. Steps below 15° first search with 15° and then fine-tune "
-                                              "the best layout with the finer angles around the angles it uses (this adds some time).")
-            prec_label = st.select_slider("Precision (irregular shapes)", list(PRECISION), key="prec_label", on_change=autosave_settings,
-                                          help="Finer = tighter packing, slower.")
-            effort_label = st.select_slider("Search effort (irregular shapes)", list(EFFORT), key="effort_label",
-                                            on_change=autosave_settings,
-                                            help="Quick = one pass. Normal / Thorough keep trying many different layouts "
-                                                 "(pairing, placement rules, random restarts) for 15 / 60 seconds and keep the best.")
+    # a form: typing in the boxes does not make the page react; the numbers are read when Nest is pressed (Enter does not submit)
+    with col_set.form("nest_form", border=False, enter_to_submit=False):
+        with st.container(border=True):
+            st.caption("Sheet and nesting settings are saved with the project when you press Nest.")
+            col_sheet, col_nest = st.columns(2)
+            with col_sheet:
+                st.subheader("Sheet")
+                sheet_w = st.number_input("Length", min_value=1.0, step=10.0, key="sheet_w",
+                                          help="Sheet length: the horizontal side in the drawings.")
+                sheet_h = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_h",
+                                          help="Sheet width: the vertical side in the drawings.")
+                margin = st.number_input("Edge margin", min_value=0.0, step=1.0, key="margin")
+                spacing = st.number_input("Part spacing (kerf)", min_value=0.0, step=0.5, key="spacing")
+            with col_nest:
+                st.subheader("Nesting")
+                rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), key="rot_label",
+                                             help="Finer steps pack irregular shapes better but take longer. Steps below 15° first search with 15° and then fine-tune "
+                                                  "the best layout with the finer angles around the angles it uses (this adds some time).")
+                prec_label = st.select_slider("Precision (irregular shapes)", list(PRECISION), key="prec_label",
+                                              help="Finer = tighter packing, slower.")
+                effort_label = st.select_slider("Search effort (irregular shapes)", list(EFFORT), key="effort_label",
+                                                help="Quick = one pass. Normal / Thorough keep trying many different layouts "
+                                                     "(pairing, placement rules, random restarts) for 15 / 60 seconds and keep the best.")
+        _job0 = nest_jobs().get(pid)
+        nest_clicked = st.form_submit_button("▶ Nest", key="nest_btn", type="primary", on_click=autosave_settings,
+                                             disabled=bool(_job0 and _job0.state == "running"))
 
 with tab_dxf:
     st.caption("**DXF**: any closed outline made of LINE / ARC / CIRCLE / POLYLINE / SPLINE / ELLIPSE entities; "
@@ -500,12 +510,6 @@ with tab_lib:
             r2b.metric("Holes", len(stats["holes"]))
             st.caption("Sizes are in the units of your drawing / typed dimensions (usually mm).")
 
-@st.cache_resource
-def nest_jobs() -> dict:
-    """Background nesting jobs of the server (project id -> NestJob), shared by every session and page reload."""
-    return {}
-
-
 # an action the user confirmed in the "Unsaved moves" dialog
 _pending = st.session_state.pop("pending_action", None)
 if _pending and _pending[0] == "load_run":
@@ -553,8 +557,7 @@ with tab_table:
 [class*="st-key-dl_"] button:hover { background-color: #bfdbfe !important; border-color: #60a5fa !important; }
 [class*="st-key-dl_"] button:active { background-color: #93c5fd !important; }
 </style>""", unsafe_allow_html=True)
-    _job0 = nest_jobs().get(pid)
-    run = st.button("▶ Nest", key="nest_btn", type="primary", disabled=bool(_job0 and _job0.state == "running"))
+    run = nest_clicked                               # the Nest button of the form above
     if _pending and _pending[0] == "nest":
         run = True                                   # confirmed in the dialog
     elif run and unsaved_moves():
@@ -607,22 +610,25 @@ with tab_table:
         elif _job0 is not None and _job0.state == "running":
             st.warning("A nesting is already running for this project.")
         elif all(p["shape"] in ("rectangle",) and stored_geometry(p.get("outline")) is None for p in to_nest):
-            t_start = time.perf_counter()           # rectangles only: exact and instant, no background job needed
-            sheets = nest([Part(p["name"], p["width"], p["height"], p["qty"], p["rotate"]) for p in to_nest],
-                          sheet_w, sheet_h, margin, spacing)
-            elapsed = time.perf_counter() - t_start
-            s = summary(sheets)
-            result = [{"width": sh.width, "height": sh.height,
-                       "placements": [pl.__dict__ for pl in sh.placements]} for sh in sheets]
-            db.save_parts(pid, current)
-            run_id = db.save_run(pid, sheet_w, sheet_h, margin, spacing, s["sheets"], s["utilization"], result, elapsed,
-                                 options=nest_options())
-            st.session_state.parts = current
-            st.session_state.nest_info = {}
-            set_result(result, run_id)
-            st.session_state.nest_seconds = elapsed
-            st.session_state.nest_parts = [{k: p[k] for k in ("name", "shape", "width", "height", "qty")} for p in to_nest]
-            st.session_state.run_meta = {"margin": margin, "spacing": spacing}
+            try:
+                t_start = time.perf_counter()           # rectangles only: exact and instant, no background job needed
+                sheets = nest([Part(p["name"], p["width"], p["height"], p["qty"], p["rotate"]) for p in to_nest],
+                              sheet_w, sheet_h, margin, spacing)
+                elapsed = time.perf_counter() - t_start
+                s = summary(sheets)
+                result = [{"width": sh.width, "height": sh.height,
+                           "placements": [pl.__dict__ for pl in sh.placements]} for sh in sheets]
+                db.save_parts(pid, current)
+                run_id = db.save_run(pid, sheet_w, sheet_h, margin, spacing, s["sheets"], s["utilization"], result, elapsed,
+                                     options=nest_options())
+                st.session_state.parts = current
+                st.session_state.nest_info = {}
+                set_result(result, run_id)
+                st.session_state.nest_seconds = elapsed
+                st.session_state.nest_parts = [{k: p[k] for k in ("name", "shape", "width", "height", "qty")} for p in to_nest]
+                st.session_state.run_meta = {"margin": margin, "spacing": spacing}
+            except ValueError as e:                 # for example a part that does not fit on the sheet
+                st.error(str(e))
         else:
             # irregular parts can take minutes: nest in a background thread so that locking the phone or losing the
             # connection does not stop it; the thread saves the finished run to the History itself
@@ -799,7 +805,9 @@ def sheets_area(meta, scrap_cache):
         title = (f"Sheet {i} – {sh.utilization:.2%} used · cut length {sh.cut_length:,.0f}"
                  + (f" · largest offcut {best[2]:.0f} × {best[3]:.0f}" if best else ""))
         if not edit:
-            st.pyplot(draw_sheet(sh, f"Sheet {i}", scrap, color_index=cidx))
+            # the whole sheet inside the screen: a squarish or tall sheet is shown smaller instead of taller than the screen
+            st.pyplot(draw_sheet(sh, f"Sheet {i}", scrap, color_index=cidx),
+                      width=int(max(320, min(1100, 600 * sh.width / max(sh.height, 1e-9) + 100))))
             cut_breakdown(sh, i)
             continue
         st.markdown(f"**{title}**")
