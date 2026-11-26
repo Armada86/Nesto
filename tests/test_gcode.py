@@ -199,13 +199,24 @@ def test_geometry_step_lists_the_contours_in_order_and_moves_them():
         d = cu.default_order(ch)
         pick = lambda: at.selectbox(key=f"geo_move_id_{at.session_state['geo_move_ver']}")      # noqa: E731
         assert pick().value == d[0]
-        next(b for b in at.button if b.key == "geo_move_last").click().run()               # the hole goes last
-        assert settings["order"] == d[1:] + [d[0]] and settings["order_sheet"] == 1
+        save = lambda: next(b for b in at.button if b.key == "geo_order_save")                 # noqa: E731
+        assert save().disabled                                                                  # nothing to save yet
+        next(b for b in at.button if b.key == "geo_move_last").click().run()               # the hole goes last ...
+        assert "order" not in settings and not save().disabled                                 # ... on the working copy: nothing saved yet
         assert pick().value == d[0] and pick().label == "Contour to move"                      # it stays selected
         assert "· A (hole)" in pick().options[d.index(d[0])] and pick().options[0].startswith(f"{len(d)} ·")   # its label shows the new number
+        assert any("not saved yet" in w.value for w in at.warning)
         next(b for b in at.button if b.key == "geo_move_up").click().run()
-        assert settings["order"] == d[1:-1] + [d[0]] + [d[-1]]
-        next(b for b in at.button if b.key == "geo_order_reset").click().run()
         assert "order" not in settings
+        save().click().run()                                                                    # Save order stores the working order
+        assert settings["order"] == d[1:-1] + [d[0]] + [d[-1]] and settings["order_sheet"] == 1
+        assert save().disabled and not any("not saved yet" in w.value for w in at.warning)    # saved: the working copy is the saved order
+        next(b for b in at.button if b.key == "geo_order_reset").click().run()               # the default order, still to be saved
+        assert settings["order"] == d[1:-1] + [d[0]] + [d[-1]]
+        next(b for b in at.button if b.key == "geo_order_discard").click().run()             # discard: back to the saved order
+        assert save().disabled
+        next(b for b in at.button if b.key == "geo_order_reset").click().run()
+        save().click().run()
+        assert "order" not in settings                                                          # the default order is not stored
     finally:
         sys.modules.pop("db", None)
