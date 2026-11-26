@@ -198,3 +198,16 @@ def test_cam_operations_belong_to_a_run_have_unique_names_and_go_with_the_run(db
     finally:
         with db.connect() as c:
             c.execute("DELETE FROM projects WHERE id=%s", (pid,))
+
+
+def test_a_run_keeps_its_nesting_options(db):
+    pid = db.create_project("opts-test")
+    try:
+        r1 = db.save_run(pid, 2500, 1250, 5, 3, 1, 0.5, [{"width": 2500, "height": 1250, "placements": []}], 1.5,
+                         options={"rot_label": "15°", "prec_label": "Fine", "effort_label": "Thorough"})
+        r2 = db.save_run(pid, 2500, 1250, 5, 3, 1, 0.5, [{"width": 2500, "height": 1250, "placements": []}], 1.5)
+        assert db.load_run(r1)["options"] == {"rot_label": "15°", "prec_label": "Fine", "effort_label": "Thorough"}
+        assert db.load_run(r2)["options"] is None                                      # an older run: no options
+    finally:
+        with db.connect() as c:
+            c.execute("DELETE FROM projects WHERE id=%s", (pid,))

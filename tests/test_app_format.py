@@ -33,7 +33,7 @@ def fake_db(monkeypatch):
     db.load_parts = lambda i: [dict(p) for p in parts]
     db.save_parts = lambda *a: None
     db.save_settings = lambda *a: None
-    db.save_run = lambda *a: None
+    db.save_run = lambda *a, **k: None
     db.list_runs = lambda i: list(runs)
     db.load_run = lambda i: None
     db.delete_runs = lambda *a: 0
@@ -195,3 +195,27 @@ def test_nestocam_tab_sees_a_run_that_is_loaded_in_the_same_script_run(fake_db):
     at.text_input(key="ops_new_name").set_value("SHEET_01_milling")            # the same name (any capitals) twice in a run: refused
     next(b for b in at.button if b.key == "ops_create").click().run()
     assert any("exists" in e.value for e in at.error) and len(fake_db.list_operations(7)) == 1
+
+
+def test_loading_a_run_brings_its_sheet_and_nesting_options_into_the_boxes_in_the_nesting_tab(fake_db):
+    from streamlit.testing.v1 import AppTest
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.session_state["pending_settings"] = {"effort_label": "Quick"}
+    at.run()
+    assert at.number_input(key="sheet_w").value == 2500.0 and at.select_slider(key="rot_label").value == "90°"
+    fake_db.load_run = lambda i: {"id": i, "sheet_w": 3000.0, "sheet_h": 1500.0, "margin": 8.0, "spacing": 4.0, "seconds": 1.0,
+                                  "options": {"rot_label": "15°", "prec_label": "Fine", "effort_label": "Thorough"},
+                                  "result": [{"width": 3000.0, "height": 1500.0, "placements": []}]}
+    saved = []
+    fake_db.save_settings = lambda pid, s: saved.append(s)
+    next(b for b in at.button if b.label == "Load run").click().run()
+    assert not at.exception
+    assert [at.number_input(key=k).value for k in ("sheet_w", "sheet_h", "margin", "spacing")] == [3000.0, 1500.0, 8.0, 4.0]
+    assert [at.select_slider(key=k).value for k in ("rot_label", "prec_label", "effort_label")] == ["15°", "Fine", "Thorough"]
+    assert saved and saved[-1]["sheet_w"] == 3000.0 and saved[-1]["rot_label"] == "15°"      # also stored as the project's settings
+    # an old run without options: the sheet comes back, the options stay as they are
+    fake_db.load_run = lambda i: {"id": i, "sheet_w": 2000.0, "sheet_h": 1000.0, "margin": 5.0, "spacing": 3.0, "seconds": 1.0,
+                                  "result": [{"width": 2000.0, "height": 1000.0, "placements": []}]}
+    next(b for b in at.button if b.label == "Load run").click().run()
+    assert at.number_input(key="sheet_w").value == 2000.0 and at.select_slider(key="rot_label").value == "15°"

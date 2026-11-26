@@ -219,6 +219,11 @@ def unsaved_dialog(action: str, payload=None):
         st.rerun()
 
 
+def nest_options() -> dict:
+    """The nesting options on the screen (stored with a run, so that loading the run shows them again)."""
+    return {k: st.session_state[k] for k in ("rot_label", "prec_label", "effort_label")}
+
+
 def do_load_run(run_id):
     run_row = db.load_run(run_id)
     set_result(run_row["result"], run_id)
@@ -226,6 +231,23 @@ def do_load_run(run_id):
     st.session_state.pop("nest_info", None)
     st.session_state.pop("nest_parts", None)   # the part list of that old run is not stored
     st.session_state.run_meta = {"margin": run_row.get("margin", margin), "spacing": run_row.get("spacing", spacing)}
+    # the sheet and the nesting options of the run come back into their boxes (applied at the start of the next run of the script,
+    # before the boxes exist: a widget cannot be changed after it was drawn)
+    new = settings_snapshot()
+    for k in ("sheet_w", "sheet_h", "margin", "spacing"):
+        if run_row.get(k) is not None:
+            new[k] = float(run_row[k])
+    opts = run_row.get("options") or {}
+    for k, allowed in (("rot_label", ROT_STEPS), ("prec_label", PRECISION), ("effort_label", EFFORT)):
+        if opts.get(k) in allowed:
+            new[k] = opts[k]
+    if new != settings_snapshot():
+        st.session_state.pending_settings = new
+        try:
+            db.save_settings(pid, new)
+        except Exception as e:  # noqa: BLE001
+            st.toast(f"Could not save the settings: {e}", icon=":material/error:")
+        st.rerun()
 
 
 def settings_snapshot():
@@ -297,7 +319,6 @@ with st.sidebar:
         rename_project_dialog(pid, proj["name"])
     if st.button("Delete", icon=":material/delete:", width="stretch", disabled=not proj):
         delete_project_dialog(pid, proj["name"])
-    history_box = st.container()     # the run history goes here (filled further down), right below the menu
 
 if not proj:
     st.markdown(branding.header_html("2D nesting"), unsafe_allow_html=True)
@@ -364,7 +385,9 @@ with tab_table:
                             "outline": outlines.get(nm)})
 
     # the sheet and the nesting options belong to the run: they sit in the Nesting tab, above the Nest button
-    with st.container(border=True):
+    col_hist, col_set = st.columns([1.3, 3])
+    history_box = col_hist.container(border=True)           # the run history (filled further down), the first column
+    with col_set.container(border=True):
         st.caption("Sheet and nesting settings are saved with the project automatically.")
         col_sheet, col_nest = st.columns(2)
         with col_sheet:
@@ -592,7 +615,8 @@ with tab_table:
             result = [{"width": sh.width, "height": sh.height,
                        "placements": [pl.__dict__ for pl in sh.placements]} for sh in sheets]
             db.save_parts(pid, current)
-            run_id = db.save_run(pid, sheet_w, sheet_h, margin, spacing, s["sheets"], s["utilization"], result, elapsed)
+            run_id = db.save_run(pid, sheet_w, sheet_h, margin, spacing, s["sheets"], s["utilization"], result, elapsed,
+                                 options=nest_options())
             st.session_state.parts = current
             st.session_state.nest_info = {}
             set_result(result, run_id)
@@ -610,11 +634,12 @@ with tab_table:
                           {"margin": margin, "spacing": spacing})
             parts_to_save = [dict(p) for p in current]
             job_pid = pid
+            job_options = nest_options()
 
             def _save(result, s, elapsed):
                 db.save_parts(job_pid, parts_to_save)
                 return db.save_run(job_pid, snap["sheet_w"], snap["sheet_h"], snap["margin"], snap["spacing"],
-                                   s["sheets"], s["utilization"], result, elapsed)
+                                   s["sheets"], s["utilization"], result, elapsed, options=job_options)
 
             nest_jobs()[pid] = job
             start_job(job, to_nest, cfg, _save)
@@ -658,7 +683,6 @@ def held_parts(result) -> list:
 
 
 with history_box:
-    st.divider()
     st.subheader("History")
     runs = db.list_runs(pid)
     labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.2%}"
