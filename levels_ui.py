@@ -58,6 +58,11 @@ def step_levels(db, pid):
         ss[PREFIX + "upper"], ss[PREFIX + "depth"] = lv["upper"], lv["depth"] if saved.get("depth") is not None else lv["upper"]
         ss.levels_thk = thk
 
+    lv0 = get_levels(db, pid, thk)
+    for k in ("clearance", "safety", "upper", "depth"):      # Streamlit forgets a box that was not drawn in a run (the operation was closed)
+        if PREFIX + k not in ss:
+            ss[PREFIX + k] = lv0[k]
+
     def _save():
         lv = {"clearance": float(ss[PREFIX + "clearance"]), "safety": float(ss[PREFIX + "safety"]),
               "upper": float(ss[PREFIX + "upper"]), "depth": float(ss[PREFIX + "depth"])}

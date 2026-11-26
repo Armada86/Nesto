@@ -200,3 +200,45 @@ def test_levels_tab_follows_the_geometry_thickness_until_changed():
         assert cam["v"]["camming"]["levels"]["clearance"] == 45.0 and at.error
     finally:
         sys.modules.pop("db", None)
+
+
+def test_the_boxes_of_an_operation_keep_their_saved_values_after_it_was_closed_and_opened_again():
+    """Streamlit forgets a box that was not drawn in a run: the thickness came back as 0.1 (the lowest value) after Close and reopen."""
+    import sys
+    import types
+    from streamlit.testing.v1 import AppTest
+    import test_gcode as tg
+    settings = {"sheet": 1, "thickness": 15.0, "tool": 1, "data": {**tg.DATA, "feed_xy": 1800.0},
+                "levels": {"clearance": 50.0, "safety": 3.0, "upper": None, "depth": None}}
+    tool = {**tg.TOOL, "tool_type": "END MILL", "shoulder_diameter": 12.7, "arbor_diameter": 12.7, "shoulder_angle": 0.0,
+            "shoulder_length": 43.7, "total_length": 43.7, "chamfer": 0.0, "outside_holder": 122.2, "helical_angle": 30.0}
+    db = types.ModuleType("db")
+    db.list_cam_tools = lambda: [tool]
+    db.get_operation = lambda i: {"id": i, "run_id": 1, "name": "x", "settings": settings}
+    db.save_operation_settings = lambda i, s: (settings.clear(), settings.update(s))
+    sys.modules["db"] = db
+    try:
+        def app():
+            import streamlit as st
+            from operations_ui import operation_view
+            import db
+            import test_gcode
+            if st.session_state.get("show", True):
+                operation_view(db, {"id": 7, "name": "x", "settings": {}}, [test_gcode.sheet()], "p", {}, 3)
+        at = AppTest.from_function(app, default_timeout=60).run()
+        at.session_state["tools_sel"] = 1                                   # a tool is open in the Tools step
+        at.run()
+        assert at.number_input(key="tl_diameter").value == 12.7
+        at.session_state["show"] = False
+        at.run()                                                            # the operation is closed: none of its boxes is drawn
+        at.session_state["show"] = True
+        at.run()                                                            # and opened again
+        assert not at.exception
+        assert at.number_input(key="camming_thickness").value == 15.0       # not 0.1
+        assert at.selectbox(key="camming_sheet").value == 1
+        assert at.number_input(key="dt_feed_xy").value == 1800.0
+        assert at.number_input(key="lv_clearance").value == 50.0 and at.number_input(key="lv_safety").value == 3.0
+        assert at.number_input(key="lv_upper").value == 15.0 and at.number_input(key="lv_depth").value == 15.0
+        assert at.number_input(key="tl_diameter").value == 12.7
+    finally:
+        sys.modules.pop("db", None)

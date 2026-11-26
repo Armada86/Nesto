@@ -37,6 +37,8 @@ def step_data(db, pid):
             ss[PREFIX + k] = v
         ss.data_loaded_pid = pid
         ss.data_problems = []
+    for k, v in get_data(db, pid).items():                  # Streamlit forgets a box that was not drawn in a run (the operation was closed)
+        ss.setdefault(PREFIX + k, v)
 
     def _save():
         d = {k: ss[PREFIX + k] for k in DEFAULTS}

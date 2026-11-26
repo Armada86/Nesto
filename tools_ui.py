@@ -132,6 +132,9 @@ def step_tools(db, pid):
         ss.tools_problems = []
         _load_form(by_no[n] if n in by_no else blank(max(by_no, default=0) + 1))
 
+    if ss.tools_sel is not None and PREFIX + "diameter" not in ss:     # the form's boxes were forgotten (the step was not drawn): fill them again
+        _open(ss.tools_sel)
+
     def _reset_list():
         ss.tools_ver += 1
         ss.tools_prev_rows = ()
