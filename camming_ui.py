@@ -71,37 +71,55 @@ def solids(sheet: dict) -> tuple:
     return tuple(out)
 
 
-def height_scale(width: float, height: float, thickness: float) -> float:
-    """How much taller than true the stock is drawn: a sheet that is thin compared with its size would be a line."""
-    return max(1.0, min(40.0, 0.03 * max(width, height) / max(thickness, 1e-6)))
-
-
 @st.cache_data(max_entries=12, show_spinner=False)
-def isometric_png(width: float, height: float, thickness: float, parts: tuple) -> bytes:
-    return _crop_to_content(isometric_raw_png(width, height, thickness, parts))
+def isometric_png(width: float, height: float, thickness: float, parts: tuple, k: float = 1.0) -> bytes:
+    return _crop_to_content(isometric_raw_png(width, height, thickness, parts, k))
 
 
-def isometric_raw_png(width: float, height: float, thickness: float, parts: tuple) -> bytes:
+def _touches_border(png: bytes) -> bool:
+    import numpy as np
+    from PIL import Image
+
+    im = np.asarray(Image.open(io.BytesIO(png)).convert("RGB")).astype(int)
+    border = np.concatenate([im[0], im[-1], im[:, 0], im[:, -1]])
+    return bool((np.abs(border - 255).sum(axis=1) > 30).any())
+
+
+def isometric_raw_png(width: float, height: float, thickness: float, parts: tuple, k: float = 1.0) -> bytes:
+    """Drawn with a frame that is made larger until nothing (text included) is cut off at its border."""
+    room = 1.0
+    for _ in range(6):
+        png = _isometric(width, height, thickness, parts, k, room)
+        if not _touches_border(png):
+            return png
+        room *= 1.25
+    return png
+
+
+def _isometric(width: float, height: float, thickness: float, parts: tuple, k: float, room: float) -> bytes:
     """The whole sheet in an isometric view, seen from the origin corner (X to the right-back, Y to the left-back, Z up, like
-    a CAD isometric view): the stock slab as thin edges and every part as a solid of its height, with its bottom contour
-    (the geometry) in purple and the coordinate system at the origin, the lower left corner of the sheet in plan view."""
+    a CAD isometric view), drawn to scale (k = 1; k > 1 draws the height k times larger): the stock slab, every part as a
+    solid of its height with its bottom contour (the geometry) in purple, the sheet dimensions outside the sheet and the
+    coordinate system at the origin, the lower left corner of the sheet in plan view."""
     from matplotlib.patches import PathPatch
     from matplotlib.path import Path
     from mpl_toolkits.mplot3d import art3d
     from shapely.geometry import Polygon
     from shapely.geometry.polygon import orient
 
-    k = height_scale(width, height, thickness)
-    z = thickness * k
-    fig = plt.figure(figsize=(10, 5), dpi=170)
+    big = max(width, height)
+    z = thickness * k                                        # the drawn height of the slab
+    off = 0.07 * big                                         # how far outside the sheet the dimension lines run
+    arm = 0.14 * big                                         # length of the coordinate system arrows
+    fig = plt.figure(figsize=(11, 5.5), dpi=230)
     ax = fig.add_subplot(111, projection="3d")
     slab = [[(0, 0, 0), (width, 0, 0), (width, 0, z), (0, 0, z)], [(width, 0, 0), (width, height, 0), (width, height, z), (width, 0, z)],
             [(0, 0, z), (width, 0, z), (width, height, z), (0, height, z)]]
     ax.add_collection3d(art3d.Poly3DCollection(slab, facecolor="#cbd5e1", edgecolor="none", alpha=0.35))   # the stock, light grey
-    for zz in (0, z):                                        # the stock slab
-        ax.plot([0, width, width, 0, 0], [0, 0, height, height, 0], [zz] * 5, color="#475569", lw=0.6)
+    for zz in (0, z):
+        ax.plot([0, width, width, 0, 0], [0, 0, height, height, 0], [zz] * 5, color="#475569", lw=0.7)
     for x, y in ((0, 0), (width, 0), (width, height), (0, height)):
-        ax.plot([x, x], [y, y], [0, z], color="#475569", lw=0.6)
+        ax.plot([x, x], [y, y], [0, z], color="#475569", lw=0.7)
     for ext, holes in parts:
         sides = []
         for ring in (ext, *holes):
@@ -119,16 +137,42 @@ def isometric_raw_png(width: float, height: float, thickness: float, parts: tupl
         for ring in (ext, *holes):                           # the geometry: the bottom contour
             xs, ys = zip(*ring)
             ax.plot(xs, ys, [0] * len(xs), color=PURPLE, lw=1.2)
-    a = 0.09 * max(width, height)                            # the coordinate system at the origin
-    for vec, col, lab in (((a, 0, 0), "#dc2626", "X"), ((0, a, 0), "#16a34a", "Y"), ((0, 0, a), "#2563eb", "Z")):
-        ax.plot([0, vec[0]], [0, vec[1]], [0, vec[2]], color=col, lw=2)
-        ax.text(vec[0] * 1.15, vec[1] * 1.15, vec[2] * 1.15, lab, color=col, fontsize=9, fontweight="bold")
-    ax.text(width / 2, 0, 0, f"{width:g}", fontsize=7, color="#475569", ha="center", va="top")
-    ax.text(width, height / 2, 0, f"{height:g}", fontsize=7, color="#475569", ha="left", va="center")
-    ax.set_xlim(0, width)
-    ax.set_ylim(0, height)
-    ax.set_zlim(0, z)
-    ax.set_box_aspect((width, height, z), zoom=ZOOM)
+
+    def dimension(p, q, text, shift=(0, 0, 0), **kw):             # a dimension line with arrowheads and its text, outside the sheet
+        dx, dy, dz = (q[0] - p[0], q[1] - p[1], q[2] - p[2])
+        n = (dx * dx + dy * dy + dz * dz) ** 0.5 or 1.0
+        mid = ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2)
+        head = min(0.5, 0.02 * big / n * 1.0)
+        for start, vec in ((mid, (dx / 2, dy / 2, dz / 2)), (mid, (-dx / 2, -dy / 2, -dz / 2))):
+            ax.quiver(*start, *vec, color="#0f172a", linewidth=1.0, arrow_length_ratio=head, normalize=False)
+        ax.text(mid[0] + shift[0], mid[1] + shift[1], mid[2] + shift[2], text, fontsize=10, fontweight="bold", color="#0f172a", **kw)
+
+    ext_c = "#94a3b8"
+    ax.plot([0, 0], [0, -off * 1.2], [0, 0], color=ext_c, lw=0.6)                       # extension lines of the length
+    ax.plot([width, width], [0, -off * 1.2], [0, 0], color=ext_c, lw=0.6)
+    dimension((0, -off, 0), (width, -off, 0), f"Length {width:g}", shift=(0, -off * 0.45, 0), ha="center", va="top")
+    ax.plot([width, width + off * 1.2], [0, 0], [0, 0], color=ext_c, lw=0.6)           # of the width
+    ax.plot([width, width + off * 1.2], [height, height], [0, 0], color=ext_c, lw=0.6)
+    dimension((width + off, 0, 0), (width + off, height, 0), f"Width {height:g}", shift=(off * 0.45, 0, 0), ha="left", va="center")
+    ax.plot([0, -off * 1.2], [height, height], [z, z], color=ext_c, lw=0.6)           # of the thickness (at the back left corner)
+    ax.plot([0, -off * 1.2], [height, height], [0, 0], color=ext_c, lw=0.6)
+    dimension((-off, height, 0), (-off, height, max(z, 1e-6)), "", ha="right")
+    ax.text(-off * 1.15, height, z / 2, f"Thickness {thickness:g}" + (f"\n(drawn x{k:g})" if k > 1.0 else ""), fontsize=10,
+            fontweight="bold", color="#0f172a", ha="right", va="center")
+
+    for vec, col, lab in (((arm, 0, 0), "#dc2626", "X"), ((0, arm, 0), "#16a34a", "Y"), ((0, 0, arm), "#2563eb", "Z")):    # the coordinate system
+        ax.quiver(0, 0, 0, *vec, color=col, linewidth=4.0, arrow_length_ratio=0.18, normalize=False)
+        ax.text(vec[0] * 1.32, vec[1] * 1.32, vec[2] * 1.32, lab, color=col, fontsize=18, fontweight="bold", ha="center", va="center",
+                bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor=col, linewidth=1.2))
+    ax.text(-0.02 * big, -0.02 * big, 0, "0,0,0", fontsize=8, color="#0f172a", ha="right", va="top")
+
+    zr = max(z, arm * 1.6)
+    xr0, xr1 = -0.30 * big * room, width + 0.12 * big * room
+    yr0, yr1 = -off * 1.6 * room, height + 0.04 * big * room
+    ax.set_xlim(xr0, xr1)
+    ax.set_ylim(yr0, yr1)
+    ax.set_zlim(0, zr)
+    ax.set_box_aspect((xr1 - xr0, yr1 - yr0, zr), zoom=ZOOM)          # equal scale on all three axes: nothing is stretched
     ax.view_init(elev=30, azim=-135)
     ax.set_axis_off()
     fig.subplots_adjust(0, 0, 1, 1)
@@ -160,12 +204,16 @@ def step_geometry(db, pid, result):
     st.caption("The geometry is the **bottom outline of every part**: the outside contour of each part and the contour of each "
                "of its holes, all at **Z = 0, the bottom of the material**. The work coordinate system is at the lower left corner "
                "of the sheet at the bottom (X along the length, Y along the width, Z up); the top of the material is Z = thickness.")
+    st.session_state.setdefault("camming_zk", 1.0)
     if st.session_state.get("camming_loaded_pid") != pid:
         st.session_state.camming_thickness = float(_saved(db, pid).get("thickness", 18.0))
         st.session_state.camming_loaded_pid = pid
     c1, c2 = st.columns([1, 2])
     c1.number_input("Material thickness", min_value=0.1, step=0.5, key="camming_thickness",
                     help="Height of the stock: the top of the material is at Z = thickness.")
+    c1.number_input("Draw the height larger (x)", min_value=1.0, max_value=40.0, step=1.0, key="camming_zk",
+                    help="Only for the picture: 1 = true scale. A thin sheet is hard to see at true scale; this stretches the height "
+                         "(the dimension text still shows the real thickness).")
     if c1.button("Save", key="camming_save_thickness"):
         try:
             cam = db.get_cam(pid) or {}
@@ -190,11 +238,10 @@ def step_geometry(db, pid, result):
     m3.metric("Total length", f"{sum(c['length'] for c in ch):,.0f}")
     m4.metric("Z of the geometry", "0")
     pts = tuple(tuple(c["pts"]) for c in ch)
-    k = height_scale(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness))
-    st.image(isometric_png(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness), solids(sheet)),
-             caption="The whole sheet seen from the origin corner (lower left corner in plan view): X to the right, Y to the back, Z up. "
-                     "Every part is a solid of its height; its bottom contour (the geometry) is purple."
-                     + (f" The height is drawn {k:.0f} times larger than true." if k > 1.05 else ""))
+    k = float(st.session_state.camming_zk)
+    st.image(isometric_png(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness), solids(sheet), k),
+             caption="The whole sheet seen from the origin corner (lower left corner in plan view), drawn to scale: X to the right, "
+                     "Y to the back, Z up. Every part is a solid of its height; its bottom contour (the geometry) is purple.")
     st.image(plan_png(float(sheet["width"]), float(sheet["height"]), pts, tuple(c["type"] for c in ch)),
              caption="Plan view: outlines solid, holes dashed. The red dot is the origin.")
     st.dataframe(pd.DataFrame([{"No.": i, "Part": c["part"], "Type": c["type"], "Length": round(c["length"], 1), "Z": 0.0}
