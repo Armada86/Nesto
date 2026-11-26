@@ -99,6 +99,6 @@ def step_levels(db, pid):
             note.markdown(f"<div style='padding-top:2.1rem'>{notes[i]}</div>", unsafe_allow_html=True)    # level with the box, not its label
         for p in ss.get("levels_problems", []):
             st.error(p)
-        st.form_submit_button("Save levels", type="primary", on_click=_save, key="levels_save")
+        st.form_submit_button("Save", type="primary", on_click=_save, key="levels_save")
     if abs(u - thk) > 1e-9:
         st.caption(f"The upper level differs from the geometry value ({thk:g}). Type {thk:g} to use the geometry value again.")

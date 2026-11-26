@@ -518,8 +518,8 @@ with tab_table:
 [data-testid="stTabs"] [data-baseweb="tab-border"] { display: none !important; }
 [data-testid="stTabs"] [role="tab"] { border: 1px solid #cbd5e1 !important; border-radius: 0.6rem !important; background: #f8fafc !important;
     padding: 0.55rem 1.1rem !important; height: auto !important; box-shadow: 0 1px 2px rgba(15,23,42,.08); }
-[data-testid="stTabs"] [role="tab"]:hover { background: #eef2f7 !important; }
-[data-testid="stTabs"] [role="tab"][aria-selected="true"] { background: #fff !important; border: 2px solid #dc2626 !important;
+[data-testid="stTabs"] [role="tab"]:hover { background: #e6f3fb !important; }
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] { background: #fff !important; border: 2px solid #2b8a3e !important;
     box-shadow: 0 2px 6px rgba(15,23,42,.15); }
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] p { font-weight: 600; }
 /* light blue export buttons */

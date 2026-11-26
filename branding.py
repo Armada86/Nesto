@@ -17,6 +17,16 @@ CSS = """
 .nesto-head.small .nesto-logo { font-size: 1.9rem; }
 .nesto-head.small .nesto-title { font-size: 1.45rem; }
 .nesto-head.small .nesto-sub { font-size: .8rem; margin-top: .05rem; }
+/* the colours of the logo: green and light blue */
+:root { --nesto-green: #2b8a3e; --nesto-green-dark: #237032; --nesto-blue: #7cc4ee; --nesto-blue-light: #e6f3fb; }
+[data-testid="stBaseButton-secondary"]:hover, [data-testid="stBaseButton-secondaryFormSubmit"]:hover {
+    border-color: var(--nesto-green) !important; color: var(--nesto-green) !important; background: var(--nesto-blue-light) !important; }
+[data-testid="stBaseButton-primary"]:hover, [data-testid="stBaseButton-primaryFormSubmit"]:hover { background-color: var(--nesto-green-dark) !important;
+    border-color: var(--nesto-green-dark) !important; }
+/* the Save buttons of the NestoCAM steps (Geometry, Tools, Data, Levels): exactly the same size and colour */
+.st-key-camming_save_thickness, .st-key-tools_save, .st-key-data_save, .st-key-levels_save { width: 9rem !important; max-width: 9rem !important; }
+.st-key-camming_save_thickness button, .st-key-tools_save button, .st-key-data_save button, .st-key-levels_save button {
+    width: 9rem !important; min-height: 2.6rem !important; }
 </style>
 """
 
