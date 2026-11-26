@@ -206,19 +206,19 @@ def step_tools(db, pid):
     if msg:
         st.toast(msg, icon=":material/check_circle:")
 
-    top = st.columns([1, 1.4, 3])
+    top = st.columns([1, 1.5, 5])                           # the buttons packed to the left
     top[0].button("➕ New tool", on_click=_new, key="tools_new")
     sel = ss.tools_sel or None
     if sel is not None and sel == used:
-        top[1].button("Do not use for CAM", on_click=_use, args=(None,), key="tools_unuse")
+        top[1].button("Do not use for CAM", on_click=_use, args=(None,), key="tools_unuse", width="stretch")
     else:
-        top[1].button("Use for CAM", on_click=_use, args=(sel,), key="tools_use", disabled=sel is None, type="primary",
+        top[1].button("Use for CAM", on_click=_use, args=(sel,), key="tools_use", disabled=sel is None, type="primary", width="stretch",
                       help="Tick a tool in the list, then press this to choose it for the next CAM steps of this operation.")
-    if used is not None:
+    if used is not None:                                    # the chosen tool: its own line right above the table
         u = by_no[used]
-        top[2].markdown(f"Tool for the CAM of this operation: **T{used}**  {u['name']}  Ø{u['diameter']:g}")
+        st.markdown(f"Tool for the CAM of this operation: **T{used}**  {u['name']}  Ø{u['diameter']:g}")
     else:
-        top[2].markdown("Tool for the CAM of this operation: **none chosen**")
+        st.markdown("Tool for the CAM of this operation: **none chosen**")
 
     open_ = ss.tools_sel is not None
     list_col, detail_col = st.columns([2, 5])             # the list keeps the same narrow width, selected or not

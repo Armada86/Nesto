@@ -146,13 +146,13 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
         st.caption("Click an operation in the list to open it.")
         return
     op = by_id[ss.ops_sel]
-    h1, h2, h3, h4 = st.columns([3, 1, 1, 1])
-    h1.subheader(f"Operation: {op['name']}")
-    h2.button("Close", on_click=_close, key="ops_close")
-    with h3.popover("Rename"):
+    b1, b2, b3, _ = st.columns([1, 1, 1, 5])               # right under the table, packed to the left
+    b1.button("Close", on_click=_close, key="ops_close", width="stretch")
+    with b2.popover("Rename", width="stretch"):
         st.text_input("New name", value=op["name"], key="ops_rename")
         st.button("Rename", on_click=_rename, key="ops_do_rename")
-    with h4.popover("Delete"):
+    with b3.popover("Delete", width="stretch"):
         st.write(f"Delete operation **{op['name']}** completely?")
         st.button("Yes, delete", on_click=_delete, key="ops_do_delete")
+    st.subheader(f"Operation: {op['name']}")
     operation_view(db, op, result, project, meta, run_id)
