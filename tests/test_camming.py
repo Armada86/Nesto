@@ -56,3 +56,11 @@ def test_the_picture_is_drawn_to_scale_unless_the_height_is_stretched():
     tall = Image.open(io.BytesIO(isometric_png(3000.0, 1000.0, 15.0, solids(sheet), 30.0)))
     assert tall.size[1] > flat.size[1] or tall.size != flat.size                 # stretching the height changes the picture
     assert isometric_png(3000.0, 1000.0, 15.0, solids(sheet), 1.0) == isometric_png(3000.0, 1000.0, 15.0, solids(sheet), 1.0)
+
+
+def test_cached_pictures_depend_on_the_picture_version():
+    """The pictures are cached; a new version of the drawing code must not be answered with an older cached picture."""
+    import inspect
+    import camming_ui
+    for fn in (camming_ui.isometric_png, camming_ui.plan_png):
+        assert "version" in inspect.signature(fn).parameters

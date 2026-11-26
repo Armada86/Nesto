@@ -16,6 +16,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 PURPLE = "#8b1fc7"
+PICTURE_VERSION = 4  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
+                     # older picture of the same sheet would still be shown after an update
 ZOOM = 1.0          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
 STEPS = [("geometry", "1 · Geometry")]       # the next steps are added here, one by one
 
@@ -72,7 +74,7 @@ def solids(sheet: dict) -> tuple:
 
 
 @st.cache_data(max_entries=12, show_spinner=False)
-def isometric_png(width: float, height: float, thickness: float, parts: tuple, k: float = 1.0) -> bytes:
+def isometric_png(width: float, height: float, thickness: float, parts: tuple, k: float = 1.0, version: int = PICTURE_VERSION) -> bytes:
     return _crop_to_content(isometric_raw_png(width, height, thickness, parts, k))
 
 
@@ -180,7 +182,7 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
 
 
 @st.cache_data(max_entries=12, show_spinner=False)
-def plan_png(width: float, height: float, chain_pts: tuple, kinds: tuple) -> bytes:
+def plan_png(width: float, height: float, chain_pts: tuple, kinds: tuple, version: int = PICTURE_VERSION) -> bytes:
     fig, ax = plt.subplots(figsize=(8, 8 * height / width if width else 5), dpi=110)
     ax.add_patch(plt.Rectangle((0, 0), width, height, fill=False, lw=1.2, color="black"))
     for pts, kind in zip(chain_pts, kinds):
@@ -239,10 +241,10 @@ def step_geometry(db, pid, result):
     m4.metric("Z of the geometry", "0")
     pts = tuple(tuple(c["pts"]) for c in ch)
     k = float(st.session_state.camming_zk)
-    st.image(isometric_png(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness), solids(sheet), k),
+    st.image(isometric_png(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness), solids(sheet), k, PICTURE_VERSION),
              caption="The whole sheet seen from the origin corner (lower left corner in plan view), drawn to scale: X to the right, "
                      "Y to the back, Z up. Every part is a solid of its height; its bottom contour (the geometry) is purple.")
-    st.image(plan_png(float(sheet["width"]), float(sheet["height"]), pts, tuple(c["type"] for c in ch)),
+    st.image(plan_png(float(sheet["width"]), float(sheet["height"]), pts, tuple(c["type"] for c in ch), PICTURE_VERSION),
              caption="Plan view: outlines solid, holes dashed. The red dot is the origin.")
     st.dataframe(pd.DataFrame([{"No.": i, "Part": c["part"], "Type": c["type"], "Length": round(c["length"], 1), "Z": 0.0}
                                for i, c in enumerate(ch, 1)]), hide_index=True, width="stretch")
