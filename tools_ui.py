@@ -198,7 +198,7 @@ def step_tools(db, pid):
         top[2].markdown("Tool for the CAM of this project: **none chosen**")
 
     open_ = ss.tools_sel is not None
-    list_col, detail_col = st.columns([2, 5]) if open_ else (st.container(), None)
+    list_col, detail_col = st.columns([2, 5])             # the list keeps the same narrow width, selected or not
     with list_col:
         if tools:
             df = pd.DataFrame([{"No.": t["number"], "Name": t["name"], "Type": t["tool_type"], "Diameter": t["diameter"], "Flutes": t["flutes"]} for t in tools])
