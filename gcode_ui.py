@@ -36,7 +36,7 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
             ("Spin (step 3)", f"{data['rpm']:g} rpm {data['direction']}"),
             ("Clearance level / safety distance (step 4)", f"{lv['clearance']:g} / {lv['safety']:g}"),
             ("Upper level / profile depth (step 4)", f"{lv['upper']:g} / {lv['depth']:g}")]
-    st.dataframe(pd.DataFrame(rows, columns=["Information", "Value"]), hide_index=True, width="stretch")
+    st.dataframe(pd.DataFrame(rows, columns=["Information", "Value"]), hide_index=True, width="content")
     with st.expander("What the steps do not say (assumed by this G-code)"):
         for a in gcode_cam.ASSUMPTIONS:
             st.markdown(f"- {a}")

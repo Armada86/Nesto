@@ -269,10 +269,11 @@ def step_geometry(db, pid, result):
         n_sheets = max(1, len(result or []))
         st.session_state.camming_sheet = min(max(1, int(_saved(db, pid).get("sheet", 1))), n_sheets)
         st.session_state.camming_loaded_pid = pid
-    c1, c2 = st.columns([1, 2])
-    c1.number_input("Material thickness", min_value=0.1, step=0.5, key="camming_thickness",
-                    help="Height of the stock: the top of the material is at Z = thickness.")
-    if c1.button("Save", key="camming_save_thickness"):
+    left, _ = st.columns([1, 2])                              # the thickness and the sheet above each other, wide enough for their text
+    left.number_input("Material thickness", min_value=0.1, step=0.5, key="camming_thickness",
+                      help="Height of the stock: the top of the material is at Z = thickness.")
+    sheet_slot = left.container()                             # the sheet selector is drawn here (it needs the run), between the thickness and Save
+    if left.button("Save", key="camming_save_thickness"):
         try:
             cam = db.get_cam(pid) or {}
             cam["camming"] = {**cam.get("camming", {}), "thickness": float(st.session_state.camming_thickness)}
@@ -293,7 +294,7 @@ def step_geometry(db, pid, result):
 
     if not 1 <= st.session_state.get("camming_sheet", 1) <= len(result):
         st.session_state.camming_sheet = 1
-    sheet_no = c2.selectbox("Sheet of this operation", list(range(1, len(result) + 1)), key="camming_sheet", on_change=_save_sheet,
+    sheet_no = sheet_slot.selectbox("Sheet of this operation", list(range(1, len(result) + 1)), key="camming_sheet", on_change=_save_sheet,
                             format_func=lambda i: f"Sheet {i}")
     sheet = result[sheet_no - 1]
     ch = chains(sheet)
@@ -376,7 +377,7 @@ def order_editor(db, pid, sheet_no: int, ch: list, saved_ids: list):
                         "Length": round(by_id[cid]["length"], 1), "Z": 0.0} for cid in work])
     hi = work.index(sel) if sel in work else -1
     styled = df.style.apply(lambda r: ["background-color: #fde68a; color: #1e293b; font-weight: 600"] * len(r) if r.name == hi else [""] * len(r), axis=1).format({"Length": "{:.1f}", "Z": "{:.0f}"})
-    st.dataframe(styled, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row", key=tkey)
+    st.dataframe(styled, hide_index=True, width="content", on_select="rerun", selection_mode="single-row", key=tkey)
     changed = list(work) != list(saved_ids)
     if changed:
         st.warning("The order has changed and is not saved yet: the plan view and the G-code still use the saved order.")
