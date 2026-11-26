@@ -40,12 +40,19 @@ def test_isometric_picture_shows_the_whole_sheet_for_any_proportion():
     from PIL import Image
     from camming_ui import isometric_raw_png, solids
     for w, h in ((6250, 1500), (3500, 1250), (1500, 1500), (2500, 600), (1200, 2400)):
-        sheet = {"width": float(w), "height": float(h), "placements": [pl("A", box(10, 10, w - 10, h - 10))]}
-        im = np.asarray(Image.open(io.BytesIO(isometric_raw_png(float(w), float(h), 18.0, solids(sheet)))).convert("RGB")).astype(int)
-        border = np.concatenate([im[0], im[-1], im[:, 0], im[:, -1]])
-        assert not (np.abs(border - 255).sum(axis=1) > 30).any(), (w, h)          # nothing is cut off at the frame
+        for k in (1.0, 12.0):
+            sheet = {"width": float(w), "height": float(h), "placements": [pl("A", box(10, 10, w - 10, h - 10))]}
+            im = np.asarray(Image.open(io.BytesIO(isometric_raw_png(float(w), float(h), 15.0, solids(sheet), k))).convert("RGB")).astype(int)
+            border = np.concatenate([im[0], im[-1], im[:, 0], im[:, -1]])
+            assert not (np.abs(border - 255).sum(axis=1) > 30).any(), (w, h, k)       # nothing, text included, is cut off at the frame
 
 
-def test_the_origin_is_the_nearest_corner_and_x_runs_to_the_right():
-    from camming_ui import height_scale
-    assert height_scale(6250.0, 1500.0, 18.0) > 5 and height_scale(300.0, 200.0, 18.0) == 1.0     # thin sheets are drawn taller
+def test_the_picture_is_drawn_to_scale_unless_the_height_is_stretched():
+    import io
+    from PIL import Image
+    from camming_ui import isometric_png, solids
+    sheet = {"width": 3000.0, "height": 1000.0, "placements": [pl("A", box(10, 10, 2990, 990))]}
+    flat = Image.open(io.BytesIO(isometric_png(3000.0, 1000.0, 15.0, solids(sheet), 1.0)))
+    tall = Image.open(io.BytesIO(isometric_png(3000.0, 1000.0, 15.0, solids(sheet), 30.0)))
+    assert tall.size[1] > flat.size[1] or tall.size != flat.size                 # stretching the height changes the picture
+    assert isometric_png(3000.0, 1000.0, 15.0, solids(sheet), 1.0) == isometric_png(3000.0, 1000.0, 15.0, solids(sheet), 1.0)
