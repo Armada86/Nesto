@@ -306,28 +306,6 @@ if not proj:
 
 st.markdown(branding.header_html(proj["name"]), unsafe_allow_html=True)
 
-with st.sidebar:
-    st.divider()
-    st.caption("Sheet and nesting settings are saved with the project automatically.")
-    st.subheader("Sheet")
-    sheet_w = st.number_input("Length", min_value=1.0, step=10.0, key="sheet_w", on_change=autosave_settings,
-                              help="Sheet length: the horizontal side in the drawings.")
-    sheet_h = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_h", on_change=autosave_settings,
-                              help="Sheet width: the vertical side in the drawings.")
-    margin = st.number_input("Edge margin", min_value=0.0, step=1.0, key="margin", on_change=autosave_settings)
-    spacing = st.number_input("Part spacing (kerf)", min_value=0.0, step=0.5, key="spacing", on_change=autosave_settings)
-
-    st.subheader("Nesting")
-    rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), key="rot_label", on_change=autosave_settings,
-                                 help="Finer steps pack irregular shapes better but take longer. Steps below 15° first search with 15° and then fine-tune "
-                                      "the best layout with the finer angles around the angles it uses (this adds some time).")
-    prec_label = st.select_slider("Precision (irregular shapes)", list(PRECISION), key="prec_label", on_change=autosave_settings,
-                                  help="Finer = tighter packing, slower.")
-    effort_label = st.select_slider("Search effort (irregular shapes)", list(EFFORT), key="effort_label",
-                                    on_change=autosave_settings,
-                                    help="Quick = one pass. Normal / Thorough keep trying many different layouts "
-                                         "(pairing, placement rules, random restarts) for 15 / 60 seconds and keep the best.")
-
 # ---------- parts ----------
 if st.session_state.get("loaded_pid") != pid:
     st.session_state.parts = db.load_parts(pid)
@@ -384,6 +362,30 @@ with tab_table:
                             "rotate": bool(r["rotate"]),
                             "flip": bool(r["flip"]) if pd.notna(r["flip"]) else True,   # old rows / new rows: on
                             "outline": outlines.get(nm)})
+
+    # the sheet and the nesting options belong to the run: they sit in the Nesting tab, above the Nest button
+    with st.container(border=True):
+        st.caption("Sheet and nesting settings are saved with the project automatically.")
+        col_sheet, col_nest = st.columns(2)
+        with col_sheet:
+            st.subheader("Sheet")
+            sheet_w = st.number_input("Length", min_value=1.0, step=10.0, key="sheet_w", on_change=autosave_settings,
+                                      help="Sheet length: the horizontal side in the drawings.")
+            sheet_h = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_h", on_change=autosave_settings,
+                                      help="Sheet width: the vertical side in the drawings.")
+            margin = st.number_input("Edge margin", min_value=0.0, step=1.0, key="margin", on_change=autosave_settings)
+            spacing = st.number_input("Part spacing (kerf)", min_value=0.0, step=0.5, key="spacing", on_change=autosave_settings)
+        with col_nest:
+            st.subheader("Nesting")
+            rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), key="rot_label", on_change=autosave_settings,
+                                         help="Finer steps pack irregular shapes better but take longer. Steps below 15° first search with 15° and then fine-tune "
+                                              "the best layout with the finer angles around the angles it uses (this adds some time).")
+            prec_label = st.select_slider("Precision (irregular shapes)", list(PRECISION), key="prec_label", on_change=autosave_settings,
+                                          help="Finer = tighter packing, slower.")
+            effort_label = st.select_slider("Search effort (irregular shapes)", list(EFFORT), key="effort_label",
+                                            on_change=autosave_settings,
+                                            help="Quick = one pass. Normal / Thorough keep trying many different layouts "
+                                                 "(pairing, placement rules, random restarts) for 15 / 60 seconds and keep the best.")
 
 with tab_dxf:
     st.caption("**DXF**: any closed outline made of LINE / ARC / CIRCLE / POLYLINE / SPLINE / ELLIPSE entities; "
