@@ -179,12 +179,19 @@ def test_nestocam_tab_sees_a_run_that_is_loaded_in_the_same_script_run(fake_db):
     assert not at.exception
     assert not any("Nest first" in i.value for i in at.info)
     assert any("No operations in this run yet" in i.value for i in at.info)    # the run is loaded: its (empty) operation list
+    assert "ops_new_name" not in [t.key for t in at.text_input]                # no name box until Create operation is pressed
+    next(b for b in at.button if b.key == "ops_new").click().run()             # Create operation opens the name box
     at.text_input(key="ops_new_name").set_value("sheet_01_Milling")            # create an operation: it opens with its five steps
     next(b for b in at.button if b.key == "ops_create").click().run()
+    assert next(b for b in at.button if b.key == "ops_new").disabled           # an operation is open: close it before creating another
+    assert "ops_new_name" not in [t.key for t in at.text_input]                # and the name box is gone
     assert not at.exception
     assert [t.label for t in at.tabs][-5:] == ["1 · Geometry", "2 · Tools", "3 · Data", "4 · Levels", "5 · Generate G-code"]
     assert any(m.label == "Outlines" and m.value == "1" for m in at.metric)    # the geometry of the sheet of the operation
     assert [o["name"] for o in fake_db.list_operations(7)] == ["sheet_01_Milling"]
+    next(b for b in at.button if b.key == "ops_close").click().run()
+    assert not next(b for b in at.button if b.key == "ops_new").disabled
+    next(b for b in at.button if b.key == "ops_new").click().run()
     at.text_input(key="ops_new_name").set_value("SHEET_01_milling")            # the same name (any capitals) twice in a run: refused
     next(b for b in at.button if b.key == "ops_create").click().run()
     assert any("exists" in e.value for e in at.error) and len(fake_db.list_operations(7)) == 1
