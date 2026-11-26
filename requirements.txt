@@ -9,3 +9,4 @@ ezdxf
 cadquery-ocp
 psycopg[binary]>=3.2
 pytest
+tzdata
