@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 PURPLE = "#dc2626"   # the colour of the geometry (bottom contour): red, it becomes the toolpath
-PICTURE_VERSION = 8  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
+PICTURE_VERSION = 9  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
                      # older picture of the same sheet would still be shown after an update
 ZOOM = 1.0
 FONT_PT = 4.5   # size of the dimension numbers          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
@@ -114,24 +114,24 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
     z = thickness * k                                        # the drawn height of the slab
     off = 0.07 * big                                         # how far outside the sheet the dimension lines run
     arm = 0.05 * big                                         # length of the coordinate system arrows (small and thin)
-    fig = plt.figure(figsize=(11, 5.5), dpi=480)
+    fig = plt.figure(figsize=(11, 5.5), dpi=720)
     ax = fig.add_subplot(111, projection="3d")
     slab = [[(0, 0, 0), (width, 0, 0), (width, 0, z), (0, 0, z)], [(width, 0, 0), (width, height, 0), (width, height, z), (width, 0, z)],
             [(0, 0, z), (width, 0, z), (width, height, z), (0, height, z)]]
     ax.add_collection3d(art3d.Poly3DCollection(slab, facecolor="#cbd5e1", edgecolor="none", alpha=0.35))   # the stock, light grey
     for zz in (0, z):
-        ax.plot([0, width, width, 0, 0], [0, 0, height, height, 0], [zz] * 5, color="#475569", lw=0.7)
+        ax.plot([0, width, width, 0, 0], [0, 0, height, height, 0], [zz] * 5, color="#475569", lw=0.4)
     for x, y in ((0, 0), (width, 0), (width, height), (0, height)):
-        ax.plot([x, x], [y, y], [0, z], color="#475569", lw=0.7)
+        ax.plot([x, x], [y, y], [0, z], color="#475569", lw=0.4)
     for ext, holes in parts:
         for ring in (ext, *holes):                           # transparent part: dotted top outline and dotted vertical edges
             xs, ys = zip(*ring)
-            ax.plot(xs, ys, [z] * len(xs), color="#7c3aed", lw=0.8, ls=(0, (2, 3)))
+            ax.plot(xs, ys, [z] * len(xs), color="#7c3aed", lw=0.4, ls=(0, (2, 4)))
             for x, y in ring[:-1]:
-                ax.plot([x, x], [y, y], [0, z], color="#7c3aed", lw=0.7, ls=(0, (2, 3)))
+                ax.plot([x, x], [y, y], [0, z], color="#7c3aed", lw=0.35, ls=(0, (2, 4)))
         for ring in (ext, *holes):                           # the geometry: the bottom contour
             xs, ys = zip(*ring)
-            ax.plot(xs, ys, [0] * len(xs), color=PURPLE, lw=0.9)
+            ax.plot(xs, ys, [0] * len(xs), color=PURPLE, lw=0.45)
 
     texts = []                                                # dimension texts, placed after the view is set so they follow the arrow
 
@@ -158,7 +158,7 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
     for vec, col, lab, lpos in (((arm, 0, 0), "#dc2626", "X", (arm * 1.35, -arm * 0.7, 0)),
                                 ((0, arm, 0), "#16a34a", "Y", (-arm * 0.7, arm * 1.35, 0)),
                                 ((0, 0, arm), "#2563eb", "Z", (-arm * 0.6, -arm * 0.6, arm * 0.9))):
-        ax.quiver(0, 0, 0, *vec, color=col, linewidth=1.1, arrow_length_ratio=0.22, normalize=False)
+        ax.quiver(0, 0, 0, *vec, color=col, linewidth=0.8, arrow_length_ratio=0.22, normalize=False)
         if lab != "Z":
             ax.text(*lpos, lab, color=col, fontsize=6, fontweight="normal", ha="center", va="center")
 
@@ -169,6 +169,7 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
     ax.set_ylim(yr0, yr1)
     ax.set_zlim(0, zr)
     ax.set_box_aspect((xr1 - xr0, yr1 - yr0, zr), zoom=ZOOM)          # equal scale on all three axes: nothing is stretched
+    ax.set_proj_type("ortho")                                  # a true isometric view: no perspective
     ax.view_init(elev=30, azim=-135)
     ax.set_axis_off()
     import math
@@ -183,14 +184,14 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
         ang = math.degrees(math.atan2(y2 - y1, x2 - x1))
         ang = ang + 180 if ang > 90 else ang - 180 if ang < -90 else ang
         mx, my = (x1 + x2) / 2, (y1 + y2) / 2
-        tpx = len(text) * 0.62 * FONT_PT * fig.dpi / 72 * 1.0      # room for the number in the middle of the arrow
+        tpx = len(text) * 0.62 * FONT_PT * fig.dpi / 72 * 1.3      # room for the number in the middle of the arrow
         f = min(0.9, tpx / (math.hypot(x2 - x1, y2 - y1) or 1.0)) if text else 0.0
         dx, dy, dz = (q[0] - p[0], q[1] - p[1], q[2] - p[2])
         mid = tuple((a_ + b_) / 2 for a_, b_ in zip(p, q))
         for sign in (1, -1):                                       # two arrows from the gap to the ends, heads at the ends
             start = tuple(m + sign * f / 2 * d for m, d in zip(mid, (dx, dy, dz)))
             vec = tuple(sign * (1 - f) / 2 * d for d in (dx, dy, dz))
-            ax.quiver(*start, *vec, color="#334155", linewidth=0.8, arrow_length_ratio=min(0.5, 0.02 * big / ((dx * dx + dy * dy + dz * dz) ** 0.5 * (1 - f) / 2 or 1)),
+            ax.quiver(*start, *vec, color="#334155", linewidth=0.5, arrow_length_ratio=min(0.5, 0.02 * big / ((dx * dx + dy * dy + dz * dz) ** 0.5 * (1 - f) / 2 or 1)),
                       normalize=False)
         if text:
             fig.text(mx / fig.bbox.width, my / fig.bbox.height, text, fontsize=FONT_PT, color="#0f172a", rotation=ang,
@@ -204,7 +205,7 @@ def plan_png(width: float, height: float, chain_pts: tuple, kinds: tuple, versio
     ax.add_patch(plt.Rectangle((0, 0), width, height, fill=False, lw=1.2, color="black"))
     for pts, kind in zip(chain_pts, kinds):
         xs, ys = zip(*pts)
-        ax.plot(xs, ys, color=PURPLE, lw=1.0, ls="-" if kind == "Outline" else "--")
+        ax.plot(xs, ys, color=PURPLE, lw=0.7, ls="-" if kind == "Outline" else "--")
     ax.plot([0], [0], "o", color="black", ms=4)
     ax.set_aspect("equal")
     ax.set_xlim(-0.02 * width, width * 1.02)
