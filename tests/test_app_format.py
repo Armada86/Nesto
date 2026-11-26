@@ -188,7 +188,7 @@ def test_nestocam_tab_sees_a_run_that_is_loaded_in_the_same_script_run(fake_db):
     assert not at.exception
     assert [t.label for t in at.tabs][-5:] == ["1 · Geometry", "2 · Tools", "3 · Data", "4 · Levels", "5 · Generate G-code"]
     assert any(m.label == "Outlines" and m.value == "1" for m in at.metric)    # the geometry of the sheet of the operation
-    assert any(s.value == "Run number 7" for s in at.subheader)                # the loaded run's number above the run numbers
+    assert any(s.value == "Run 7" for s in at.subheader)                # the loaded run's number above the run numbers
     assert [o["name"] for o in fake_db.list_operations(7)] == ["sheet_01_Milling"]
     next(b for b in at.button if b.key == "ops_close").click().run()
     assert not next(b for b in at.button if b.key == "ops_new").disabled

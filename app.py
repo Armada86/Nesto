@@ -867,7 +867,7 @@ with tab_table:
 
         # 1. headline numbers, including how long the nest took
         _rid_shown = st.session_state.get("run_id")                      # the run that is on the screen (loaded or just nested)
-        st.subheader(f"Run number {_rid_shown}" if _rid_shown else "Run (not saved)")
+        st.subheader(f"Run {_rid_shown}" if _rid_shown else "Run (not saved)")
         with st.container(key="metrics_row"):
             m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("Sheets", s["sheets"])
