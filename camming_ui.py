@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 PURPLE = "#dc2626"   # the colour of the geometry (bottom contour): red, it becomes the toolpath
-PICTURE_VERSION = 10  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
+PICTURE_VERSION = 11  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
                      # older picture of the same sheet would still be shown after an update
 ZOOM = 1.0
 FONT_PT = 4.5   # size of the dimension numbers          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
@@ -39,14 +39,15 @@ def chains(sheet: dict) -> list[dict]:
             key = (round(b[0], 3), round(b[1], 3))
             lp = poly.representative_point()
             out.append({"part": p["part"], "type": "Outline", "pts": [tuple(c) for c in poly.exterior.coords],
-                        "length": poly.exterior.length, "key": key, "id": cam.contour_id("outer", key), "label_pt": (lp.x, lp.y)})
+                        "length": poly.exterior.length, "key": key, "id": cam.contour_id("outer", key), "label_pt": (lp.x, lp.y),
+                        "holes": [tuple(h.coords) for h in poly.interiors]})
             for h in poly.interiors:
                 hp = Polygon(h)
                 hb = hp.bounds
                 hkey = (round(hb[0], 3), round(hb[1], 3))
                 hl = hp.representative_point()
                 out.append({"part": p["part"], "type": "Hole", "pts": [tuple(c) for c in h.coords], "length": h.length, "key": hkey,
-                            "id": cam.contour_id("inner", hkey), "label_pt": (hl.x, hl.y)})
+                            "id": cam.contour_id("inner", hkey), "label_pt": (hl.x, hl.y), "holes": []})
     return out
 
 
@@ -239,17 +240,20 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
 
 @st.cache_data(max_entries=12, show_spinner=False)
 def plan_png(width: float, height: float, chain_pts: tuple, kinds: tuple, labels: tuple = (), version: int = PICTURE_VERSION) -> bytes:
+    """The plan view of a sheet. labels: ((text, outline ring, (hole rings...)), ...): the cutting numbers and part names, written by the
+    same rules as the names on the nesting page (inside the part when they fit, else outside the sheet with a leader line)."""
+    from shapely.geometry import Polygon
+
+    from render import place_names
+
     fig, ax = plt.subplots(figsize=(8, 8 * height / width if width else 5), dpi=200)
     ax.add_patch(plt.Rectangle((0, 0), width, height, fill=False, lw=1.2, color="black"))
     for pts, kind in zip(chain_pts, kinds):
         xs, ys = zip(*pts)
         ax.plot(xs, ys, color=PURPLE, lw=0.7, ls="-" if kind == "Outline" else "--")
-    for x, y, text, size in labels:                       # the cutting order and the part names
-        ax.text(x, y, text, fontsize=size, ha="center", va="center", color="#1e293b", clip_on=True)
     ax.plot([0], [0], "o", color="black", ms=4)
     ax.set_aspect("equal")
-    ax.set_xlim(-0.02 * width, width * 1.02)
-    ax.set_ylim(-0.02 * height, height * 1.02)
+    place_names(fig, ax, width, height, [(text, Polygon(ext, holes)) for text, ext, holes in labels])
     return _png(fig)
 
 
@@ -329,8 +333,8 @@ def step_geometry(db, pid, result):
              caption="The whole sheet seen from the origin corner (lower left corner in plan view), drawn to scale: X to the right, "
                      "Y to the back, Z up. Every part is drawn transparent with dotted edges and its height; its bottom contour (the geometry) is red.")
     pts = tuple(tuple(c["pts"]) for c in ch)
-    labels = tuple((c["label_pt"][0], c["label_pt"][1], f"{rank[c['id']]}  {c['part']}" if c["type"] == "Outline" else str(rank[c["id"]]),
-                    5 if c["type"] == "Outline" else 4) for c in ch)
+    labels = tuple((f"{rank[c['id']]}  {c['part']}" if c["type"] == "Outline" else str(rank[c["id"]]), tuple(c["pts"]),
+                    tuple(tuple(h) for h in c["holes"])) for c in ch)
     st.image(plan_png(float(sheet["width"]), float(sheet["height"]), pts, tuple(c["type"] for c in ch), labels, PICTURE_VERSION),
              caption="Plan view: outlines solid, holes dashed; every contour has its saved cutting number (and the part name). "
                      "The black dot is the origin. Change the order in the table below; Save at the bottom of the page stores it.")
