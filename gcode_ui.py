@@ -77,7 +77,7 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
     st.pyplot(fig)
     plt.close(fig)
 
-    name = f"{file_stem(operation)}.{ext}"
+    name = f"{file_stem(project)}-Run{run_id}-Sheet{sheet_no}-{file_stem(operation)}.{ext}"      # project - run - sheet - operation
     gtext = gcode_cam.text(name, sheet, sheet_no, tool, data, lv, thk, project, run_id, margin, spacing, operation, order_ids)
     shown = gtext.replace("\r\n", "\n")                       # the file has CR LF line ends; the page shows normal lines
     with st.expander(f"G-code of {name} ({len(shown.splitlines()):,} lines)", expanded=False):      # hidden until it is opened
