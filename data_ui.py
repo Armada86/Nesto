@@ -58,22 +58,19 @@ def step_data(db, pid):
     msg = ss.pop("data_msg", None)
     if msg:
         st.toast(msg, icon=":material/check_circle:")
-    with st.form("data_form", border=False):                # nothing is sent until Save data: typing never reruns the page
-        st.markdown("**Feed**")
-        a, b = st.columns(2)
-        a.number_input("Feed XY [mm/min]", min_value=0.0, step=50.0, format="%.0f", key=PREFIX + "feed_xy",
-                       help="Cutting feed rate in the XY plane.")
-        b.number_input("Feed Z [mm/min]", min_value=0.0, step=10.0, format="%.0f", key=PREFIX + "feed_z",
-                       help="Feed rate of the plunge in Z.")
-        a.number_input("Feed lead in [%]", min_value=0.0, step=5.0, format="%.0f", key=PREFIX + "lead_in",
-                       help="Feed on the lead in move, as a percentage of the feed XY.")
-        b.number_input("Feed lead out [%]", min_value=0.0, step=5.0, format="%.0f", key=PREFIX + "lead_out",
-                       help="Feed on the lead out move, as a percentage of the feed XY.")
-        st.markdown("**Spin**")
-        a, b = st.columns(2)
-        a.number_input("Spin rate [rpm]", min_value=0.0, max_value=MAX_RPM, step=100.0, format="%.0f", key=PREFIX + "rpm",
-                       help=f"Spindle speed. The spindle of the machine goes up to {MAX_RPM:g} rpm.")
-        b.radio("Spin direction", ["CW", "CCW"], horizontal=True, key=PREFIX + "direction")
+    col, _ = st.columns([1, 3])                              # one narrow list on the left
+    with col, st.form("data_form", border=False):           # nothing is sent until Save data: typing never reruns the page
+        st.number_input("Feed XY [mm/min]", min_value=0.0, step=50.0, format="%.0f", key=PREFIX + "feed_xy",
+                        help="Cutting feed rate in the XY plane.")
+        st.number_input("Feed Z [mm/min]", min_value=0.0, step=10.0, format="%.0f", key=PREFIX + "feed_z",
+                        help="Feed rate of the plunge in Z.")
+        st.number_input("Feed lead in [%]", min_value=0.0, step=5.0, format="%.0f", key=PREFIX + "lead_in",
+                        help="Feed on the lead in move, as a percentage of the feed XY.")
+        st.number_input("Feed lead out [%]", min_value=0.0, step=5.0, format="%.0f", key=PREFIX + "lead_out",
+                        help="Feed on the lead out move, as a percentage of the feed XY.")
+        st.number_input("Spin rate [rpm]", min_value=0.0, max_value=MAX_RPM, step=100.0, format="%.0f", key=PREFIX + "rpm",
+                        help=f"Spindle speed. The spindle of the machine goes up to {MAX_RPM:g} rpm.")
+        st.radio("Spin direction", ["CW", "CCW"], horizontal=True, key=PREFIX + "direction")
         for p in ss.get("data_problems", []):
             st.error(p)
         st.form_submit_button("Save data", type="primary", on_click=_save, key="data_save")
