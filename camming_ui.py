@@ -20,7 +20,7 @@ PICTURE_VERSION = 9  # raise it whenever the drawing code changes: the pictures 
                      # older picture of the same sheet would still be shown after an update
 ZOOM = 1.0
 FONT_PT = 4.5   # size of the dimension numbers          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
-STEPS = [("geometry", "1 · Geometry"), ("tools", "2 · Tools")]       # the next steps are added here, one by one
+STEPS = [("geometry", "1 · Geometry"), ("tools", "2 · Tools"), ("data", "3 · Data")]       # the next steps are added here, one by one
 
 
 def chains(sheet: dict) -> list[dict]:
@@ -261,9 +261,12 @@ def step_geometry(db, pid, result):
 
 
 def camming_tab(db, pid, result):
+    from data_ui import step_data
     from tools_ui import step_tools
-    t_geo, t_tools = st.tabs([label for _k, label in STEPS])
+    t_geo, t_tools, t_data = st.tabs([label for _k, label in STEPS])
     with t_geo:
         step_geometry(db, pid, result)
     with t_tools:
         step_tools(db, pid)
+    with t_data:
+        step_data(db, pid)

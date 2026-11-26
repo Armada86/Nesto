@@ -130,3 +130,31 @@ def test_tools_tab_list_new_save_choose_and_delete():
         assert tools_ui.chosen_tool(sys.modules["db"], 1) is None
     finally:
         sys.modules.pop("db", None)
+
+
+def test_data_validation_and_defaults():
+    import data_ui as du
+    ok = dict(du.DEFAULTS)
+    assert du.validate(ok) == []
+    assert du.validate({**ok, "feed_xy": 0}) and du.validate({**ok, "rpm": 20000}) and du.validate({**ok, "direction": "x"})
+
+
+def test_data_tab_saves_with_the_project_and_reads_back():
+    import sys
+    saved, cam = [], {}
+    try:
+        at = _tools_app(saved, cam).run()
+        assert [t.label for t in at.tabs][:3] == ["1 · Geometry", "2 · Tools", "3 · Data"]
+        at.number_input(key="dt_feed_xy").set_value(1800.0)
+        at.radio(key="dt_direction").set_value("CCW")
+        next(b for b in at.button if b.key == "data_save").click().run()
+        assert not at.exception
+        d = cam["v"]["camming"]["data"]
+        assert d["feed_xy"] == 1800.0 and d["direction"] == "CCW" and d["rpm"] == 10000.0 and d["lead_in"] == 100.0
+        import data_ui
+        assert data_ui.get_data(sys.modules["db"], 1)["feed_xy"] == 1800.0
+        at.number_input(key="dt_rpm").set_value(15000.0)
+        next(b for b in at.button if b.key == "data_save").click().run()          # a good value, saved
+        assert cam["v"]["camming"]["data"]["rpm"] == 15000.0
+    finally:
+        sys.modules.pop("db", None)
