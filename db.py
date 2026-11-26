@@ -225,7 +225,7 @@ def save_tools(tools: list[dict]):
 
 
 TOOL_FIELDS = ("number", "tool_type", "name", "diameter", "shoulder_diameter", "arbor_diameter", "shoulder_angle", "cutting_length",
-               "shoulder_length", "total_length", "chamfer", "outside_holder", "helical_angle", "rough", "flutes")
+               "shoulder_length", "total_length", "chamfer", "outside_holder", "helical_angle", "flutes")
 
 
 def list_cam_tools():

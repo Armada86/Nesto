@@ -23,7 +23,7 @@ PREFIX = "tl_"
 
 def blank(number: int = 1) -> dict:
     return {"number": number, "tool_type": TOOL_TYPES[0], "name": "", **{k: d for k, _l, _h, d in DIMS}, "helical_angle": 30.0,
-            "rough": False, "flutes": 2}
+            "flutes": 2}
 
 
 def validate(t: dict, others: set) -> list[str]:
@@ -71,7 +71,7 @@ GUIDE_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 430" fon
 
 
 def _row_to_tool(r) -> dict:
-    t = {k: r[k] for k in ("number", "tool_type", "name", "rough", "flutes")}
+    t = {k: r[k] for k in ("number", "tool_type", "name", "flutes")}
     for k, _l, _h, _d in DIMS:
         t[k] = float(r[k])
     t["helical_angle"] = float(r["helical_angle"])
@@ -84,7 +84,7 @@ def _load_form(t: dict):
 
 
 def _form_tool() -> dict:
-    t = {k: st.session_state[PREFIX + k] for k in ("number", "tool_type", "name", "rough", "flutes", "helical_angle")}
+    t = {k: st.session_state[PREFIX + k] for k in ("number", "tool_type", "name", "flutes", "helical_angle")}
     for k, _l, _h, _d in DIMS:
         t[k] = float(st.session_state[PREFIX + k])
     return t
@@ -126,6 +126,8 @@ def step_tools(db, pid):
 
     def _open(n):
         ss.tools_sel = n
+        ss.tools_edit = n not in by_no                          # an existing tool is read-only until Edit is pressed
+        ss.tools_problems = []
         _load_form(by_no[n] if n in by_no else blank(max(by_no, default=0) + 1))
 
     def _reset_list():
@@ -151,6 +153,7 @@ def step_tools(db, pid):
         if old is not None and used == old and int(t["number"]) != old:      # the chosen tool was renumbered: keep it chosen
             _use(int(t["number"]))
         ss.tools_problems = []
+        ss.tools_edit = False
         ss.tools_sel = int(t["number"])
         ss.tools_msg = f"Tool T{int(t['number'])} saved."
         _reset_list()
@@ -167,6 +170,17 @@ def step_tools(db, pid):
         ss.tools_msg = f"Tool T{n} deleted."
         ss.tools_sel = None
         _reset_list()
+
+    def _edit():
+        ss.tools_edit = True
+
+    def _cancel():                                            # drop the changes: back to the saved values
+        ss.tools_problems = []
+        if ss.tools_sel in by_no:
+            _load_form(by_no[ss.tools_sel])
+            ss.tools_edit = False
+        else:
+            ss.tools_sel = None
 
     def _use(n):
         try:
@@ -220,24 +234,30 @@ def step_tools(db, pid):
         return
     old = ss.tools_sel or None
     with detail_col:
-        st.subheader("New tool" if old is None else f"Tool T{old}")
+        h1, h2 = st.columns([3, 2])
+        h1.subheader("New tool" if old is None else f"Tool T{old}")
+        editing = bool(ss.get("tools_edit"))
+        if old is not None and not editing:
+            h2.button("✏️ Edit", on_click=_edit, key="tools_edit_btn")
+        elif editing:
+            h2.button("Cancel", on_click=_cancel, key="tools_cancel")
+        lock = not editing
         left, right = st.columns([3, 2])
         with left:
             with st.form("tools_form", border=False):            # nothing is sent until Save tool: typing never reruns the page
                 a, b = st.columns(2)
-                a.number_input("Catalog number (T)", min_value=1, step=1, key=PREFIX + "number", help="The tool number used in the G-code (T and H).")
-                b.text_input("Name (optional)", key=PREFIX + "name")
-                a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type")
-                b.number_input("Number of flutes", min_value=1, step=1, key=PREFIX + "flutes")
+                a.number_input("Catalog number (T)", min_value=1, step=1, key=PREFIX + "number", help="The tool number used in the G-code (T and H).", disabled=lock)
+                b.text_input("Name (optional)", key=PREFIX + "name", disabled=lock)
+                a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type", disabled=lock)
+                b.number_input("Number of flutes", min_value=1, step=1, key=PREFIX + "flutes", disabled=lock)
                 st.markdown("**Tool parameters** (mm and degrees)")
                 c1, c2 = st.columns(2)
                 for i, (k, lab, hlp, _d) in enumerate(DIMS):
                     (c1 if i % 2 == 0 else c2).number_input(lab + (" [°]" if k in ANGLES else " [mm]"), min_value=0.0, step=0.5, format="%.3f",
-                                                            key=PREFIX + k, help=hlp)
+                                                            key=PREFIX + k, help=hlp, disabled=lock)
                 c1.number_input("Helical angle [°]", min_value=0.0, max_value=89.0, step=1.0, format="%.1f", key=PREFIX + "helical_angle",
-                                help="30 is the standard helix.")
-                c2.checkbox("Rough", key=PREFIX + "rough", help="A roughing tool (serrated flutes).")
-                st.form_submit_button("Save tool", type="primary", on_click=_save, key="tools_save")
+                                help="30 is the standard helix.", disabled=lock)
+                st.form_submit_button("Save tool", type="primary", on_click=_save, key="tools_save", disabled=lock)
             for p in ss.get("tools_problems", []):
                 st.error(p)
             if old is not None:
