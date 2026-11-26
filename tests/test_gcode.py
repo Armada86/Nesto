@@ -137,7 +137,7 @@ def test_generate_tab_shows_the_gcode_of_the_operation_and_names_the_file_after_
         assert [t.label for t in at.tabs][4] == "5 · Generate G-code"
         code = "\n".join(c.value for c in at.code)
         assert "M6 T1" in code and "G0 G43 H1 Z45." in code and "S10000 M3" in code
-        assert "<sheet_01_Milling.anc>" in code and "(sheet_01 Milling" in code
+        assert "<proj-Run3-Sheet1-sheet_01_Milling.anc>" in code and "(sheet_01 Milling" in code      # the file: project - run - sheet - operation
         assert code.rstrip().endswith("%") and "\n..." not in code and "\r" not in code           # the whole program, not a part of it
         assert not next(e for e in at.expander if e.label.startswith("G-code of")).proto.expanded   # hidden until it is opened      # the file name is the operation name
         assert not at.error
