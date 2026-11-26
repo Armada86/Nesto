@@ -197,14 +197,16 @@ def test_geometry_step_lists_the_contours_in_order_and_moves_them():
         import camming_ui as cu
         ch = cu.chains(sheet())
         d = cu.default_order(ch)
-        pick = lambda: at.selectbox(key=f"geo_move_id_{at.session_state['geo_move_ver']}")      # noqa: E731
-        assert pick().value == d[0]
+        assert all(b.disabled for b in at.button if b.key.startswith("geo_move_"))               # no row selected yet: nothing to move
+        at.session_state["geo_move_sel"] = d[0]                                                   # (a click on a row of the table)
+        at.run()
+        assert not any(b.disabled for b in at.button if b.key.startswith("geo_move_"))
         save = lambda: next(b for b in at.button if b.key == "geo_order_save")                 # noqa: E731
         assert save().disabled                                                                  # nothing to save yet
         next(b for b in at.button if b.key == "geo_move_last").click().run()               # the hole goes last ...
         assert "order" not in settings and not save().disabled                                 # ... on the working copy: nothing saved yet
-        assert pick().value == d[0] and pick().label == "Contour to move"                      # it stays selected
-        assert "· A (hole)" in pick().options[d.index(d[0])] and pick().options[0].startswith(f"{len(d)} ·")   # its label shows the new number
+        assert at.session_state["geo_move_sel"] == d[0]                                           # it stays selected (and highlighted)
+        assert any(f"{len(d)} · A (hole)" in m.value for m in at.markdown) or any(f"{len(d)} · A (hole)" in c.value for c in at.caption)
         assert any("not saved yet" in w.value for w in at.warning)
         next(b for b in at.button if b.key == "geo_move_up").click().run()
         assert "order" not in settings

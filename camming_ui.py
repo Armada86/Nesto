@@ -332,13 +332,17 @@ def order_editor(db, pid, sheet_no: int, ch: list, saved_ids: list):
         ss.geo_move_ver = ss.get("geo_move_ver", 0) + 1
     work = ss.geo_work
     rank = {cid: i for i, cid in enumerate(work, 1)}
-    stable = default_order(ch)                           # the options keep their places when the order changes (only their numbers change)
-    if ss.get("geo_move_sel") not in stable:
-        ss.geo_move_sel = stable[0] if stable else None
-    ver = ss.setdefault("geo_move_ver", 0)               # a new widget key after every change: the numbers in the labels are redrawn
-
-    def _picked():
-        ss.geo_move_sel = ss[f"geo_move_id_{ss.geo_move_ver}"]
+    ver = ss.setdefault("geo_move_ver", 0)               # a new table key after every change: the table is redrawn with the row highlighted
+    tkey = f"geo_tbl_{ver}"
+    state = ss.get(tkey)                                 # a click on a row of the table selects that contour
+    rows = tuple(state["selection"]["rows"]) if state else ()
+    if rows != ss.get("geo_tbl_prev", ()):
+        ss.geo_tbl_prev = rows
+        if rows and rows[0] < len(work):
+            ss.geo_move_sel = work[rows[0]]
+    if ss.get("geo_move_sel") not in work:
+        ss.geo_move_sel = None
+    sel = ss.geo_move_sel
 
     def _move(kind):
         cid = ss.get("geo_move_sel")
@@ -351,22 +355,28 @@ def order_editor(db, pid, sheet_no: int, ch: list, saved_ids: list):
         new.insert(j, cid)
         ss.geo_work = new
         ss.geo_move_ver += 1
+        ss.geo_tbl_prev = ()
 
     def _reset(to):
         ss.geo_work = list(to)
         ss.geo_move_ver += 1
+        ss.geo_tbl_prev = ()
 
     st.markdown("**Cutting order of the contours**")
-    m1, m2 = st.columns([2, 3])
-    m1.selectbox("Contour to move", stable, index=stable.index(ss.geo_move_sel) if stable else None, key=f"geo_move_id_{ver}",
-                 on_change=_picked, format_func=lambda cid: f"{rank[cid]} · {by_id[cid]['part']} ({by_id[cid]['type'].lower()})")
-    b1, b2, b3, b4, b5 = m2.columns(5)
+    if sel is None:
+        st.caption("Click a row in the table to select a contour, then move it with the buttons.")
+    else:
+        st.caption(f"Selected: **{rank[sel]} · {by_id[sel]['part']} ({by_id[sel]['type'].lower()})**, highlighted in the table.")
+    b1, b2, b3, b4, b5 = st.columns(5)
     for col, kind, label in ((b1, "up", "▲ Up"), (b2, "down", "▼ Down"), (b3, "first", "⤒ First"), (b4, "last", "⤓ Last")):
-        col.button(label, on_click=_move, args=(kind,), key=f"geo_move_{kind}", width="stretch")
+        col.button(label, on_click=_move, args=(kind,), key=f"geo_move_{kind}", width="stretch", disabled=sel is None)
     b5.button("Default order", on_click=_reset, args=(default_order(ch),), key="geo_order_reset", width="stretch",
               help="The holes first, then the outlines, each from the lower left corner of the part, left to right.")
-    st.dataframe(pd.DataFrame([{"No.": rank[cid], "Part": by_id[cid]["part"], "Type": by_id[cid]["type"],
-                                "Length": round(by_id[cid]["length"], 1), "Z": 0.0} for cid in work]), hide_index=True, width="stretch")
+    df = pd.DataFrame([{"No.": rank[cid], "Part": by_id[cid]["part"], "Type": by_id[cid]["type"],
+                        "Length": round(by_id[cid]["length"], 1), "Z": 0.0} for cid in work])
+    hi = work.index(sel) if sel in work else -1
+    styled = df.style.apply(lambda r: ["background-color: #fde68a; color: #1e293b; font-weight: 600"] * len(r) if r.name == hi else [""] * len(r), axis=1).format({"Length": "{:.1f}", "Z": "{:.0f}"})
+    st.dataframe(styled, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row", key=tkey)
     changed = list(work) != list(saved_ids)
     if changed:
         st.warning("The order has changed and is not saved yet: the plan view and the G-code still use the saved order.")
