@@ -272,30 +272,42 @@ def step_geometry(db, pid, result):
     left, _ = st.columns([1, 2])                              # the thickness and the sheet above each other, wide enough for their text
     left.number_input("Material thickness", min_value=0.1, step=0.5, key="camming_thickness",
                       help="Height of the stock: the top of the material is at Z = thickness.")
-    sheet_slot = left.container()                             # the sheet selector is drawn here (it needs the run), between the thickness and Save
-    if left.button("Save", key="camming_save_thickness", type="primary"):
+    sheet_slot = left.container()                             # the sheet selector is drawn here (it needs the run), under the thickness
+
+    def _save_all(sheet_no=None, ch=None):
+        """The one Save of this page: the thickness, the sheet and the cutting order (the working copy of the order editor)."""
+        ss_ = st.session_state
         try:
-            cam = db.get_cam(pid) or {}
-            cam["camming"] = {**cam.get("camming", {}), "thickness": float(st.session_state.camming_thickness)}
-            db.save_cam(pid, cam)
-            st.toast("Saved with the operation.", icon=":material/check_circle:")
+            cam_ = db.get_cam(pid) or {}
+            c_ = {**cam_.get("camming", {}), "thickness": float(ss_.camming_thickness)}
+            if sheet_no is not None:
+                c_["sheet"] = int(sheet_no)
+                base, work = ss_.get("geo_work_base"), ss_.get("geo_work")
+                if work is not None and base and base[0] == pid and base[1] == sheet_no:
+                    if list(work) == default_order(ch):           # the default order is not stored
+                        c_.pop("order", None)
+                        c_.pop("order_sheet", None)
+                    else:
+                        c_["order"], c_["order_sheet"] = list(work), int(sheet_no)
+            cam_["camming"] = c_
+            db.save_cam(pid, cam_)
+            ss_.camming_saved_msg = "Saved with the operation."
         except Exception as e:  # noqa: BLE001
-            st.error(f"Could not save: {e}")
+            ss_.camming_save_error = f"Could not save: {e}"
+
+    msg = st.session_state.pop("camming_saved_msg", None)
+    if msg:
+        st.toast(msg, icon=":material/check_circle:")
+    if st.session_state.get("camming_save_error"):
+        st.error(st.session_state.pop("camming_save_error"))
     if not result:
         st.info("Nest first: the geometry is taken from the sheets of the current run.")
+        st.button("Save", key="camming_save", type="primary", on_click=_save_all)
         return
-    def _save_sheet():
-        try:
-            cam = db.get_cam(pid) or {}
-            cam["camming"] = {**cam.get("camming", {}), "sheet": int(st.session_state.camming_sheet)}
-            db.save_cam(pid, cam)
-        except Exception as e:  # noqa: BLE001
-            st.session_state.camming_sheet_error = f"Could not save the sheet: {e}"
-
     if not 1 <= st.session_state.get("camming_sheet", 1) <= len(result):
         st.session_state.camming_sheet = 1
-    sheet_no = sheet_slot.selectbox("Sheet of this operation", list(range(1, len(result) + 1)), key="camming_sheet", on_change=_save_sheet,
-                            format_func=lambda i: f"Sheet {i}")
+    sheet_no = sheet_slot.selectbox("Sheet of this operation", list(range(1, len(result) + 1)), key="camming_sheet",
+                                    format_func=lambda i: f"Sheet {i}")
     sheet = result[sheet_no - 1]
     ch = chains(sheet)
     held = [p["part"] for r in result for p in r["placements"] if is_held(p)]
@@ -317,8 +329,10 @@ def step_geometry(db, pid, result):
                     5 if c["type"] == "Outline" else 4) for c in ch)
     st.image(plan_png(float(sheet["width"]), float(sheet["height"]), pts, tuple(c["type"] for c in ch), labels, PICTURE_VERSION),
              caption="Plan view: outlines solid, holes dashed; every contour has its saved cutting number (and the part name). "
-                     "The black dot is the origin. Change the order in the table below and press Save order.")
+                     "The black dot is the origin. Change the order in the table below; Save at the bottom of the page stores it.")
     order_editor(db, pid, sheet_no, ch, saved_ids)
+    st.button("Save", key="camming_save", type="primary", on_click=_save_all, args=(sheet_no, ch),
+              help="Saves everything on this page: the thickness, the sheet and the cutting order.")      # the very bottom of the page
 
 
 @st.fragment
@@ -381,26 +395,10 @@ def order_editor(db, pid, sheet_no: int, ch: list, saved_ids: list):
     st.dataframe(styled, hide_index=True, width="content", on_select="rerun", selection_mode="single-row", key=tkey)
     changed = list(work) != list(saved_ids)
     if changed:
-        st.warning("The order has changed and is not saved yet: the plan view and the G-code still use the saved order.")
-    s1, s2, _ = st.columns([1, 1, 3])
-    save = s1.button("Save order", type="primary", key="geo_order_save", disabled=not changed, width="stretch")
-    s2.button("Discard changes", on_click=_reset, args=(saved_ids,), key="geo_order_discard", disabled=not changed, width="stretch")
-    if save:
-        try:
-            cam_ = db.get_cam(pid) or {}
-            c_ = {**cam_.get("camming", {})}
-            if list(work) == default_order(ch):          # the default order is not stored
-                c_.pop("order", None)
-                c_.pop("order_sheet", None)
-            else:
-                c_["order"], c_["order_sheet"] = list(work), int(sheet_no)
-            cam_["camming"] = c_
-            db.save_cam(pid, cam_)
-        except Exception as e:  # noqa: BLE001
-            st.error(f"Could not save the order: {e}")
-        else:
-            st.toast("Order saved with the operation.", icon=":material/check_circle:")
-            st.rerun()                                   # the whole page: the plan view and the G-code use the new order
+        st.warning("The order has changed and is not saved yet: press Save at the bottom of the page. The plan view and the G-code "
+                   "still use the saved order until then.")
+    d1, _ = st.columns([1, 3])
+    d1.button("Discard changes", on_click=_reset, args=(saved_ids,), key="geo_order_discard", disabled=not changed, width="stretch")
 
 
 def camming_tab(db, pid, result, project: str = "", meta: dict | None = None, run_id=None, file_base: str = "nest"):

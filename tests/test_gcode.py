@@ -203,22 +203,23 @@ def test_geometry_step_lists_the_contours_in_order_and_moves_them():
         at.session_state["geo_move_sel"] = d[0]                                                   # (a click on a row of the table)
         at.run()
         assert not any(b.disabled for b in at.button if b.key.startswith("geo_move_"))
-        save = lambda: next(b for b in at.button if b.key == "geo_order_save")                 # noqa: E731
-        assert save().disabled                                                                  # nothing to save yet
+        save = lambda: next(b for b in at.button if b.key == "camming_save")                    # noqa: E731  (the one Save, at the bottom)
+        assert not any(b.key == "geo_order_save" for b in at.button)                              # there is no separate Save order
         next(b for b in at.button if b.key == "geo_move_last").click().run()               # the hole goes last ...
-        assert "order" not in settings and not save().disabled                                 # ... on the working copy: nothing saved yet
+        assert "order" not in settings                                                         # ... on the working copy: nothing saved yet
         assert at.session_state["geo_move_sel"] == d[0]                                           # it stays selected (and highlighted)
-        assert any(f"{len(d)} · A (hole)" in m.value for m in at.markdown) or any(f"{len(d)} · A (hole)" in c.value for c in at.caption)
         assert any("not saved yet" in w.value for w in at.warning)
         next(b for b in at.button if b.key == "geo_move_up").click().run()
         assert "order" not in settings
-        save().click().run()                                                                    # Save order stores the working order
+        at.number_input(key="camming_thickness").set_value(18.0)                               # a changed thickness is saved by the same button
+        save().click().run()                                                                    # Save stores thickness, sheet and order together
         assert settings["order"] == d[1:-1] + [d[0]] + [d[-1]] and settings["order_sheet"] == 1
-        assert save().disabled and not any("not saved yet" in w.value for w in at.warning)    # saved: the working copy is the saved order
+        assert settings["thickness"] == 18.0 and settings["sheet"] == 1
+        assert not any("not saved yet" in w.value for w in at.warning)                         # saved: the working copy is the saved order
         next(b for b in at.button if b.key == "geo_order_reset").click().run()               # the default order, still to be saved
         assert settings["order"] == d[1:-1] + [d[0]] + [d[-1]]
         next(b for b in at.button if b.key == "geo_order_discard").click().run()             # discard: back to the saved order
-        assert save().disabled
+        assert not any("not saved yet" in w.value for w in at.warning)
         next(b for b in at.button if b.key == "geo_order_reset").click().run()
         save().click().run()
         assert "order" not in settings                                                          # the default order is not stored
