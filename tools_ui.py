@@ -90,92 +90,162 @@ def _form_tool() -> dict:
     return t
 
 
-def step_tools(db):
-    st.caption("The tool library, shared by all projects. Choose a tool to change or delete it, or choose **New tool**. "
-               "The picture only explains what each dimension means; it does not follow the numbers.")
+def _cam_settings(db, pid) -> dict:
+    try:
+        return (db.get_cam(pid) or {}).get("camming", {})
+    except Exception:  # noqa: BLE001 - the saved choice is optional
+        return {}
+
+
+def chosen_tool(db, pid) -> dict | None:
+    """The tool chosen for the CAM of this project (the next steps use it), or None."""
+    no = _cam_settings(db, pid).get("tool")
+    if no is None:
+        return None
+    return next((_row_to_tool(r) for r in db.list_cam_tools() if r["number"] == no), None)
+
+
+def step_tools(db, pid):
+    st.caption("The tool library, shared by all projects. Click a tool in the list to see and change its dimensions, delete it, or "
+               "choose it for the CAM of this project. The picture only explains what each dimension means; it does not follow the numbers.")
     try:
         tools = [_row_to_tool(r) for r in db.list_cam_tools()]
     except Exception as e:  # noqa: BLE001
         st.error(f"Could not read the tools: {e}")
         return
     by_no = {t["number"]: t for t in tools}
+    used = _cam_settings(db, pid).get("tool")
+    if used not in by_no:
+        used = None
+    ss = st.session_state
+    ss.setdefault("tools_sel", None)           # None: nothing open, 0: a new tool, n: tool n
+    ss.setdefault("tools_ver", 0)              # a new number gives the list a fresh, empty selection
+    ss.setdefault("tools_prev_rows", ())
+    if ss.tools_sel and ss.tools_sel not in by_no:
+        ss.tools_sel = None
 
-    if tools:
-        df = pd.DataFrame([{"No.": t["number"], "Name": t["name"], "Type": t["tool_type"], "D": t["diameter"], "Flutes": t["flutes"],
-                            "CL": t["cutting_length"], "TL": t["total_length"], "OHL": t["outside_holder"],
-                            "Helix": t["helical_angle"], "Rough": "yes" if t["rough"] else ""} for t in tools])
-        st.dataframe(df, hide_index=True, width="stretch")
-    else:
-        st.info("No tools yet. Fill the form below and press **Save tool**.")
-
-    def _sel_changed():
-        n = st.session_state.get("tools_sel")
+    def _open(n):
+        ss.tools_sel = n
         _load_form(by_no[n] if n in by_no else blank(max(by_no, default=0) + 1))
-        st.session_state.tools_old = n if n in by_no else None
 
-    options = [0, *by_no]                                       # 0 = a new tool
-    if "tools_sel" not in st.session_state or st.session_state.tools_sel not in options:
-        st.session_state.tools_sel = 0
-    if "tools_old" not in st.session_state or PREFIX + "diameter" not in st.session_state:
-        _sel_changed()
-    st.selectbox("Tool", options, key="tools_sel", on_change=_sel_changed,
-                 format_func=lambda n: "➕ New tool" if not n else f"T{n}  {by_no[n]['name'] or by_no[n]['tool_type'].title()}  Ø{by_no[n]['diameter']:g}")
+    def _reset_list():
+        ss.tools_ver += 1
+        ss.tools_prev_rows = ()
 
-    old = st.session_state.get("tools_old")
-    msg = st.session_state.pop("tools_msg", None)
-    if msg:
-        st.toast(msg, icon=":material/check_circle:")
+    def _new():
+        _reset_list()
+        _open(0)
 
     def _save():
         t = _form_tool()
+        old = ss.tools_sel or None
         problems = validate(t, {n for n in by_no if n != old})
         if problems:
-            st.session_state.tools_problems = problems
+            ss.tools_problems = problems
             return
         try:
             db.save_cam_tool({**t, "number": int(t["number"]), "flutes": int(t["flutes"])}, old)
         except Exception as e:  # noqa: BLE001
-            st.session_state.tools_problems = [f"Could not save: {e}"]
+            ss.tools_problems = [f"Could not save: {e}"]
             return
-        st.session_state.tools_problems = []
-        st.session_state.tools_old = int(t["number"])
-        st.session_state.tools_sel = int(t["number"])
-        st.session_state.tools_msg = f"Tool T{int(t['number'])} saved."
+        if old is not None and used == old and int(t["number"]) != old:      # the chosen tool was renumbered: keep it chosen
+            _use(int(t["number"]))
+        ss.tools_problems = []
+        ss.tools_sel = int(t["number"])
+        ss.tools_msg = f"Tool T{int(t['number'])} saved."
+        _reset_list()
 
     def _delete():
+        n = ss.tools_sel
         try:
-            db.delete_cam_tool(old)
+            db.delete_cam_tool(n)
+            if used == n:
+                _use(None)
         except Exception as e:  # noqa: BLE001
-            st.session_state.tools_problems = [f"Could not delete: {e}"]
+            ss.tools_problems = [f"Could not delete: {e}"]
             return
-        st.session_state.tools_msg = f"Tool T{old} deleted."
-        st.session_state.tools_sel = 0
-        _sel_changed()
+        ss.tools_msg = f"Tool T{n} deleted."
+        ss.tools_sel = None
+        _reset_list()
 
-    left, right = st.columns([3, 2])
-    with left:
-        a, b = st.columns(2)
-        a.number_input("Catalog number (T)", min_value=1, step=1, key=PREFIX + "number", help="The tool number used in the G-code (T and H).")
-        b.text_input("Name (optional)", key=PREFIX + "name")
-        a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type")
-        b.number_input("Number of flutes", min_value=1, step=1, key=PREFIX + "flutes")
-        st.markdown("**Tool parameters** (mm and degrees)")
-        c1, c2 = st.columns(2)
-        for i, (k, lab, hlp, _d) in enumerate(DIMS):
-            (c1 if i % 2 == 0 else c2).number_input(lab + (" [°]" if k in ANGLES else " [mm]"), min_value=0.0, step=0.5, format="%.3f",
-                                                    key=PREFIX + k, help=hlp)
-        c1.number_input("Helical angle [°]", min_value=0.0, max_value=89.0, step=1.0, format="%.1f", key=PREFIX + "helical_angle",
-                        help="30 is the standard helix.")
-        c2.checkbox("Rough", key=PREFIX + "rough", help="A roughing tool (serrated flutes).")
-        for p in st.session_state.get("tools_problems", []):
-            st.error(p)
-        s, d, _ = st.columns([1, 1, 2])
-        s.button("Save tool", type="primary", on_click=_save, key="tools_save")
-        if old is not None:
-            with d.popover("Delete tool"):
-                st.write(f"Delete tool **T{old}**?")
-                st.button("Yes, delete", on_click=_delete, key="tools_delete")
-    with right:
-        st.image(GUIDE_SVG)
-        st.caption("D diameter · SD shoulder diameter · AD arbor diameter · SA shoulder angle · CL cutting length · "
-                   "SL shoulder length · TL total length · CH chamfer. OHL (outside holder) is the length that sticks out of the holder.")
+    def _use(n):
+        try:
+            cam = db.get_cam(pid) or {}
+            cam["camming"] = {**cam.get("camming", {}), "tool": n}
+            db.save_cam(pid, cam)
+        except Exception as e:  # noqa: BLE001
+            ss.tools_problems = [f"Could not save the choice: {e}"]
+            return
+        if n is not None:
+            ss.tools_msg = f"Tool T{n} is the tool for the CAM of this project."
+
+    msg = ss.pop("tools_msg", None)
+    if msg:
+        st.toast(msg, icon=":material/check_circle:")
+
+    top = st.columns([1, 1, 3])
+    top[0].button("➕ New tool", on_click=_new, key="tools_new")
+    if used is not None:
+        u = by_no[used]
+        top[2].markdown(f"Tool for the CAM of this project: **T{used}**  {u['name']}  Ø{u['diameter']:g}")
+    else:
+        top[2].markdown("Tool for the CAM of this project: **none chosen**")
+
+    open_ = ss.tools_sel is not None
+    list_col, detail_col = st.columns([2, 5]) if open_ else (st.container(), None)
+    with list_col:
+        if tools:
+            df = pd.DataFrame([{"No.": t["number"], "Name": t["name"], "Type": t["tool_type"], "D": t["diameter"], "Flutes": t["flutes"],
+                                "CL": t["cutting_length"], "TL": t["total_length"], "OHL": t["outside_holder"],
+                                "CAM": "✔ chosen" if t["number"] == used else ""} for t in tools])
+            ev = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
+                              key=f"tools_table_{ss.tools_ver}")
+            rows = tuple(ev.selection.rows)
+            if rows != ss.tools_prev_rows:                     # the person clicked another row, or the same row again to close it
+                ss.tools_prev_rows = rows
+                if rows:
+                    _open(tools[rows[0]]["number"])
+                    st.rerun()
+                elif ss.tools_sel:
+                    ss.tools_sel = None
+                    st.rerun()
+        else:
+            st.info("No tools yet. Press **New tool**, fill the form and press **Save tool**.")
+
+    if not open_:
+        return
+    old = ss.tools_sel or None
+    with detail_col:
+        st.subheader("New tool" if old is None else f"Tool T{old}")
+        left, right = st.columns([3, 2])
+        with left:
+            a, b = st.columns(2)
+            a.number_input("Catalog number (T)", min_value=1, step=1, key=PREFIX + "number", help="The tool number used in the G-code (T and H).")
+            b.text_input("Name (optional)", key=PREFIX + "name")
+            a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type")
+            b.number_input("Number of flutes", min_value=1, step=1, key=PREFIX + "flutes")
+            st.markdown("**Tool parameters** (mm and degrees)")
+            c1, c2 = st.columns(2)
+            for i, (k, lab, hlp, _d) in enumerate(DIMS):
+                (c1 if i % 2 == 0 else c2).number_input(lab + (" [°]" if k in ANGLES else " [mm]"), min_value=0.0, step=0.5, format="%.3f",
+                                                        key=PREFIX + k, help=hlp)
+            c1.number_input("Helical angle [°]", min_value=0.0, max_value=89.0, step=1.0, format="%.1f", key=PREFIX + "helical_angle",
+                            help="30 is the standard helix.")
+            c2.checkbox("Rough", key=PREFIX + "rough", help="A roughing tool (serrated flutes).")
+            for p in ss.get("tools_problems", []):
+                st.error(p)
+            s, u_, d, _ = st.columns([1, 1.3, 1, 1])
+            s.button("Save tool", type="primary", on_click=_save, key="tools_save")
+            if old is not None:
+                if used == old:
+                    u_.button("Do not use", on_click=_use, args=(None,), key="tools_unuse")
+                else:
+                    u_.button("Use for CAM", on_click=_use, args=(old,), key="tools_use",
+                              help="Choose this tool for the next CAM steps of this project.")
+                with d.popover("Delete"):
+                    st.write(f"Delete tool **T{old}** completely?")
+                    st.button("Yes, delete", on_click=_delete, key="tools_delete")
+        with right:
+            st.image(GUIDE_SVG)
+            st.caption("D diameter · SD shoulder diameter · AD arbor diameter · SA shoulder angle · CL cutting length · "
+                       "SL shoulder length · TL total length · CH chamfer. OHL (outside holder) is the length that sticks out of the holder.")
