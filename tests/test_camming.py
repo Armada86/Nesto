@@ -168,23 +168,26 @@ def test_levels_validation_and_defaults():
     assert lu.validate({**ok, "depth": 0}) and lu.validate({**ok, "safety": -1})
 
 
-def test_levels_tab_copies_the_thickness_and_saves():
+def test_levels_tab_follows_the_geometry_thickness_until_changed():
     import sys
     saved, cam = [], {}
     try:
         at = _tools_app(saved, cam).run()
         assert [t.label for t in at.tabs][:4] == ["1 · Geometry", "2 · Tools", "3 · Data", "4 · Levels"]
-        assert at.number_input(key="lv_depth").value == 18.0               # the default profile depth is the thickness (default 18)
+        assert at.number_input(key="lv_upper").value == 18.0 and at.number_input(key="lv_depth").value == 18.0
         at.number_input(key="camming_thickness").set_value(15.0).run()     # the thickness of the Geometry step ...
-        assert at.number_input(key="lv_depth").value == 15.0               # ... is copied: the profile depth that was never set follows it
-        up = next(n for n in at.number_input if n.disabled and n.label == "Upper level")
-        assert up.value == 15.0
-        at.number_input(key="lv_depth").set_value(16.0)
+        assert at.number_input(key="lv_upper").value == 15.0               # ... is the default upper level
+        assert at.number_input(key="lv_depth").value == 15.0               # ... and the default profile depth
+        assert not at.number_input(key="lv_upper").disabled                # the upper level can be changed here
+        next(b for b in at.button if b.key == "levels_save").click().run()
+        assert cam["v"]["camming"]["levels"] == {"clearance": 45.0, "safety": 2.0, "upper": None, "depth": None}   # still the defaults
+        at.number_input(key="lv_upper").set_value(12.0)
+        at.number_input(key="lv_depth").set_value(10.0)
         next(b for b in at.button if b.key == "levels_save").click().run()
         lv = cam["v"]["camming"]["levels"]
-        assert lv == {"clearance": 45.0, "safety": 2.0, "depth": 16.0}
+        assert lv["upper"] == 12.0 and lv["depth"] == 10.0
         import levels_ui
-        assert levels_ui.get_levels(sys.modules["db"], 1, 15.0) == {"clearance": 45.0, "safety": 2.0, "upper": 15.0, "depth": 16.0}
+        assert levels_ui.get_levels(sys.modules["db"], 1, 15.0) == {"clearance": 45.0, "safety": 2.0, "upper": 12.0, "depth": 10.0}
         at.number_input(key="lv_clearance").set_value(10.0)                # too low: refused
         next(b for b in at.button if b.key == "levels_save").click().run()
         assert cam["v"]["camming"]["levels"]["clearance"] == 45.0 and at.error
