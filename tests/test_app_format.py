@@ -44,6 +44,21 @@ def fake_db(monkeypatch):
     db.list_cam_tools = lambda: []
     db.save_cam_tool = lambda *a, **k: None
     db.delete_cam_tool = lambda *a: None
+    ops = {}                                                                  # the operations of the runs, in memory
+
+    def create_operation(run_id, name, settings):
+        if any(o["name"].lower() == name.lower() and o["run_id"] == run_id for o in ops.values()):
+            raise ValueError("exists")
+        i = len(ops) + 1
+        ops[i] = {"id": i, "run_id": run_id, "name": name, "settings": settings}
+        return i
+    db.create_operation = create_operation
+    db.list_operations = lambda run_id: [o for o in ops.values() if o["run_id"] == run_id]
+    db.get_operation = lambda i: ops.get(i)
+    db.save_operation_settings = lambda i, s: ops[i].__setitem__("settings", s)
+    db.latest_operation_settings = lambda pid: None
+    db.rename_operation = lambda i, n: ops[i].__setitem__("name", n)
+    db.delete_operation = lambda i: ops.pop(i, None)
     monkeypatch.setitem(sys.modules, "db", db)
     return db
 
@@ -150,17 +165,26 @@ def test_a_part_has_the_same_colour_on_every_sheet():
 
 
 def test_nestocam_tab_sees_a_run_that_is_loaded_in_the_same_script_run(fake_db):
-    """The NestoCAM tab is drawn after the History: loading a run must show its geometry, not 'Nest first'."""
+    """The NestoCAM tab is drawn after the History: loading a run must show its operations and, in an operation, its geometry."""
     from streamlit.testing.v1 import AppTest
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["pid"] = 1
     at.session_state["pending_settings"] = {"effort_label": "Quick"}
     at.run()
-    assert any("Nest first" in i.value for i in at.info)                       # nothing nested yet
+    assert any("Nest first" in i.value for i in at.info)                       # nothing nested yet: no run, no operations
     fake_db.load_run = lambda i: {"id": i, "sheet_w": 1000.0, "sheet_h": 600.0, "margin": 5.0, "spacing": 3.0, "seconds": 1.0,
                                   "result": [{"width": 1000.0, "height": 600.0, "placements": [
                                       {"part": "a", "x": 10.0, "y": 10.0, "w": 300.0, "h": 200.0, "rotated": False}]}]}
     next(b for b in at.button if b.label == "Load run").click().run()
     assert not at.exception
-    assert not any("Nest first" in i.value for i in at.info)                   # the loaded run is the geometry
-    assert any(m.label == "Outlines" and m.value == "1" for m in at.metric)
+    assert not any("Nest first" in i.value for i in at.info)
+    assert any("No operations in this run yet" in i.value for i in at.info)    # the run is loaded: its (empty) operation list
+    at.text_input(key="ops_new_name").set_value("sheet_01_Milling")            # create an operation: it opens with its five steps
+    next(b for b in at.button if b.key == "ops_create").click().run()
+    assert not at.exception
+    assert [t.label for t in at.tabs][-5:] == ["1 · Geometry", "2 · Tools", "3 · Data", "4 · Levels", "5 · Generate G-code"]
+    assert any(m.label == "Outlines" and m.value == "1" for m in at.metric)    # the geometry of the sheet of the operation
+    assert [o["name"] for o in fake_db.list_operations(7)] == ["sheet_01_Milling"]
+    at.text_input(key="ops_new_name").set_value("SHEET_01_milling")            # the same name (any capitals) twice in a run: refused
+    next(b for b in at.button if b.key == "ops_create").click().run()
+    assert any("exists" in e.value for e in at.error) and len(fake_db.list_operations(7)) == 1

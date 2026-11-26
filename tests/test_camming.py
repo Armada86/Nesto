@@ -79,6 +79,7 @@ def test_tool_validation():
 
 
 def _tools_app(saved, cam):
+    """An AppTest of the five steps of ONE operation, on a fake db. cam["v"] = {"camming": settings of the operation}."""
     import sys
     import types
     db = types.ModuleType("db")
@@ -89,16 +90,22 @@ def _tools_app(saved, cam):
         saved.append(t)
     db.save_cam_tool = save
     db.delete_cam_tool = lambda n: saved.__setitem__(slice(None), [x for x in saved if x["number"] != n])
-    db.get_cam = lambda pid: cam.get("v")
-    db.save_cam = lambda pid, s_: cam.__setitem__("v", s_)
+    db.get_operation = lambda i: {"id": i, "run_id": 1, "name": "op", "settings": (cam.get("v") or {}).get("camming", {})}
+    db.save_operation_settings = lambda i, s: cam.__setitem__("v", {"camming": s})
     sys.modules["db"] = db
 
     def app():
-        from camming_ui import camming_tab
+        from operations_ui import operation_view
         import db
-        camming_tab(db, 1, None)
+        operation_view(db, {"id": 1, "name": "op", "settings": {}}, None)
     from streamlit.testing.v1 import AppTest
     return AppTest.from_function(app)
+
+
+def _op():
+    import sys
+    from operations_ui import OpDB
+    return OpDB(sys.modules["db"], 1)
 
 
 def test_tools_tab_list_new_save_choose_and_delete():
@@ -122,12 +129,12 @@ def test_tools_tab_list_new_save_choose_and_delete():
         next(b for b in at.button if b.key == "tools_save").click().run()
         assert saved[0]["diameter"] == 9.0 and at.number_input(key="tl_diameter").disabled
         import tools_ui
-        assert tools_ui.chosen_tool(sys.modules["db"], 1)["number"] == 1
+        assert tools_ui.chosen_tool(_op(), 1)["number"] == 1
         next(b for b in at.button if b.key == "tools_ask_delete").click().run()
         assert saved                                                           # asked first, nothing deleted yet
         next(b for b in at.button if b.key == "tools_delete").click().run()   # delete it completely
         assert saved == [] and cam["v"]["camming"]["tool"] is None
-        assert tools_ui.chosen_tool(sys.modules["db"], 1) is None
+        assert tools_ui.chosen_tool(_op(), 1) is None
     finally:
         sys.modules.pop("db", None)
 
@@ -150,9 +157,9 @@ def test_data_tab_saves_with_the_project_and_reads_back():
         next(b for b in at.button if b.key == "data_save").click().run()
         assert not at.exception
         d = cam["v"]["camming"]["data"]
-        assert d["feed_xy"] == 1800.0 and d["direction"] == "CCW" and d["rpm"] == 10000.0 and d["lead_in"] == 100.0
+        assert d["feed_xy"] == 1800.0 and d["direction"] == "CCW" and d["rpm"] == 10000.0 and "lead_in" not in d
         import data_ui
-        assert data_ui.get_data(sys.modules["db"], 1)["feed_xy"] == 1800.0
+        assert data_ui.get_data(_op(), 1)["feed_xy"] == 1800.0
         at.number_input(key="dt_rpm").set_value(15000.0)
         next(b for b in at.button if b.key == "data_save").click().run()          # a good value, saved
         assert cam["v"]["camming"]["data"]["rpm"] == 15000.0
@@ -187,7 +194,7 @@ def test_levels_tab_follows_the_geometry_thickness_until_changed():
         lv = cam["v"]["camming"]["levels"]
         assert lv["upper"] == 12.0 and lv["depth"] == 10.0
         import levels_ui
-        assert levels_ui.get_levels(sys.modules["db"], 1, 15.0) == {"clearance": 45.0, "safety": 2.0, "upper": 12.0, "depth": 10.0}
+        assert levels_ui.get_levels(_op(), 1, 15.0) == {"clearance": 45.0, "safety": 2.0, "upper": 12.0, "depth": 10.0}
         at.number_input(key="lv_clearance").set_value(10.0)                # too low: refused
         next(b for b in at.button if b.key == "levels_save").click().run()
         assert cam["v"]["camming"]["levels"]["clearance"] == 45.0 and at.error

@@ -98,7 +98,7 @@ def _cam_settings(db, pid) -> dict:
 
 
 def chosen_tool(db, pid) -> dict | None:
-    """The tool chosen for the CAM of this project (the next steps use it), or None."""
+    """The tool chosen for the CAM of this operation (the next steps use it), or None."""
     no = _cam_settings(db, pid).get("tool")
     if no is None:
         return None
@@ -107,7 +107,7 @@ def chosen_tool(db, pid) -> dict | None:
 
 def step_tools(db, pid):
     st.caption("The tool library, shared by all projects. Click a tool in the list to see and change its dimensions, delete it, or "
-               "choose it for the CAM of this project. The picture only explains what each dimension means; it does not follow the numbers.")
+               "choose it for the CAM of this operation. The picture only explains what each dimension means; it does not follow the numbers.")
     try:
         tools = [_row_to_tool(r) for r in db.list_cam_tools()]
     except Exception as e:  # noqa: BLE001
@@ -199,7 +199,7 @@ def step_tools(db, pid):
             ss.tools_problems = [f"Could not save the choice: {e}"]
             return
         if n is not None:
-            ss.tools_msg = f"Tool T{n} is the tool for the CAM of this project."
+            ss.tools_msg = f"Tool T{n} is the tool for the CAM of this operation."
 
     msg = ss.pop("tools_msg", None)
     if msg:
@@ -212,12 +212,12 @@ def step_tools(db, pid):
         top[1].button("Do not use for CAM", on_click=_use, args=(None,), key="tools_unuse")
     else:
         top[1].button("Use for CAM", on_click=_use, args=(sel,), key="tools_use", disabled=sel is None, type="primary",
-                      help="Tick a tool in the list, then press this to choose it for the next CAM steps of this project.")
+                      help="Tick a tool in the list, then press this to choose it for the next CAM steps of this operation.")
     if used is not None:
         u = by_no[used]
-        top[2].markdown(f"Tool for the CAM of this project: **T{used}**  {u['name']}  Ø{u['diameter']:g}")
+        top[2].markdown(f"Tool for the CAM of this operation: **T{used}**  {u['name']}  Ø{u['diameter']:g}")
     else:
-        top[2].markdown("Tool for the CAM of this project: **none chosen**")
+        top[2].markdown("Tool for the CAM of this operation: **none chosen**")
 
     open_ = ss.tools_sel is not None
     list_col, detail_col = st.columns([2, 5])             # the list keeps the same narrow width, selected or not

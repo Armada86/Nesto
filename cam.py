@@ -78,6 +78,9 @@ class Contour:
     part: str
     pts: list                          # closed ring of the TOOL CENTRE path [(x, y), ...], first == last
     tool: int
+    src: list | None = None            # the closed ring of the PART (outline or hole) this path was made from
+    radius: float = 0.0                # the tool radius
+    key: tuple = (0.0, 0.0)            # lower left of the part (or hole): the left to right order
 
 
 @dataclass
@@ -114,12 +117,64 @@ def _start_near(pts, near):
     return [m] + body[i + 1:] + body[:i + 1] + [m]
 
 
+def _restart_at(pts, s):
+    """The closed ring re-started at the point of the ring nearest to s (a vertex is reused, otherwise the point is inserted)."""
+    best = None
+    for i, (a, b) in enumerate(zip(pts, pts[1:])):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L2 = dx * dx + dy * dy
+        t = 0.0 if L2 < EPS else max(0.0, min(1.0, ((s[0] - a[0]) * dx + (s[1] - a[1]) * dy) / L2))
+        q = (a[0] + t * dx, a[1] + t * dy)
+        d = math.hypot(q[0] - s[0], q[1] - s[1])
+        if best is None or d < best[0]:
+            best = (d, i, t, q)
+    _, i, t, q = best
+    body = pts[:-1]
+    n = len(body)
+    if t < 1e-6:
+        k = i
+        return body[k:] + body[:k] + [body[k]]
+    if t > 1 - 1e-6:
+        k = (i + 1) % n
+        return body[k:] + body[:k] + [body[k]]
+    return [q] + body[i + 1:] + body[:i + 1] + [q]
+
+
+def _lowleft_start(src, ccw: bool, r: float, toward_left: bool):
+    """The start of a contour: the lowest left vertex of the part ring (lowest, the leftmost of those), then the point of the tool
+    path that belongs to the beginning of the edge that leaves this vertex in the cutting direction (a radius to the side of the
+    edge: to its left when toward_left, else to its right)."""
+    ring = _orient(list(src), ccw)[:-1]
+    n = len(ring)
+    k = min(range(n), key=lambda i: (round(ring[i][1], 6), round(ring[i][0], 6)))
+    v = ring[k]
+    for j in range(1, n):
+        w = ring[(k + j) % n]
+        d = math.hypot(w[0] - v[0], w[1] - v[1])
+        if d > 1e-9:
+            ex, ey = (w[0] - v[0]) / d, (w[1] - v[1]) / d
+            nx, ny = (-ey, ex) if toward_left else (ey, -ex)
+            return (v[0] + r * nx, v[1] + r * ny)
+    return v
+
+
+def _quad_segs(r: float, tol: float | None, default: int = 10) -> int:
+    """Segments per quarter circle so that the chord is at most `tol` away from the arc (default: a fixed number)."""
+    if not tol or r <= tol:
+        return default
+    return max(4, math.ceil((math.pi / 4) / math.acos(1 - tol / r)))
+
+
 def _tool_for(kind: str, job: CamJob, tools: dict):
     return tools.get(job.inner_tool if kind == "inner" else job.outer_tool)
 
 
-def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spacing: float = 0.0) -> Plan:
-    """The contours of a sheet (a stored layout dict) in cutting order. `tools`: {number: Tool}."""
+def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spacing: float = 0.0, start: str = "auto",
+               order: str = "nearest", arc_tol: float | None = None) -> Plan:
+    """The contours of a sheet (a stored layout dict) in cutting order. `tools`: {number: Tool}.
+    start: "auto" = in the middle of one of the longest edges, near the previous contour; "lowleft" = at the lowest left vertex of
+    the part. order: "nearest" = nearest neighbour; "left_right" = by the lower left corner of the part, from left to right.
+    arc_tol: the largest distance of a chord from the arc (mm); None = 10 segments per quarter circle."""
     plan = Plan()
     inner_tool, outer_tool = tools.get(job.inner_tool), tools.get(job.outer_tool)
     for what, t, n in (("inner contours (holes)", inner_tool, job.inner_tool), ("outlines", outer_tool, job.outer_tool)):
@@ -136,7 +191,7 @@ def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spaci
         others = [geoms[k] for k in range(len(geoms)) if k != idx]
         for poly in polys:
             r = outer_tool.diameter / 2
-            ring = Polygon(poly.exterior).buffer(r, quad_segs=10).simplify(0.005).exterior
+            ring = Polygon(poly.exterior).buffer(r, quad_segs=_quad_segs(r, arc_tol)).simplify(0.005).exterior
             pts = [tuple(c) for c in ring.coords]
             # the tool must not touch the neighbouring parts: they have to be at least a tool diameter apart
             if others:
@@ -144,16 +199,19 @@ def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spaci
                 if min(line.distance(o) for o in others) < r - 0.02:
                     too_close += 1
                     gouge_names.append(name)
-            outer.append(Contour("outer", name, pts, job.outer_tool))
+            bx = poly.bounds
+            outer.append(Contour("outer", name, pts, job.outer_tool, list(poly.exterior.coords), r, (round(bx[0], 3), round(bx[1], 3))))
             for hole in poly.interiors:
                 ri = inner_tool.diameter / 2
-                shrunk = Polygon(hole).buffer(-ri, quad_segs=10)
+                shrunk = Polygon(hole).buffer(-ri, quad_segs=_quad_segs(ri, arc_tol))
                 if shrunk.is_empty:
                     too_small.append(name)
                     plan.skipped += 1
                     continue
                 for sp in ([shrunk] if shrunk.geom_type == "Polygon" else list(shrunk.geoms)):
-                    inner.append(Contour("inner", name, [tuple(c) for c in sp.simplify(0.005).exterior.coords], job.inner_tool))
+                    hb = Polygon(hole).bounds
+                    inner.append(Contour("inner", name, [tuple(c) for c in sp.simplify(0.005).exterior.coords], job.inner_tool,
+                                         list(hole.coords), ri, (round(hb[0], 3), round(hb[1], 3))))
     if too_close:
         names = ", ".join(sorted(set(gouge_names))[:6])
         plan.warnings.append(f"{too_close} outline(s) have a neighbouring part closer than the tool diameter "
@@ -167,17 +225,27 @@ def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spaci
                              "the tool leaves the sheet at its edge.")
     if job.thickness <= 0:
         plan.warnings.append("Enter the material thickness.")
-    # cutting order: nearest neighbour, the inner contours of all parts first, then the outlines
+    # cutting order: the inner contours of all parts first, then the outlines
     pos = (0.0, 0.0)
     ordered = []
     for group, ccw_for_climb in ((inner, True), (outer, False)):
-        todo = list(group)
+        todo = sorted(group, key=lambda c: c.key) if order == "left_right" else list(group)
         while todo:
-            best = min(todo, key=lambda c: min(math.hypot(x - pos[0], y - pos[1]) for x, y in c.pts))
-            todo.remove(best)
-            ring = _orient(best.pts, ccw_for_climb if job.climb else not ccw_for_climb)
-            ring = _start_near(ring, pos)
-            best = Contour(best.kind, best.part, ring, best.tool)
+            if order == "left_right":
+                best = todo.pop(0)
+            else:
+                best = min(todo, key=lambda c: min(math.hypot(x - pos[0], y - pos[1]) for x, y in c.pts))
+                todo.remove(best)
+            ccw = ccw_for_climb if job.climb else not ccw_for_climb
+            ring = _orient(best.pts, ccw)
+            if start == "lowleft" and best.src:
+                # outline: the tool runs outside the part, hole: inside the hole; the side is to the left of the travel direction
+                # for a clockwise outline / counter-clockwise hole
+                toward_left = (best.kind == "outer") != ccw
+                ring = _restart_at(ring, _lowleft_start(best.src, ccw, best.radius, toward_left))
+            else:
+                ring = _start_near(ring, pos)
+            best = Contour(best.kind, best.part, ring, best.tool, best.src, best.radius, best.key)
             ordered.append(best)
             pos = ring[0]
     plan.contours = ordered

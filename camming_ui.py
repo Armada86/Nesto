@@ -20,7 +20,6 @@ PICTURE_VERSION = 9  # raise it whenever the drawing code changes: the pictures 
                      # older picture of the same sheet would still be shown after an update
 ZOOM = 1.0
 FONT_PT = 4.5   # size of the dimension numbers          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
-STEPS = [("geometry", "1 · Geometry"), ("tools", "2 · Tools"), ("data", "3 · Data"), ("levels", "4 · Levels"), ("gcode", "5 · Generate G-code")]       # the next steps are added here, one by one
 
 
 def chains(sheet: dict) -> list[dict]:
@@ -224,8 +223,10 @@ def step_geometry(db, pid, result):
     st.caption("The geometry is the **bottom outline of every part**: the outside contour of each part and the contour of each "
                "of its holes, all at **Z = 0, the bottom of the material**. The work coordinate system is at the lower left corner "
                "of the sheet at the bottom (X along the length, Y along the width, Z up); the top of the material is Z = thickness.")
-    if st.session_state.get("camming_loaded_pid") != pid:
+    if st.session_state.get("camming_loaded_pid") != pid:                # another operation: its saved values
         st.session_state.camming_thickness = float(_saved(db, pid).get("thickness", 18.0))
+        n_sheets = max(1, len(result or []))
+        st.session_state.camming_sheet = min(max(1, int(_saved(db, pid).get("sheet", 1))), n_sheets)
         st.session_state.camming_loaded_pid = pid
     c1, c2 = st.columns([1, 2])
     c1.number_input("Material thickness", min_value=0.1, step=0.5, key="camming_thickness",
@@ -235,13 +236,24 @@ def step_geometry(db, pid, result):
             cam = db.get_cam(pid) or {}
             cam["camming"] = {**cam.get("camming", {}), "thickness": float(st.session_state.camming_thickness)}
             db.save_cam(pid, cam)
-            st.toast("Saved with the project.", icon=":material/check_circle:")
+            st.toast("Saved with the operation.", icon=":material/check_circle:")
         except Exception as e:  # noqa: BLE001
             st.error(f"Could not save: {e}")
     if not result:
         st.info("Nest first: the geometry is taken from the sheets of the current run.")
         return
-    sheet_no = c2.selectbox("Sheet", list(range(1, len(result) + 1)), key="camming_sheet", format_func=lambda i: f"Sheet {i}")
+    def _save_sheet():
+        try:
+            cam = db.get_cam(pid) or {}
+            cam["camming"] = {**cam.get("camming", {}), "sheet": int(st.session_state.camming_sheet)}
+            db.save_cam(pid, cam)
+        except Exception as e:  # noqa: BLE001
+            st.session_state.camming_sheet_error = f"Could not save the sheet: {e}"
+
+    if not 1 <= st.session_state.get("camming_sheet", 1) <= len(result):
+        st.session_state.camming_sheet = 1
+    sheet_no = c2.selectbox("Sheet of this operation", list(range(1, len(result) + 1)), key="camming_sheet", on_change=_save_sheet,
+                            format_func=lambda i: f"Sheet {i}")
     sheet = result[sheet_no - 1]
     ch = chains(sheet)
     held = [p["part"] for r in result for p in r["placements"] if is_held(p)]
@@ -261,18 +273,6 @@ def step_geometry(db, pid, result):
 
 
 def camming_tab(db, pid, result, project: str = "", meta: dict | None = None, run_id=None, file_base: str = "nest"):
-    from data_ui import step_data
-    from gcode_ui import step_gcode
-    from levels_ui import step_levels
-    from tools_ui import step_tools
-    t_geo, t_tools, t_data, t_levels, t_gcode = st.tabs([label for _k, label in STEPS])
-    with t_geo:
-        step_geometry(db, pid, result)
-    with t_tools:
-        step_tools(db, pid)
-    with t_data:
-        step_data(db, pid)
-    with t_levels:
-        step_levels(db, pid)
-    with t_gcode:
-        step_gcode(db, pid, result, project, meta, run_id, file_base)
+    """The NestoCAM tab: the operations of the current run; an open operation shows its five steps."""
+    from operations_ui import operations_tab
+    operations_tab(db, pid, result, project, meta, run_id)

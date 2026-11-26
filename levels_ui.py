@@ -15,13 +15,13 @@ def _saved(db, pid) -> dict:
 
 
 def thickness_of(db, pid) -> float:
-    """The material thickness of the project: what the Geometry tab shows (its input), else the saved value."""
+    """The material thickness of the operation: what the Geometry tab shows (its input), else the saved value."""
     t = st.session_state.get("camming_thickness")
     return float(t if t else _saved(db, pid).get("thickness", 18.0))
 
 
 def get_levels(db, pid, thickness: float | None = None) -> dict:
-    """The levels of the project (the later steps read them from here). upper = the top of the part: the material thickness of the
+    """The levels of the operation (the later steps read them from here). upper = the top of the part: the material thickness of the
     Geometry step unless it was changed here; depth = how far the tool goes into the material from the upper level (the whole
     upper level unless it was changed)."""
     s = _saved(db, pid).get("levels", {})
@@ -76,9 +76,9 @@ def step_levels(db, pid):
             ss.levels_problems = [f"Could not save: {e}"]
             return
         ss.levels_problems = []
-        ss.levels_msg = "Levels saved with the project."
+        ss.levels_msg = "Levels saved with the operation."
 
-    st.caption("The Z levels of the toolpaths of this project (Z = 0 is the bottom of the parts). They are saved with the project.")
+    st.caption("The Z levels of the toolpaths of this operation (Z = 0 is the bottom of the parts). They are saved with the operation.")
     msg = ss.pop("levels_msg", None)
     if msg:
         st.toast(msg, icon=":material/check_circle:")

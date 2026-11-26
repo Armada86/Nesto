@@ -70,6 +70,14 @@ CREATE TABLE IF NOT EXISTS nest_runs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE nest_runs ADD COLUMN IF NOT EXISTS seconds DOUBLE PRECISION;
+CREATE TABLE IF NOT EXISTS cam_operations (
+    id SERIAL PRIMARY KEY,
+    run_id INT NOT NULL REFERENCES nest_runs(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (run_id, name)
+);
 """
 
 
@@ -249,6 +257,54 @@ def save_cam_tool(tool: dict, old_number: int | None = None):
 def delete_cam_tool(number: int):
     with connect() as c:
         c.execute("DELETE FROM nesto_tools WHERE number=%s", (int(number),))
+
+
+def list_operations(run_id: int):
+    """The CAM operations of a run, oldest first."""
+    with connect() as c:
+        return c.execute("SELECT id, name, settings FROM cam_operations WHERE run_id=%s ORDER BY id", (run_id,)).fetchall()
+
+
+def get_operation(op_id: int):
+    with connect() as c:
+        return c.execute("SELECT id, run_id, name, settings FROM cam_operations WHERE id=%s", (op_id,)).fetchone()
+
+
+def create_operation(run_id: int, name: str, settings: dict) -> int:
+    """A new operation in a run. Raises ValueError if the run already has an operation with this name (any capitals)."""
+    with connect() as c:
+        if c.execute("SELECT 1 FROM cam_operations WHERE run_id=%s AND lower(name)=lower(%s)", (run_id, name)).fetchone():
+            raise ValueError(f"This run already has an operation called {name}.")
+        return c.execute("INSERT INTO cam_operations(run_id, name, settings) VALUES (%s,%s,%s) RETURNING id",
+                         (run_id, name, json.dumps(settings))).fetchone()["id"]
+
+
+def save_operation_settings(op_id: int, settings: dict):
+    with connect() as c:
+        c.execute("UPDATE cam_operations SET settings=%s WHERE id=%s", (json.dumps(settings), op_id))
+
+
+def rename_operation(op_id: int, name: str):
+    """Raises ValueError if another operation of the same run has this name."""
+    with connect() as c:
+        row = c.execute("SELECT run_id FROM cam_operations WHERE id=%s", (op_id,)).fetchone()
+        if row and c.execute("SELECT 1 FROM cam_operations WHERE run_id=%s AND lower(name)=lower(%s) AND id<>%s",
+                             (row["run_id"], name, op_id)).fetchone():
+            raise ValueError(f"This run already has an operation called {name}.")
+        c.execute("UPDATE cam_operations SET name=%s WHERE id=%s", (name, op_id))
+
+
+def delete_operation(op_id: int):
+    with connect() as c:
+        c.execute("DELETE FROM cam_operations WHERE id=%s", (op_id,))
+
+
+def latest_operation_settings(pid: int):
+    """The settings of the newest operation of any run of the project (a new operation starts from them), or None."""
+    with connect() as c:
+        row = c.execute("SELECT o.settings FROM cam_operations o JOIN nest_runs r ON r.id=o.run_id WHERE r.project_id=%s"
+                        " ORDER BY o.id DESC LIMIT 1", (pid,)).fetchone()
+        return row["settings"] if row else None
 
 
 def get_cam(pid: int):

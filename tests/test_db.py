@@ -172,3 +172,29 @@ def test_old_machining_tools_are_deleted_once(db):
     assert [t["number"] for t in _db.list_tools()] == [92]
     with _db.connect() as c:
         c.execute("DELETE FROM cam_tools")
+
+
+def test_cam_operations_belong_to_a_run_have_unique_names_and_go_with_the_run(db):
+    pid = db.create_project("ops-test")
+    try:
+        r1 = db.save_run(pid, 2500, 1250, 5, 3, 1, 0.5, [{"width": 2500, "height": 1250, "placements": []}], 1.5)
+        r2 = db.save_run(pid, 2500, 1250, 5, 3, 1, 0.5, [{"width": 2500, "height": 1250, "placements": []}], 1.5)
+        a = db.create_operation(r1, "sheet_01_Milling", {"sheet": 1, "thickness": 15.0})
+        db.create_operation(r2, "sheet_01_Milling", {"sheet": 1})                       # the same name in another run is fine
+        with pytest.raises(ValueError):
+            db.create_operation(r1, "SHEET_01_milling", {})                                # not twice in one run (any capitals)
+        assert [o["name"] for o in db.list_operations(r1)] == ["sheet_01_Milling"]
+        db.save_operation_settings(a, {"sheet": 2, "tool": 1})
+        assert db.get_operation(a)["settings"] == {"sheet": 2, "tool": 1}
+        b = db.create_operation(r1, "second", {})
+        with pytest.raises(ValueError):
+            db.rename_operation(b, "Sheet_01_milling")
+        db.rename_operation(b, "third")
+        assert db.latest_operation_settings(pid) is not None
+        db.delete_operation(b)
+        assert [o["name"] for o in db.list_operations(r1)] == ["sheet_01_Milling"]
+        db.delete_runs(pid, [r1])                                                          # the operations go with their run
+        assert db.list_operations(r1) == [] and len(db.list_operations(r2)) == 1
+    finally:
+        with db.connect() as c:
+            c.execute("DELETE FROM projects WHERE id=%s", (pid,))
