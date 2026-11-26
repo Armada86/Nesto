@@ -266,4 +266,4 @@ def camming_tab(db, pid, result):
     with t_geo:
         step_geometry(db, pid, result)
     with t_tools:
-        step_tools(db)
+        step_tools(db, pid)

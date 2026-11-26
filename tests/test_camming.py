@@ -78,27 +78,46 @@ def test_tool_validation():
     assert tu.validate({**ok, "chamfer": 7}, set())                                  # chamfer more than half the diameter
 
 
-def test_tools_tab_shows_the_form_and_saves_a_tool():
-    from streamlit.testing.v1 import AppTest
-    import sys, types
-    saved = []
+def _tools_app(saved, cam):
+    import sys
+    import types
     db = types.ModuleType("db")
-    db.list_cam_tools = lambda: list(saved)
-    db.save_cam_tool = lambda t, old=None: saved.append(t)
-    db.delete_cam_tool = lambda n: None
-    db.get_cam = lambda pid: None
-    db.save_cam = lambda *a: None
+    db.list_cam_tools = lambda: sorted(saved, key=lambda t: t["number"])
+
+    def save(t, old=None):
+        saved[:] = [x for x in saved if x["number"] != old]
+        saved.append(t)
+    db.save_cam_tool = save
+    db.delete_cam_tool = lambda n: saved.__setitem__(slice(None), [x for x in saved if x["number"] != n])
+    db.get_cam = lambda pid: cam.get("v")
+    db.save_cam = lambda pid, s_: cam.__setitem__("v", s_)
     sys.modules["db"] = db
+
+    def app():
+        from camming_ui import camming_tab
+        import db
+        camming_tab(db, 1, None)
+    from streamlit.testing.v1 import AppTest
+    return AppTest.from_function(app)
+
+
+def test_tools_tab_list_new_save_choose_and_delete():
+    import sys
+    saved, cam = [], {}
     try:
-        def app():
-            import streamlit as st
-            from camming_ui import camming_tab
-            import db
-            camming_tab(db, 1, None)
-        at = AppTest.from_function(app).run()
+        at = _tools_app(saved, cam).run()
         assert not at.exception
-        assert [t.label for t in at.tabs] == ["1 · Geometry", "2 · Tools"]
+        assert [t.label for t in at.tabs][:2] == ["1 · Geometry", "2 · Tools"]
+        assert not [b for b in at.button if b.key == "tools_save"]            # nothing is open before a tool is chosen
+        next(b for b in at.button if b.key == "tools_new").click().run()
         next(b for b in at.button if b.key == "tools_save").click().run()
         assert not at.exception and len(saved) == 1 and saved[0]["number"] == 1 and saved[0]["diameter"] == 12.0
+        next(b for b in at.button if b.key == "tools_use").click().run()      # choose it for the CAM of the project
+        assert cam["v"]["camming"]["tool"] == 1
+        import tools_ui
+        assert tools_ui.chosen_tool(sys.modules["db"], 1)["number"] == 1
+        next(b for b in at.button if b.key == "tools_delete").click().run()   # delete it completely
+        assert saved == [] and cam["v"]["camming"]["tool"] is None
+        assert tools_ui.chosen_tool(sys.modules["db"], 1) is None
     finally:
         sys.modules.pop("db", None)
