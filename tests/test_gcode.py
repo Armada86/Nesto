@@ -149,3 +149,63 @@ def test_generate_tab_shows_the_gcode_of_the_operation_and_names_the_file_after_
 def test_file_stem():
     from operations_ui import file_stem
     assert file_stem("sheet_01 Milling") == "sheet_01_Milling" and file_stem("  ../x/y?  ") == "x_y" and file_stem("???") == "operation"
+
+
+def test_custom_order_is_followed_by_the_toolpaths_and_the_gcode():
+    import camming_ui as cu
+    ch = cu.chains(sheet())
+    dflt = cu.default_order(ch)
+    assert [c["type"] for c in ch if c["id"] in dflt[:1]] == ["Hole"]                 # the default: the hole first
+    ids = {c["part"]: c["id"] for c in ch if c["type"] == "Outline"}
+    order = [ids["C"], ids["B"], dflt[0], ids["A"]]                                    # my own order: C, B, the hole of A, A
+    plan, _g, _t, _j = gcode_cam.build(sheet(), TOOL, DATA, LV, 15.0, order_ids=order)
+    assert [(c.kind, c.part) for c in plan.contours] == [("outer", "C"), ("outer", "B"), ("inner", "A"), ("outer", "A")]
+    g = gcode_cam.text("x.anc", sheet(), 1, TOOL, DATA, LV, 15.0, order_ids=order).splitlines()
+    plunges = [i for i, x in enumerate(g) if x.startswith("G1 Z0. F100.")]
+    assert len(plunges) == 4
+    # the contours that are not in the saved order come after it, in the default order (holes first)
+    plan2, _g, _t, _j = gcode_cam.build(sheet(), TOOL, DATA, LV, 15.0, order_ids=[ids["C"]])
+    assert [(c.kind, c.part) for c in plan2.contours] == [("outer", "C"), ("inner", "A"), ("outer", "A"), ("outer", "B")]
+
+
+def test_full_order_drops_what_is_gone_and_adds_what_is_new():
+    import camming_ui as cu
+    ch = cu.chains(sheet())
+    d = cu.default_order(ch)
+    assert cu.full_order(ch, None) == d
+    assert cu.full_order(ch, ["O@9.00,9.00", d[2], d[0]]) == [d[2], d[0], d[1], d[3]]
+
+
+def test_geometry_step_lists_the_contours_in_order_and_moves_them():
+    import types
+    from streamlit.testing.v1 import AppTest
+    settings = {"sheet": 1, "thickness": 15.0}
+    db = types.ModuleType("db")
+    db.list_cam_tools = lambda: []
+    db.get_operation = lambda i: {"id": i, "run_id": 1, "name": "op", "settings": settings}
+    db.save_operation_settings = lambda i, s: (settings.clear(), settings.update(s))
+    sys.modules["db"] = db
+    try:
+        def app():
+            from operations_ui import operation_view
+            import db
+            import test_gcode
+            operation_view(db, {"id": 7, "name": "op", "settings": {}}, [test_gcode.sheet()], "proj", {}, 3)
+        sys.path.insert(0, str(pathlib.Path(__file__).parent))
+        at = AppTest.from_function(app, default_timeout=60).run()
+        assert not at.exception
+        import camming_ui as cu
+        ch = cu.chains(sheet())
+        d = cu.default_order(ch)
+        pick = lambda: at.selectbox(key=f"geo_move_id_{at.session_state['geo_move_ver']}")      # noqa: E731
+        assert pick().value == d[0]
+        next(b for b in at.button if b.key == "geo_move_last").click().run()               # the hole goes last
+        assert settings["order"] == d[1:] + [d[0]] and settings["order_sheet"] == 1
+        assert pick().value == d[0] and pick().label == "Contour to move"                      # it stays selected
+        assert "· A (hole)" in pick().options[d.index(d[0])] and pick().options[0].startswith(f"{len(d)} ·")   # its label shows the new number
+        next(b for b in at.button if b.key == "geo_move_up").click().run()
+        assert settings["order"] == d[1:-1] + [d[0]] + [d[-1]]
+        next(b for b in at.button if b.key == "geo_order_reset").click().run()
+        assert "order" not in settings
+    finally:
+        sys.modules.pop("db", None)
