@@ -26,7 +26,8 @@ ASSUMPTIONS = [
     "closed loop that ends where it started; there are no lead in / lead out moves.",
     "Start point: the lowest left vertex of the part (the lowest vertex, the leftmost of those): the contour starts where the "
     "tool path of the edge that leaves this vertex begins.",
-    "Order: the holes first, then the outlines, each from the lower left corner of the part, from left to right.",
+    "Order: the order of the contours that was set in step 1 (by default the holes first, then the outlines, each from the lower left "
+    "corner of the part, from left to right).",
     "Cutting side: holes are cut from inside, outlines from outside (the tool centre path is offset by the tool radius in software, "
     "so there is no cutter compensation G41 / G42). Always climb milling for the spin direction.",
     f"Arcs: straight lines, at most {ARC_TOLERANCE:g} mm away from the true arc.",
@@ -79,11 +80,13 @@ def warnings(t: dict, lv: dict) -> list[str]:
     return w
 
 
-def build(sheet: dict, t: dict, data: dict, lv: dict, thickness: float, margin: float = 0.0, spacing: float = 0.0):
+def build(sheet: dict, t: dict, data: dict, lv: dict, thickness: float, margin: float = 0.0, spacing: float = 0.0,
+          order_ids: list | None = None):
     """(plan, groups, tool) for one sheet; groups as post_fanuc.program wants them."""
     tool = tool_from_row(t, data)
     job = cam.CamJob(thickness=thickness, inner_tool=tool.number, outer_tool=tool.number, climb=(data["direction"] == "CW"))
-    plan = cam.plan_sheet(sheet, job, {tool.number: tool}, margin, spacing, start="lowleft", order="left_right", arc_tol=ARC_TOLERANCE)
+    plan = cam.plan_sheet(sheet, job, {tool.number: tool}, margin, spacing, start="lowleft", order="left_right", arc_tol=ARC_TOLERANCE,
+                          custom_order=order_ids)
     moves = []
     for c in plan.contours:
         moves += contour_moves(c, tool, data, lv)
@@ -91,8 +94,8 @@ def build(sheet: dict, t: dict, data: dict, lv: dict, thickness: float, margin: 
 
 
 def text(name: str, sheet: dict, sheet_no: int, t: dict, data: dict, lv: dict, thickness: float, project: str = "", run_no=None,
-         margin: float = 0.0, spacing: float = 0.0, operation: str | None = None) -> str:
-    plan, groups, _tool, job = build(sheet, t, data, lv, thickness, margin, spacing)
+         margin: float = 0.0, spacing: float = 0.0, operation: str | None = None, order_ids: list | None = None) -> str:
+    plan, groups, _tool, job = build(sheet, t, data, lv, thickness, margin, spacing, order_ids)
     length = sum(cam._ring_length(c.pts) for c in plan.contours)
     minutes = cam.estimate_minutes(groups) if groups else 0.0
     note = (f"WORK OFFSET G{machine.WORK_OFFSET}: ZERO AT THE LOWER LEFT CORNER OF THE SHEET, Z0 = BOTTOM OF THE PARTS, "

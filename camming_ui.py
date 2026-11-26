@@ -10,13 +10,14 @@ import matplotlib
 import pandas as pd
 import streamlit as st
 
+import cam
 from layout_edit import is_held, placement_geom
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 PURPLE = "#dc2626"   # the colour of the geometry (bottom contour): red, it becomes the toolpath
-PICTURE_VERSION = 9  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
+PICTURE_VERSION = 10  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
                      # older picture of the same sheet would still be shown after an update
 ZOOM = 1.0
 FONT_PT = 4.5   # size of the dimension numbers          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
@@ -24,18 +25,56 @@ FONT_PT = 4.5   # size of the dimension numbers          # size of the isometric
 
 def chains(sheet: dict) -> list[dict]:
     """The geometry of a sheet: one closed chain per outline and per hole of every part on it (parts in the hold area are
-    not on the sheet). Every chain lies at Z = 0, the bottom of the part."""
+    not on the sheet). Every chain lies at Z = 0, the bottom of the part. Each chain has an id (cam.contour_id: the same name the
+    toolpaths use), and the point where its label is written."""
+    from shapely.geometry import Polygon
+
     out = []
     for p in sheet["placements"]:
         if is_held(p):
             continue
         g = placement_geom(p)
         for poly in ([g] if g.geom_type == "Polygon" else [x for x in g.geoms if x.geom_type == "Polygon"]):
+            b = poly.bounds
+            key = (round(b[0], 3), round(b[1], 3))
+            lp = poly.representative_point()
             out.append({"part": p["part"], "type": "Outline", "pts": [tuple(c) for c in poly.exterior.coords],
-                        "length": poly.exterior.length})
+                        "length": poly.exterior.length, "key": key, "id": cam.contour_id("outer", key), "label_pt": (lp.x, lp.y)})
             for h in poly.interiors:
-                out.append({"part": p["part"], "type": "Hole", "pts": [tuple(c) for c in h.coords], "length": h.length})
+                hp = Polygon(h)
+                hb = hp.bounds
+                hkey = (round(hb[0], 3), round(hb[1], 3))
+                hl = hp.representative_point()
+                out.append({"part": p["part"], "type": "Hole", "pts": [tuple(c) for c in h.coords], "length": h.length, "key": hkey,
+                            "id": cam.contour_id("inner", hkey), "label_pt": (hl.x, hl.y)})
     return out
+
+
+def default_order(ch: list[dict]) -> list[str]:
+    """The default cutting order: the holes first, then the outlines, each from the lower left corner of its part, left to right."""
+    holes = sorted((c for c in ch if c["type"] == "Hole"), key=lambda c: c["key"])
+    outs = sorted((c for c in ch if c["type"] == "Outline"), key=lambda c: c["key"])
+    return [c["id"] for c in holes + outs]
+
+
+def full_order(ch: list[dict], saved: list | None) -> list[str]:
+    """The cutting order of the contours: the saved order (contours that no longer exist are dropped), then the contours it does
+    not mention, in the default order."""
+    dflt = default_order(ch)
+    if not saved:
+        return dflt
+    seen, out = set(), []
+    for cid in list(saved) + dflt:
+        if cid in dflt and cid not in seen:
+            seen.add(cid)
+            out.append(cid)
+    return out
+
+
+def saved_order(db, pid, sheet_no: int):
+    """The order saved in the operation for this sheet (None = the default order)."""
+    s = _saved(db, pid)
+    return s.get("order") if s.get("order_sheet") == sheet_no else None
 
 
 def _png(fig) -> bytes:
@@ -199,12 +238,14 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
 
 
 @st.cache_data(max_entries=12, show_spinner=False)
-def plan_png(width: float, height: float, chain_pts: tuple, kinds: tuple, version: int = PICTURE_VERSION) -> bytes:
+def plan_png(width: float, height: float, chain_pts: tuple, kinds: tuple, labels: tuple = (), version: int = PICTURE_VERSION) -> bytes:
     fig, ax = plt.subplots(figsize=(8, 8 * height / width if width else 5), dpi=200)
     ax.add_patch(plt.Rectangle((0, 0), width, height, fill=False, lw=1.2, color="black"))
     for pts, kind in zip(chain_pts, kinds):
         xs, ys = zip(*pts)
         ax.plot(xs, ys, color=PURPLE, lw=0.7, ls="-" if kind == "Outline" else "--")
+    for x, y, text, size in labels:                       # the cutting order and the part names
+        ax.text(x, y, text, fontsize=size, ha="center", va="center", color="#1e293b", clip_on=True)
     ax.plot([0], [0], "o", color="black", ms=4)
     ax.set_aspect("equal")
     ax.set_xlim(-0.02 * width, width * 1.02)
@@ -261,15 +302,70 @@ def step_geometry(db, pid, result):
         st.warning(f"{len(held)} part(s) are in the hold area and are not part of the geometry: {', '.join(held)}")
     n_out = sum(1 for c in ch if c["type"] == "Outline")
     st.metric("Outlines", n_out)
-    pts = tuple(tuple(c["pts"]) for c in ch)
+    ss = st.session_state
+    ids = full_order(ch, saved_order(db, pid, sheet_no))
+    by_id = {c["id"]: c for c in ch}
+    rank = {cid: i for i, cid in enumerate(ids, 1)}
+
+    def _save_order(new_ids):
+        try:
+            cam_ = db.get_cam(pid) or {}
+            c_ = {**cam_.get("camming", {})}
+            if new_ids is None:
+                c_.pop("order", None)
+                c_.pop("order_sheet", None)
+            else:
+                c_["order"], c_["order_sheet"] = list(new_ids), int(sheet_no)
+            cam_["camming"] = c_
+            db.save_cam(pid, cam_)
+            ss.geo_move_ver = ss.get("geo_move_ver", 0) + 1
+        except Exception as e:  # noqa: BLE001
+            ss.geo_order_error = f"Could not save the order: {e}"
+
+    def _move(kind):
+        cid = ss.get("geo_move_sel")
+        if cid not in ids:
+            return
+        new = list(ids)
+        i = new.index(cid)
+        new.pop(i)
+        j = {"up": max(0, i - 1), "down": min(len(new), i + 1), "first": 0, "last": len(new)}[kind]
+        new.insert(j, cid)
+        _save_order(new)
+
     k = 1.0                                                   # always drawn to true scale
     st.image(isometric_png(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness), solids(sheet), k, PICTURE_VERSION),
              caption="The whole sheet seen from the origin corner (lower left corner in plan view), drawn to scale: X to the right, "
                      "Y to the back, Z up. Every part is drawn transparent with dotted edges and its height; its bottom contour (the geometry) is red.")
-    st.image(plan_png(float(sheet["width"]), float(sheet["height"]), pts, tuple(c["type"] for c in ch), PICTURE_VERSION),
-             caption="Plan view: outlines solid, holes dashed. The black dot is the origin.")
-    st.dataframe(pd.DataFrame([{"No.": i, "Part": c["part"], "Type": c["type"], "Length": round(c["length"], 1), "Z": 0.0}
-                               for i, c in enumerate(ch, 1)]), hide_index=True, width="stretch")
+    pts = tuple(tuple(c["pts"]) for c in ch)
+    labels = tuple((c["label_pt"][0], c["label_pt"][1], f"{rank[c['id']]}  {c['part']}" if c["type"] == "Outline" else str(rank[c["id"]]),
+                    5 if c["type"] == "Outline" else 4) for c in ch)
+    st.image(plan_png(float(sheet["width"]), float(sheet["height"]), pts, tuple(c["type"] for c in ch), labels, PICTURE_VERSION),
+             caption="Plan view: outlines solid, holes dashed; every contour has its cutting number (and the part name). "
+                     "The black dot is the origin. Change the order in the table below.")
+
+    st.markdown("**Cutting order of the contours**")
+    stable = default_order(ch)                    # the options keep their places when the order changes (only their numbers change)
+    if ss.get("geo_move_sel") not in stable:
+        ss.geo_move_sel = stable[0] if stable else None
+    ver = ss.setdefault("geo_move_ver", 0)        # a new widget key after every change: the numbers in the labels are redrawn
+
+    def _picked():
+        ss.geo_move_sel = ss[f"geo_move_id_{ss.geo_move_ver}"]
+
+    m1, m2 = st.columns([2, 3])
+    m1.selectbox("Contour to move", stable, index=stable.index(ss.geo_move_sel) if stable else None, key=f"geo_move_id_{ver}",
+                 on_change=_picked,
+                 format_func=lambda cid: f"{rank[cid]} · {by_id[cid]['part']} ({by_id[cid]['type'].lower()})")
+    b1, b2, b3, b4, b5 = m2.columns(5)
+    for col, kind, label in ((b1, "up", "▲ Up"), (b2, "down", "▼ Down"), (b3, "first", "⤒ First"), (b4, "last", "⤓ Last")):
+        col.button(label, on_click=_move, args=(kind,), key=f"geo_move_{kind}", width="stretch")
+    b5.button("Default order", on_click=_save_order, args=(None,), key="geo_order_reset", width="stretch",
+              help="The holes first, then the outlines, each from the lower left corner of the part, left to right.")
+    if ss.get("geo_order_error"):
+        st.error(ss.pop("geo_order_error"))
+    st.dataframe(pd.DataFrame([{"No.": rank[cid], "Part": by_id[cid]["part"], "Type": by_id[cid]["type"],
+                                "Length": round(by_id[cid]["length"], 1), "Z": 0.0} for cid in ids]), hide_index=True, width="stretch")
 
 
 def camming_tab(db, pid, result, project: str = "", meta: dict | None = None, run_id=None, file_base: str = "nest"):

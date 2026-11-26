@@ -117,6 +117,12 @@ def _start_near(pts, near):
     return [m] + body[i + 1:] + body[:i + 1] + [m]
 
 
+def contour_id(kind: str, key: tuple) -> str:
+    """A name for a contour that stays the same while the layout does not change: its kind and the lower left corner of its part
+    (H = hole, O = outline)."""
+    return f"{'H' if kind == 'inner' else 'O'}@{key[0]:.2f},{key[1]:.2f}"
+
+
 def _restart_at(pts, s):
     """The closed ring re-started at the point of the ring nearest to s (a vertex is reused, otherwise the point is inserted)."""
     best = None
@@ -170,11 +176,13 @@ def _tool_for(kind: str, job: CamJob, tools: dict):
 
 
 def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spacing: float = 0.0, start: str = "auto",
-               order: str = "nearest", arc_tol: float | None = None) -> Plan:
+               order: str = "nearest", arc_tol: float | None = None, custom_order: list | None = None) -> Plan:
     """The contours of a sheet (a stored layout dict) in cutting order. `tools`: {number: Tool}.
     start: "auto" = in the middle of one of the longest edges, near the previous contour; "lowleft" = at the lowest left vertex of
     the part. order: "nearest" = nearest neighbour; "left_right" = by the lower left corner of the part, from left to right.
-    arc_tol: the largest distance of a chord from the arc (mm); None = 10 segments per quarter circle."""
+    arc_tol: the largest distance of a chord from the arc (mm); None = 10 segments per quarter circle.
+    custom_order: contour ids (contour_id) in the order they are cut; it replaces `order`; contours that are not in the list are
+    cut after them (holes first, then outlines, from left to right)."""
     plan = Plan()
     inner_tool, outer_tool = tools.get(job.inner_tool), tools.get(job.outer_tool)
     for what, t, n in (("inner contours (holes)", inner_tool, job.inner_tool), ("outlines", outer_tool, job.outer_tool)):
@@ -225,29 +233,42 @@ def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spaci
                              "the tool leaves the sheet at its edge.")
     if job.thickness <= 0:
         plan.warnings.append("Enter the material thickness.")
-    # cutting order: the inner contours of all parts first, then the outlines
+    # cutting order: the inner contours of all parts first, then the outlines (or the order that was asked for)
     pos = (0.0, 0.0)
     ordered = []
-    for group, ccw_for_climb in ((inner, True), (outer, False)):
-        todo = sorted(group, key=lambda c: c.key) if order == "left_right" else list(group)
-        while todo:
-            if order == "left_right":
-                best = todo.pop(0)
-            else:
-                best = min(todo, key=lambda c: min(math.hypot(x - pos[0], y - pos[1]) for x, y in c.pts))
-                todo.remove(best)
-            ccw = ccw_for_climb if job.climb else not ccw_for_climb
-            ring = _orient(best.pts, ccw)
-            if start == "lowleft" and best.src:
-                # outline: the tool runs outside the part, hole: inside the hole; the side is to the left of the travel direction
-                # for a clockwise outline / counter-clockwise hole
-                toward_left = (best.kind == "outer") != ccw
-                ring = _restart_at(ring, _lowleft_start(best.src, ccw, best.radius, toward_left))
-            else:
-                ring = _start_near(ring, pos)
-            best = Contour(best.kind, best.part, ring, best.tool, best.src, best.radius, best.key)
-            ordered.append(best)
-            pos = ring[0]
+
+    def finish(best, ccw_for_climb, pos):
+        ccw = ccw_for_climb if job.climb else not ccw_for_climb
+        ring = _orient(best.pts, ccw)
+        if start == "lowleft" and best.src:
+            # outline: the tool runs outside the part, hole: inside the hole; the side is to the left of the travel direction
+            # for a clockwise outline / counter-clockwise hole
+            toward_left = (best.kind == "outer") != ccw
+            ring = _restart_at(ring, _lowleft_start(best.src, ccw, best.radius, toward_left))
+        else:
+            ring = _start_near(ring, pos)
+        return Contour(best.kind, best.part, ring, best.tool, best.src, best.radius, best.key)
+
+    if custom_order:
+        rank = {cid: i for i, cid in enumerate(custom_order)}
+        default = sorted(inner, key=lambda c: c.key) + sorted(outer, key=lambda c: c.key)
+        todo = sorted(default, key=lambda c: rank.get(contour_id(c.kind, c.key), len(rank) + default.index(c)))
+        for c in todo:
+            done = finish(c, c.kind == "inner", pos)
+            ordered.append(done)
+            pos = done.pts[0]
+    else:
+        for group, ccw_for_climb in ((inner, True), (outer, False)):
+            todo = sorted(group, key=lambda c: c.key) if order == "left_right" else list(group)
+            while todo:
+                if order == "left_right":
+                    best = todo.pop(0)
+                else:
+                    best = min(todo, key=lambda c: min(math.hypot(x - pos[0], y - pos[1]) for x, y in c.pts))
+                    todo.remove(best)
+                done = finish(best, ccw_for_climb, pos)
+                ordered.append(done)
+                pos = done.pts[0]
     plan.contours = ordered
     return plan
 

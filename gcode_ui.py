@@ -11,6 +11,7 @@ import machine_profile as machine
 from data_ui import get_data
 from layout_edit import is_held
 from levels_ui import get_levels, thickness_of
+from camming_ui import saved_order
 from operations_ui import file_stem
 from tools_ui import chosen_tool
 
@@ -57,7 +58,8 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
     if held:
         st.warning(f"{len(held)} part(s) are in the hold area and are not machined: {', '.join(held)}")
     sheet = result[sheet_no - 1]
-    plan, groups, _t, _job = gcode_cam.build(sheet, tool, data, lv, thk, margin, spacing)
+    order_ids = saved_order(db, pid, sheet_no)
+    plan, groups, _t, _job = gcode_cam.build(sheet, tool, data, lv, thk, margin, spacing, order_ids)
     for w in plan.warnings:
         st.warning(w)
     if not plan.contours:
@@ -76,7 +78,7 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
     plt.close(fig)
 
     name = f"{file_stem(operation)}.{ext}"
-    gtext = gcode_cam.text(name, sheet, sheet_no, tool, data, lv, thk, project, run_id, margin, spacing, operation)
+    gtext = gcode_cam.text(name, sheet, sheet_no, tool, data, lv, thk, project, run_id, margin, spacing, operation, order_ids)
     with st.expander(f"G-code of {name} ({len(gtext.splitlines()):,} lines)", expanded=True):
         st.code("\n".join(gtext.splitlines()[:200]) + ("\n..." if len(gtext.splitlines()) > 200 else ""), language=None)
     st.download_button(f"⬇ {name}", lambda: gtext.encode("ascii", "replace"), name, "text/plain", key="dl_nc", on_click="ignore")
