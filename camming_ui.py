@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 PURPLE = "#8b1fc7"
-PICTURE_VERSION = 4  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
+PICTURE_VERSION = 6  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
                      # older picture of the same sheet would still be shown after an update
 ZOOM = 1.0          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
 STEPS = [("geometry", "1 · Geometry")]       # the next steps are added here, one by one
@@ -113,7 +113,7 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
     z = thickness * k                                        # the drawn height of the slab
     off = 0.07 * big                                         # how far outside the sheet the dimension lines run
     arm = 0.05 * big                                         # length of the coordinate system arrows (small and thin)
-    fig = plt.figure(figsize=(11, 5.5), dpi=230)
+    fig = plt.figure(figsize=(11, 5.5), dpi=480)
     ax = fig.add_subplot(111, projection="3d")
     slab = [[(0, 0, 0), (width, 0, 0), (width, 0, z), (0, 0, z)], [(width, 0, 0), (width, height, 0), (width, height, z), (width, 0, z)],
             [(0, 0, z), (width, 0, z), (width, height, z), (0, height, z)]]
@@ -183,7 +183,7 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
 
 @st.cache_data(max_entries=12, show_spinner=False)
 def plan_png(width: float, height: float, chain_pts: tuple, kinds: tuple, version: int = PICTURE_VERSION) -> bytes:
-    fig, ax = plt.subplots(figsize=(8, 8 * height / width if width else 5), dpi=110)
+    fig, ax = plt.subplots(figsize=(8, 8 * height / width if width else 5), dpi=200)
     ax.add_patch(plt.Rectangle((0, 0), width, height, fill=False, lw=1.2, color="black"))
     for pts, kind in zip(chain_pts, kinds):
         xs, ys = zip(*pts)
