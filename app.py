@@ -12,7 +12,7 @@ from fresh_modules import reload_changed
 # after a deploy the server may keep old copies of the local modules in memory: reload the ones that changed
 reload_changed(["machine_profile", "shapes", "nesting", "layout_edit", "nesting_poly", "render", "dxf_io", "step_io",
                 "dxf_export", "step_export", "cutlist_export", "part_view", "sheet_editor", "nest_job", "cam", "post_fanuc",
-                "cam_ui", "branding", "db"])
+                "cam_ui", "camming_ui", "branding", "db"])
 
 import branding
 import db
@@ -27,6 +27,7 @@ from nesting_poly import PolyPart, nest_polygons, scrap_rectangles
 from part_view import fmt as fmt_dim, part_png, part_stats
 from render import draw_sheet, part_color_indices
 from cam_ui import machining_tab
+from camming_ui import camming_tab
 from step_io import read_step
 from sheet_editor import sheet_editor
 from shapes import SHAPES, geom_to_json, part_geometry, stored_geometry
@@ -336,10 +337,10 @@ parts_state: list[dict] = st.session_state.parts
 # The Machining tab (tool library, toolpaths, G-code: cam.py, post_fanuc.py, cam_ui.py) is switched off for now while its
 # flow is being redesigned: set SHOW_MACHINING = True to bring it back. Nothing of it was removed.
 SHOW_MACHINING = False
-_tab_names = ["Nesting", "Import files", "Parts details"] + (["Machining"] if SHOW_MACHINING else [])
+_tab_names = ["Nesting", "Import files", "Parts details", "Nestocam"] + (["Machining"] if SHOW_MACHINING else [])
 _tabs = st.tabs(_tab_names)
-tab_table, tab_dxf, tab_lib = _tabs[:3]
-tab_cam = _tabs[3] if SHOW_MACHINING else None
+tab_table, tab_dxf, tab_lib, tab_camming = _tabs[:4]
+tab_cam = _tabs[4] if SHOW_MACHINING else None
 
 with tab_table:
     with st.expander("Expand parts"):          # the table is folded away: one line until you open it
@@ -426,6 +427,9 @@ with tab_dxf:
             db.save_parts(pid, parts_state)
             st.rerun()
 
+
+with tab_camming:
+    camming_tab(db, pid, st.session_state.get("result"))
 
 if SHOW_MACHINING:
     with tab_cam:
