@@ -110,7 +110,7 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
     big = max(width, height)
     z = thickness * k                                        # the drawn height of the slab
     off = 0.07 * big                                         # how far outside the sheet the dimension lines run
-    arm = 0.14 * big                                         # length of the coordinate system arrows
+    arm = 0.05 * big                                         # length of the coordinate system arrows (small and thin)
     fig = plt.figure(figsize=(11, 5.5), dpi=230)
     ax = fig.add_subplot(111, projection="3d")
     slab = [[(0, 0, 0), (width, 0, 0), (width, 0, z), (0, 0, z)], [(width, 0, 0), (width, height, 0), (width, height, z), (width, 0, z)],
@@ -144,27 +144,27 @@ def _isometric(width: float, height: float, thickness: float, parts: tuple, k: f
         mid = ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2)
         head = min(0.5, 0.02 * big / n * 1.0)
         for start, vec in ((mid, (dx / 2, dy / 2, dz / 2)), (mid, (-dx / 2, -dy / 2, -dz / 2))):
-            ax.quiver(*start, *vec, color="#0f172a", linewidth=1.0, arrow_length_ratio=head, normalize=False)
-        ax.text(mid[0] + shift[0], mid[1] + shift[1], mid[2] + shift[2], text, fontsize=10, fontweight="bold", color="#0f172a", **kw)
+            ax.quiver(*start, *vec, color="#334155", linewidth=0.8, arrow_length_ratio=head, normalize=False)
+        ax.text(mid[0] + shift[0], mid[1] + shift[1], mid[2] + shift[2], text, fontsize=9, color="#0f172a", **kw)
 
     ext_c = "#94a3b8"
     ax.plot([0, 0], [0, -off * 1.2], [0, 0], color=ext_c, lw=0.6)                       # extension lines of the length
     ax.plot([width, width], [0, -off * 1.2], [0, 0], color=ext_c, lw=0.6)
-    dimension((0, -off, 0), (width, -off, 0), f"Length {width:g}", shift=(0, -off * 0.45, 0), ha="center", va="top")
+    dimension((0, -off, 0), (width, -off, 0), f"{width:g}", shift=(0, -off * 0.35, 0), ha="center", va="top")
     ax.plot([width, width + off * 1.2], [0, 0], [0, 0], color=ext_c, lw=0.6)           # of the width
     ax.plot([width, width + off * 1.2], [height, height], [0, 0], color=ext_c, lw=0.6)
-    dimension((width + off, 0, 0), (width + off, height, 0), f"Width {height:g}", shift=(off * 0.45, 0, 0), ha="left", va="center")
+    dimension((width + off, 0, 0), (width + off, height, 0), f"{height:g}", shift=(off * 0.35, 0, 0), ha="left", va="center")
     ax.plot([0, -off * 1.2], [height, height], [z, z], color=ext_c, lw=0.6)           # of the thickness (at the back left corner)
     ax.plot([0, -off * 1.2], [height, height], [0, 0], color=ext_c, lw=0.6)
     dimension((-off, height, 0), (-off, height, max(z, 1e-6)), "", ha="right")
-    ax.text(-off * 1.15, height, z / 2, f"Thickness {thickness:g}" + (f"\n(drawn x{k:g})" if k > 1.0 else ""), fontsize=10,
-            fontweight="bold", color="#0f172a", ha="right", va="center")
+    ax.text(-off * 1.15, height, z / 2, f"{thickness:g}", fontsize=9, color="#0f172a", ha="right", va="center")
 
-    for vec, col, lab in (((arm, 0, 0), "#dc2626", "X"), ((0, arm, 0), "#16a34a", "Y"), ((0, 0, arm), "#2563eb", "Z")):    # the coordinate system
-        ax.quiver(0, 0, 0, *vec, color=col, linewidth=4.0, arrow_length_ratio=0.18, normalize=False)
-        ax.text(vec[0] * 1.32, vec[1] * 1.32, vec[2] * 1.32, lab, color=col, fontsize=18, fontweight="bold", ha="center", va="center",
-                bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor=col, linewidth=1.2))
-    ax.text(-0.02 * big, -0.02 * big, 0, "0,0,0", fontsize=8, color="#0f172a", ha="right", va="top")
+    # the coordinate system at the origin: small, thin, no boxes; the letters sit outside the sheet
+    for vec, col, lab, lpos in (((arm, 0, 0), "#dc2626", "X", (arm * 1.3, -arm * 0.35, 0)),
+                                ((0, arm, 0), "#16a34a", "Y", (-arm * 0.35, arm * 1.3, 0)),
+                                ((0, 0, arm), "#2563eb", "Z", (-arm * 0.3, 0, arm * 1.25))):
+        ax.quiver(0, 0, 0, *vec, color=col, linewidth=1.1, arrow_length_ratio=0.22, normalize=False)
+        ax.text(*lpos, lab, color=col, fontsize=9, fontweight="bold", ha="center", va="center")
 
     zr = max(z, arm * 1.6)
     xr0, xr1 = -0.30 * big * room, width + 0.12 * big * room
