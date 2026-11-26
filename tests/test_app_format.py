@@ -144,3 +144,20 @@ def test_a_part_has_the_same_colour_on_every_sheet():
     c1 = {x["name"]: x["color"] for x in se.parts_payload({"width": 1000, "height": 500, "placements": d1}, idx)}
     c2 = {x["name"]: x["color"] for x in se.parts_payload({"width": 1000, "height": 500, "placements": d2}, idx)}
     assert c1["A"] == c2["A"] and c1["C"] == c2["C"] and len(set(c1.values())) == 3
+
+
+def test_nestocam_tab_sees_a_run_that_is_loaded_in_the_same_script_run(fake_db):
+    """The NestoCAM tab is drawn after the History: loading a run must show its geometry, not 'Nest first'."""
+    from streamlit.testing.v1 import AppTest
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.session_state["pending_settings"] = {"effort_label": "Quick"}
+    at.run()
+    assert any("Nest first" in i.value for i in at.info)                       # nothing nested yet
+    fake_db.load_run = lambda i: {"id": i, "sheet_w": 1000.0, "sheet_h": 600.0, "margin": 5.0, "spacing": 3.0, "seconds": 1.0,
+                                  "result": [{"width": 1000.0, "height": 600.0, "placements": [
+                                      {"part": "a", "x": 10.0, "y": 10.0, "w": 300.0, "h": 200.0, "rotated": False}]}]}
+    next(b for b in at.button if b.label == "Load run").click().run()
+    assert not at.exception
+    assert not any("Nest first" in i.value for i in at.info)                   # the loaded run is the geometry
+    assert any(m.label == "Outlines" and m.value == "1" for m in at.metric)

@@ -337,7 +337,7 @@ parts_state: list[dict] = st.session_state.parts
 # The Machining tab (tool library, toolpaths, G-code: cam.py, post_fanuc.py, cam_ui.py) is switched off for now while its
 # flow is being redesigned: set SHOW_MACHINING = True to bring it back. Nothing of it was removed.
 SHOW_MACHINING = False
-_tab_names = ["Nesting", "Import files", "Parts details", "Nestocam"] + (["Machining"] if SHOW_MACHINING else [])
+_tab_names = ["Nesting", "Import files", "Parts details", "NestoCAM"] + (["Machining"] if SHOW_MACHINING else [])
 _tabs = st.tabs(_tab_names)
 tab_table, tab_dxf, tab_lib, tab_camming = _tabs[:4]
 tab_cam = _tabs[4] if SHOW_MACHINING else None
@@ -427,9 +427,6 @@ with tab_dxf:
             db.save_parts(pid, parts_state)
             st.rerun()
 
-
-with tab_camming:
-    camming_tab(db, pid, st.session_state.get("result"))
 
 if SHOW_MACHINING:
     with tab_cam:
@@ -934,3 +931,9 @@ with tab_table:
         sheets_area(meta, scrap_cache)
     else:
         leave_guard(0)
+
+
+# NestoCAM is drawn last: it must see the run that was nested or loaded earlier in this same run of the script
+# (Load run, a finished nesting ...); a tab only shows what the script had when it was drawn.
+with tab_camming:
+    camming_tab(db, pid, st.session_state.get("result"))
