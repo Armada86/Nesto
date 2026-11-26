@@ -47,6 +47,7 @@ python -m pytest tests
 - **Unsaved-moves protection**: a warning shows how many hand moves are not saved yet. The browser asks before you reload or close the page, and a dialog (Save & continue / Discard & continue / Cancel) appears before *Load run* or *Nest* would replace them; switching project needs a tick to discard them.
 - **History**: the sidebar lists the open project's past runs (number, sheets, utilization, time). *Load run* shows one again; *Delete…* removes one or several runs (pick them in a list or *Select all*; it only ever deletes runs of the open project).
 - **Header**: the puzzle-piece logo 🧩 next to the big "Nesto" title, with the open project's name below it in a smaller, lighter font (the same logo is the browser-tab icon).
+- **Sheet and nesting settings** (Sheet: length, width, edge margin, part spacing; Nesting: rotation step, precision, search effort) are in the Nesting tab, in two columns above the Nest button, which is centred below them; they are saved with the project automatically.
 - **Project menu** (left sidebar): New / Load / Save / Rename / Delete. Rename keeps the parts, settings and history; duplicate names (any letter case) are refused. Sheet and nesting settings are saved with the project automatically the moment you change them; Save also writes the parts (settings first, each step reported separately). Load restores both. The open project is kept in the page address, so a browser reload reopens it.
 - Neon tables: `projects`, `parts`, `nest_runs` (created/migrated automatically).
 
