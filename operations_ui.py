@@ -91,9 +91,18 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
             return
         ss.ops_error = None
         ss.ops_new_name = ""
+        ss.ops_creating = False
         ss.ops_sel = new_id
         ss.ops_ver += 1
         ss.ops_prev_rows = ()
+
+    def _start_create():
+        ss.ops_creating = True
+        ss.ops_error = None
+
+    def _cancel_create():
+        ss.ops_creating = False
+        ss.ops_error = None
 
     def _close():
         ss.ops_sel = None
@@ -121,11 +130,19 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
 
     st.caption("An operation is one machining job (one sheet of this run). Create it, give it a name, then open it to define its "
                "five steps. The G-code file gets the name of the operation.")
-    with st.form("ops_new_form", border=False, clear_on_submit=False):
-        a, b, _ = st.columns([2, 1, 3])
-        a.text_input("New operation name", key="ops_new_name", placeholder="for example sheet_01_Milling")
-        b.markdown("<div style='padding-top:1.75rem'></div>", unsafe_allow_html=True)
-        b.form_submit_button("➕ Create operation", type="primary", on_click=_create, key="ops_create")
+    opened = ss.get("ops_sel") is not None
+    creating = bool(ss.get("ops_creating")) and not opened
+    ss.ops_creating = creating
+    cbtn, _ = st.columns([1.4, 6.6])
+    cbtn.button("➕ Create operation", on_click=_start_create, key="ops_new", type="primary", width="stretch", disabled=opened or creating,
+                help="Close the open operation first." if opened else None)
+    if creating:                                              # the name box only appears after the button is pressed
+        left, _ = st.columns([3, 5])
+        with left.form("ops_new_form", border=False):
+            st.text_input("Name of the new operation", key="ops_new_name", placeholder="for example sheet_01_Milling")
+            f1, f2 = st.columns(2)
+            f1.form_submit_button("Create", type="primary", on_click=_create, key="ops_create", width="stretch")
+            f2.form_submit_button("Cancel", on_click=_cancel_create, key="ops_cancel", width="stretch")
     if ss.get("ops_error"):
         st.error(ss.ops_error)
 
@@ -135,18 +152,24 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
     st.markdown("**Operations of this run**")
     df = pd.DataFrame([{"No.": i, "Name": o["name"], "Sheet": (o["settings"] or {}).get("sheet", 1),
                         "Tool": (f"T{o['settings']['tool']}" if (o["settings"] or {}).get("tool") else "")} for i, o in enumerate(ops, 1)])
-    ev = st.dataframe(df, hide_index=True, width="content", on_select="rerun", selection_mode="single-row", key=f"ops_table_{ss.ops_ver}")
+    tleft, _ = st.columns([3, 5])                          # the table is as wide as the three buttons below it, whatever the names
+    cfg = {"No.": st.column_config.NumberColumn(width=45), "Name": st.column_config.TextColumn(width=180),
+           "Sheet": st.column_config.NumberColumn(width=55), "Tool": st.column_config.TextColumn(width=50)}     # long names are cut
+    ev = tleft.dataframe(df, hide_index=True, width="stretch", column_config=cfg, on_select="rerun", selection_mode="single-row",
+                         key=f"ops_table_{ss.ops_ver}")
     rows = tuple(ev.selection.rows)
     if rows != ss.ops_prev_rows:
         ss.ops_prev_rows = rows
         ss.ops_sel = ops[rows[0]]["id"] if rows else None
         ss.ops_error = None
+        ss.ops_creating = False
         st.rerun()
     if ss.ops_sel is None:
         st.caption("Click an operation in the list to open it.")
         return
     op = by_id[ss.ops_sel]
-    b1, b2, b3, _ = st.columns([1, 1, 1, 5])               # right under the table, packed to the left
+    bleft, _ = st.columns([3, 5])                          # right under the table, the same width as the table
+    b1, b2, b3 = bleft.columns(3)
     b1.button("Close", on_click=_close, key="ops_close", width="stretch")
     with b2.popover("Rename", width="stretch"):
         st.text_input("New name", value=op["name"], key="ops_rename")
