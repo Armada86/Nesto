@@ -130,3 +130,45 @@ def test_tool_library_and_project_machining_settings_round_trip(db):
     finally:
         db.save_tools(keep)
         db.delete_project(pid)
+
+
+def _tool(n, **kw):
+    t = {"number": n, "tool_type": "END MILL", "name": "t", "diameter": 12.7, "shoulder_diameter": 12.7, "arbor_diameter": 12.7,
+         "shoulder_angle": 0.0, "cutting_length": 34.8, "shoulder_length": 43.7, "total_length": 43.7, "chamfer": 0.0,
+         "outside_holder": 122.2, "helical_angle": 30.0, "rough": False, "flutes": 3}
+    t.update(kw)
+    return t
+
+
+def test_tool_library_add_change_renumber_delete(db):
+    for r in db.list_cam_tools():
+        db.delete_cam_tool(r["number"])
+    db.save_cam_tool(_tool(1))
+    db.save_cam_tool(_tool(2, diameter=6.0))
+    assert [r["number"] for r in db.list_cam_tools()] == [1, 2]
+    with pytest.raises(ValueError):
+        db.save_cam_tool(_tool(2), None)                    # a new tool with a used number
+    with pytest.raises(ValueError):
+        db.save_cam_tool(_tool(2), 1)                       # tool 1 renumbered onto tool 2
+    db.save_cam_tool(_tool(1, diameter=10.0, rough=True), 1)                 # change in place
+    assert next(r for r in db.list_cam_tools() if r["number"] == 1)["diameter"] == 10.0
+    db.save_cam_tool(_tool(5, diameter=10.0), 1)            # renumber 1 -> 5
+    assert [r["number"] for r in db.list_cam_tools()] == [2, 5]
+    db.delete_cam_tool(2)
+    db.delete_cam_tool(5)
+    assert db.list_cam_tools() == []
+
+
+def test_old_machining_tools_are_deleted_once(db):
+    import db as _db
+    with _db.connect() as c:
+        c.execute("DELETE FROM app_migrations WHERE name='purge_old_cam_tools'")
+        c.execute("INSERT INTO cam_tools(number,name,diameter,flutes,rpm,feed,plunge,step_down,coolant) VALUES (91,'old',6,2,1,1,1,1,'none')")
+    _db.init_db()
+    assert _db.list_tools() == []
+    with _db.connect() as c:
+        c.execute("INSERT INTO cam_tools(number,name,diameter,flutes,rpm,feed,plunge,step_down,coolant) VALUES (92,'kept',6,2,1,1,1,1,'none')")
+    _db.init_db()                                           # the purge does not run again
+    assert [t["number"] for t in _db.list_tools()] == [92]
+    with _db.connect() as c:
+        c.execute("DELETE FROM cam_tools")

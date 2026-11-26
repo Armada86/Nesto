@@ -39,6 +39,24 @@ CREATE TABLE IF NOT EXISTS cam_tools (
     step_down DOUBLE PRECISION NOT NULL,
     coolant TEXT NOT NULL DEFAULT 'none'
 );
+CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS nesto_tools (
+    number INT PRIMARY KEY,
+    tool_type TEXT NOT NULL DEFAULT 'END MILL',
+    name TEXT NOT NULL DEFAULT '',
+    diameter DOUBLE PRECISION NOT NULL,
+    shoulder_diameter DOUBLE PRECISION NOT NULL,
+    arbor_diameter DOUBLE PRECISION NOT NULL,
+    shoulder_angle DOUBLE PRECISION NOT NULL DEFAULT 0,
+    cutting_length DOUBLE PRECISION NOT NULL,
+    shoulder_length DOUBLE PRECISION NOT NULL,
+    total_length DOUBLE PRECISION NOT NULL,
+    chamfer DOUBLE PRECISION NOT NULL DEFAULT 0,
+    outside_holder DOUBLE PRECISION NOT NULL,
+    helical_angle DOUBLE PRECISION NOT NULL DEFAULT 30,
+    rough BOOLEAN NOT NULL DEFAULT FALSE,
+    flutes INT NOT NULL DEFAULT 2
+);
 CREATE TABLE IF NOT EXISTS nest_runs (
     id SERIAL PRIMARY KEY,
     project_id INT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -76,6 +94,10 @@ def connect():
 def init_db():
     with connect() as c:
         c.execute(SCHEMA)
+        # one time: the tools saved by the first (switched-off) Machining tab are deleted; the NestoCAM Tools tab has its own table
+        if not c.execute("SELECT 1 FROM app_migrations WHERE name='purge_old_cam_tools'").fetchone():
+            c.execute("DELETE FROM cam_tools")
+            c.execute("INSERT INTO app_migrations(name) VALUES ('purge_old_cam_tools')")
 
 
 def list_projects():
@@ -200,6 +222,33 @@ def save_tools(tools: list[dict]):
                       " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                       (int(t["number"]), t.get("name", ""), float(t["diameter"]), int(t.get("flutes", 2)), float(t["rpm"]),
                        float(t["feed"]), float(t["plunge"]), float(t["step_down"]), t.get("coolant", "none")))
+
+
+TOOL_FIELDS = ("number", "tool_type", "name", "diameter", "shoulder_diameter", "arbor_diameter", "shoulder_angle", "cutting_length",
+               "shoulder_length", "total_length", "chamfer", "outside_holder", "helical_angle", "rough", "flutes")
+
+
+def list_cam_tools():
+    """The NestoCAM tool library (one library for all projects), ordered by tool number."""
+    with connect() as c:
+        return c.execute(f"SELECT {', '.join(TOOL_FIELDS)} FROM nesto_tools ORDER BY number").fetchall()
+
+
+def save_cam_tool(tool: dict, old_number: int | None = None):
+    """Add a tool, or change the tool that had `old_number` (the number itself may change). Raises ValueError if the number is taken."""
+    with connect() as c:
+        taken = c.execute("SELECT 1 FROM nesto_tools WHERE number=%s", (int(tool["number"]),)).fetchone()
+        if taken and (old_number is None or int(old_number) != int(tool["number"])):
+            raise ValueError(f"Tool number {int(tool['number'])} is already used.")
+        if old_number is not None:
+            c.execute("DELETE FROM nesto_tools WHERE number=%s", (int(old_number),))
+        c.execute(f"INSERT INTO nesto_tools({', '.join(TOOL_FIELDS)}) VALUES ({', '.join(['%s'] * len(TOOL_FIELDS))})",
+                  [tool[f] for f in TOOL_FIELDS])
+
+
+def delete_cam_tool(number: int):
+    with connect() as c:
+        c.execute("DELETE FROM nesto_tools WHERE number=%s", (int(number),))
 
 
 def get_cam(pid: int):

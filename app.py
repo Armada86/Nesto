@@ -12,7 +12,7 @@ from fresh_modules import reload_changed
 # after a deploy the server may keep old copies of the local modules in memory: reload the ones that changed
 reload_changed(["machine_profile", "shapes", "nesting", "layout_edit", "nesting_poly", "render", "dxf_io", "step_io",
                 "dxf_export", "step_export", "cutlist_export", "part_view", "sheet_editor", "nest_job", "cam", "post_fanuc",
-                "cam_ui", "camming_ui", "branding", "db"])
+                "cam_ui", "camming_ui", "tools_ui", "branding", "db"])
 
 import branding
 import db
