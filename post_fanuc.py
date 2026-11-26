@@ -52,7 +52,8 @@ class _Writer:
 
 
 def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, project: str = "", run_no=None,
-            stats: dict | None = None, z0_note: str | None = None, spin: str = "M3") -> str:
+            stats: dict | None = None, z0_note: str | None = None, spin: str = "M3", operation: str | None = None,
+            brushes: bool = True) -> str:
     """The complete program text for one sheet. groups: [(Tool, [moves])] from cam.groups()."""
     w = _Writer()
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -79,8 +80,9 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
     w.block(_comment("METRIC PROGRAM"))
     w.safe_position()
     first = True
+    brush_down = False
     for tool, moves in groups:
-        w.block(_comment(f"OPERATION: CONTOURS WITH T{tool.number} {tool.name or 'ENDMILL'}"))
+        w.block(_comment(f"OPERATION: {operation}" if operation else f"OPERATION: CONTOURS WITH T{tool.number} {tool.name or 'ENDMILL'}"))
         if not first:
             w.block("M1")                           # @start_of_job: optional stop before a tool change
             w.block("M9") if w.coolant_on else None
@@ -106,10 +108,15 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
         w.pos["Z"] = first_move[3]
         for code, x, y, z, f in moves[1:]:
             w.move(code, x, y, z, f)
+            if brushes and code == "G1" and not brush_down:          # @line of the post: brushes down after the first cutting move
+                w.block("M96 (BRUSHES DOWN)")
+                brush_down = True
         # @end_of_job
         if job.smoothing:
             w.block("G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)")
         w.safe_position()
+        if brush_down:
+            w.block("M97 (BRUSHES UP)")
         first = False
     if w.coolant_on:                                 # @end_program
         w.block("M9")
