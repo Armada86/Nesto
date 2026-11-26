@@ -135,7 +135,7 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
     st.markdown("**Operations of this run**")
     df = pd.DataFrame([{"No.": i, "Name": o["name"], "Sheet": (o["settings"] or {}).get("sheet", 1),
                         "Tool": (f"T{o['settings']['tool']}" if (o["settings"] or {}).get("tool") else "")} for i, o in enumerate(ops, 1)])
-    ev = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row", key=f"ops_table_{ss.ops_ver}")
+    ev = st.dataframe(df, hide_index=True, width="content", on_select="rerun", selection_mode="single-row", key=f"ops_table_{ss.ops_ver}")
     rows = tuple(ev.selection.rows)
     if rows != ss.ops_prev_rows:
         ss.ops_prev_rows = rows
