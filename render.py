@@ -97,34 +97,12 @@ def part_color_indices(sheets_placements) -> dict:
     return idx
 
 
-def draw_sheet(sheet, title="", scrap=None, color_index=None):
-    """scrap: optional list of free rectangles (x, y, w, h) to outline as usable offcuts.
+def place_names(fig, ax, W, H, labels):
+    """Write the names of the parts on a drawing of a W x H sheet. labels: [(name, shapely geometry of the part)].
     Part names: inside the part, as large as fits, but not smaller than OUT_BELOW pt. A part too small for that gets
     its name OUTSIDE the sheet, on the sheet edge nearest to it (so the names are spread around the sheet, not
-    collected on one side), with a thin leader line and a dot on the part."""
-    W, H = sheet.width, sheet.height
-    fig, ax = plt.subplots(figsize=(8, 8 * H / W if W else 5), dpi=170)
-    ax.add_patch(Rectangle((0, 0), W, H, fill=False, lw=2, color="black"))
-    cmap = plt.get_cmap("tab20")
-    names = {}
-    for p in sheet.placements:
-        c = cmap((color_index[p.part] if color_index and p.part in color_index else names.setdefault(p.part, len(names))) % 20)
-        if p.polys:
-            for poly in p.polys:
-                ax.add_patch(_poly_patch(poly, facecolor=c, alpha=0.5, edgecolor="black", lw=0.8))
-        else:
-            ax.add_patch(Rectangle((p.x, p.y), p.w, p.h, facecolor=c, alpha=0.5, edgecolor="black", lw=0.8))
-    for i, (x, y, w, h) in enumerate(scrap or []):
-        ax.add_patch(Rectangle((x, y), w, h, fill=False, ls="--", lw=1.3, edgecolor="#2a9d4a"))
-        if w > 0.12 * W and h > 0.05 * H:
-            ax.text(x + w / 2, y + h / 2, f"scrap {w:.0f} × {h:.0f}", ha="center", va="center",
-                    fontsize=8, color="#2a9d4a")
-    ax.set_aspect("equal")
-    ax.set_title(f"{title}  –  {sheet.utilization:.2%} used  ·  cut length {sheet.cut_length:,.0f}"
-                 + (f"  ·  largest offcut {scrap[0][2]:.0f} × {scrap[0][3]:.0f}" if scrap else ""))
-
+    collected on one side), with a thin leader line and a dot on the part. Sets the limits of the axes (room for the names)."""
     renderer = fig.canvas.get_renderer()
-    geoms = [_part_geom(p) for p in sheet.placements]
     room = {"l": 0.0, "r": 0.0, "b": 0.0, "t": 0.0}          # extra room beside the sheet for the outside names
     plan = None
     for _ in range(4):                                       # the room shrinks the drawing a little: settle on it
@@ -134,22 +112,21 @@ def draw_sheet(sheet, title="", scrap=None, color_index=None):
         px_x = abs(ax.transData.transform((1, 0))[0] - ax.transData.transform((0, 0))[0])      # pixels per drawing unit
         px_y = abs(ax.transData.transform((0, 1))[1] - ax.transData.transform((0, 0))[1])
         probe = {}
-        for p in sheet.placements:
-            if p.part not in probe:
-                t = ax.text(0, 0, p.part, fontsize=REF_FONT)
+        for name, _g in labels:
+            if name not in probe:
+                t = ax.text(0, 0, name, fontsize=REF_FONT)
                 bb = t.get_window_extent(renderer)
                 t.remove()
-                probe[p.part] = (bb.width / px_x, bb.height / px_y)
+                probe[name] = (bb.width / px_x, bb.height / px_y)
         inside, outside = [], []
-        for p, g in zip(sheet.placements, geoms):
-            w7, h7 = probe[p.part]
+        for name, g in labels:
+            w7, h7 = probe[name]
             cx, cy, fs, rot = _label_spot(g, w7, h7)
             if fs >= OUT_BELOW:
-                inside.append((p.part, cx, cy, fs, rot))
+                inside.append((name, cx, cy, fs, rot))
             else:
-                from shapely.geometry import Point
                 pt = g.representative_point() if not g.contains(g.centroid) else g.centroid
-                outside.append((p.part, pt.x, pt.y))
+                outside.append((name, pt.x, pt.y))
         # each outside name goes to the sheet edge nearest to its part; along an edge they keep their order
         sides = {k: [] for k in "lrbt"}
         for name, ax_, ay in outside:
@@ -187,4 +164,33 @@ def draw_sheet(sheet, title="", scrap=None, color_index=None):
         ax.annotate(name, xy=(ax_, ay), xytext=(x, y), textcoords="data", ha=ha, va=va, fontsize=fs,
                     arrowprops=dict(arrowstyle="-", lw=0.5, color="0.35", shrinkA=1, shrinkB=0), annotation_clip=False)
         ax.plot([ax_], [ay], marker="o", ms=2, color="0.2", zorder=5)
+
+
+def draw_sheet(sheet, title="", scrap=None, color_index=None):
+    """scrap: optional list of free rectangles (x, y, w, h) to outline as usable offcuts.
+    Part names: inside the part, as large as fits, but not smaller than OUT_BELOW pt. A part too small for that gets
+    its name OUTSIDE the sheet, on the sheet edge nearest to it (so the names are spread around the sheet, not
+    collected on one side), with a thin leader line and a dot on the part."""
+    W, H = sheet.width, sheet.height
+    fig, ax = plt.subplots(figsize=(8, 8 * H / W if W else 5), dpi=170)
+    ax.add_patch(Rectangle((0, 0), W, H, fill=False, lw=2, color="black"))
+    cmap = plt.get_cmap("tab20")
+    names = {}
+    for p in sheet.placements:
+        c = cmap((color_index[p.part] if color_index and p.part in color_index else names.setdefault(p.part, len(names))) % 20)
+        if p.polys:
+            for poly in p.polys:
+                ax.add_patch(_poly_patch(poly, facecolor=c, alpha=0.5, edgecolor="black", lw=0.8))
+        else:
+            ax.add_patch(Rectangle((p.x, p.y), p.w, p.h, facecolor=c, alpha=0.5, edgecolor="black", lw=0.8))
+    for i, (x, y, w, h) in enumerate(scrap or []):
+        ax.add_patch(Rectangle((x, y), w, h, fill=False, ls="--", lw=1.3, edgecolor="#2a9d4a"))
+        if w > 0.12 * W and h > 0.05 * H:
+            ax.text(x + w / 2, y + h / 2, f"scrap {w:.0f} × {h:.0f}", ha="center", va="center",
+                    fontsize=8, color="#2a9d4a")
+    ax.set_aspect("equal")
+    ax.set_title(f"{title}  –  {sheet.utilization:.2%} used  ·  cut length {sheet.cut_length:,.0f}"
+                 + (f"  ·  largest offcut {scrap[0][2]:.0f} × {scrap[0][3]:.0f}" if scrap else ""))
+
+    place_names(fig, ax, W, H, [(p.part, g) for p, g in zip(sheet.placements, [_part_geom(p) for p in sheet.placements])])
     return fig

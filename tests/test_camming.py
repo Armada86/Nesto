@@ -242,3 +242,29 @@ def test_the_boxes_of_an_operation_keep_their_saved_values_after_it_was_closed_a
         assert at.number_input(key="tl_diameter").value == 12.7
     finally:
         sys.modules.pop("db", None)
+
+
+def test_plan_view_names_follow_the_nesting_page_rules_small_parts_outside_with_a_leader_line():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from shapely.geometry import box
+    from render import place_names
+    W, H = 6250.0, 1500.0
+    fig, ax = plt.subplots(figsize=(8, 8 * H / W), dpi=100)
+    ax.set_aspect("equal")
+    place_names(fig, ax, W, H, [("1  BIG", box(5, 5, 2416, 1195)), ("2  tiny", box(10, 1250, 60, 1300))])
+    inside = [t for t in ax.texts if not hasattr(t, "arrow_patch") or t.arrow_patch is None]
+    outside = [t for t in ax.texts if getattr(t, "arrow_patch", None) is not None]
+    assert [t.get_text() for t in inside] == ["1  BIG"]                                  # the big part: its name inside
+    assert [t.get_text() for t in outside] == ["2  tiny"]                                 # the tiny part: outside, with a leader line
+    x, y = outside[0].get_position()
+    assert not (0 <= x <= W and 0 <= y <= H)                                              # outside the sheet
+    plt.close(fig)
+
+
+def test_chains_carry_the_holes_of_their_outline_for_the_labels():
+    from shapely.geometry import box
+    sheet = {"width": 1000.0, "height": 600.0, "placements": [pl("A", box(10, 10, 300, 200).difference(box(100, 60, 200, 150)))]}
+    ch = chains(sheet)
+    assert len(ch[0]["holes"]) == 1 and ch[1]["holes"] == []
