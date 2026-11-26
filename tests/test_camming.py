@@ -64,3 +64,41 @@ def test_cached_pictures_depend_on_the_picture_version():
     import camming_ui
     for fn in (camming_ui.isometric_png, camming_ui.plan_png):
         assert "version" in inspect.signature(fn).parameters
+
+
+def test_tool_validation():
+    import tools_ui as tu
+    ok = tu.blank(1)
+    assert tu.validate(ok, set()) == []
+    assert tu.validate(ok, {1})                                           # number already used
+    assert tu.validate({**ok, "diameter": 0}, set())
+    assert tu.validate({**ok, "cutting_length": 50, "shoulder_length": 40}, set())   # CL longer than SL
+    assert tu.validate({**ok, "shoulder_length": 60, "total_length": 40}, set())     # SL longer than TL
+    assert tu.validate({**ok, "outside_holder": 30}, set())                          # OHL shorter than TL
+    assert tu.validate({**ok, "chamfer": 7}, set())                                  # chamfer more than half the diameter
+
+
+def test_tools_tab_shows_the_form_and_saves_a_tool():
+    from streamlit.testing.v1 import AppTest
+    import sys, types
+    saved = []
+    db = types.ModuleType("db")
+    db.list_cam_tools = lambda: list(saved)
+    db.save_cam_tool = lambda t, old=None: saved.append(t)
+    db.delete_cam_tool = lambda n: None
+    db.get_cam = lambda pid: None
+    db.save_cam = lambda *a: None
+    sys.modules["db"] = db
+    try:
+        def app():
+            import streamlit as st
+            from camming_ui import camming_tab
+            import db
+            camming_tab(db, 1, None)
+        at = AppTest.from_function(app).run()
+        assert not at.exception
+        assert [t.label for t in at.tabs] == ["1 · Geometry", "2 · Tools"]
+        next(b for b in at.button if b.key == "tools_save").click().run()
+        assert not at.exception and len(saved) == 1 and saved[0]["number"] == 1 and saved[0]["diameter"] == 12.0
+    finally:
+        sys.modules.pop("db", None)
