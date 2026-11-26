@@ -232,6 +232,7 @@ def test_the_program_is_written_like_the_solidcam_file():
     g = raw.split("\r\n")
     box = "(" + "-" * 48 + ")"
     assert g[2:5] == [box, "(           POST PROCESSOR INFORMATION           )", box]
+    assert g[5] == "(CAM VERSION    : NESTOCAM 2026                  )"
     assert g[6:11] == ["(LICENSED TO    : MARIANI                        )", "(MACHINE        : CR ONSRUD 336G18CW7            )",
                        "(CONTROLLER     : FANUC                          )", "(POST VERSION   : 0.4                            )",
                        "(POST CREATED BY: SSG                            )"]

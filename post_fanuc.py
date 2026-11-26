@@ -181,7 +181,7 @@ def _solidcam_header(w, name: str, groups: list, operation, stats, now) -> None:
     short = machine.NAME.split(" - ")[-1].upper()
     base = name.rsplit(".", 1)[0].upper()
     for line in (_RULE, _box("POST PROCESSOR INFORMATION", True), _RULE,
-                 _box("S-CAM VERSION  : NESTOCAM"), _box("LICENSED TO    : MARIANI"), _box(f"MACHINE        : {short}"),
+                 _box("CAM VERSION    : NESTOCAM 2026"), _box("LICENSED TO    : MARIANI"), _box(f"MACHINE        : {short}"),
                  _box(f"CONTROLLER     : {machine.CONTROLLER}"), _box(f"POST VERSION   : {machine.POST_VERSION}"),
                  _box("POST CREATED BY: SSG"), _RULE, _box("PROGRAM INFORMATION", True), _RULE,
                  _box(f"PART NAME   : {base}"), _box(f"G-CODE DATE : {now.strftime('%d-%b-%Y').upper()}"),
