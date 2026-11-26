@@ -20,6 +20,7 @@ from layout_edit import is_held, placement_geom
 import machine_profile as machine
 
 EPS = 1e-9
+ARC_COUNT_SLACK = 0.01     # an arc of 90.03 degrees still gets the 14 pieces of a quarter circle (what SolidCAM does)
 
 
 @dataclass
@@ -33,6 +34,8 @@ class Tool:
     plunge: float = 1500.0            # mm/min, plunging / ramping
     step_down: float = 6.0            # mm per pass
     coolant: str = "none"             # none | flood | air
+    length: float = 0.0               # the length of the tool out of its holder (the header of the program)
+    holder: str = ""                  # the holder (the header of the program)
 
     def problems(self) -> list[str]:
         out = []
@@ -164,11 +167,85 @@ def _lowleft_start(src, ccw: bool, r: float, toward_left: bool):
     return v
 
 
+def _max_arc_step(r: float, tol: float) -> float:
+    """The largest angle (rad) of one straight piece of an arc of radius r that stays within `tol` of the arc."""
+    return 2 * math.acos(max(-1.0, 1 - tol / r)) if r > tol else math.pi / 2
+
+
+def offset_ring(pts, r: float, outside: bool, tol: float, step: float | None = None):
+    """The tool-centre path around a polygon ring made by hand: every straight edge is moved a radius to its side, a corner where
+    the moved edges overlap is cut at their intersection, and a corner where they do not meet is rounded by an arc whose straight
+    pieces are all the same length (as few as stay within `tol` of the true arc, the end points on the arc). pts: closed ring.
+    outside: the path runs outside the polygon (an outline) or inside it (a hole). Returns a closed ring [(x, y), ...]."""
+    step = step or _max_arc_step(r, tol)
+    ring = [tuple(p) for p in pts]
+    if ring[0] == ring[-1]:
+        ring = ring[:-1]
+    if _signed_area(ring + [ring[0]]) < 0:
+        ring.reverse()                                        # counter-clockwise: the inside is on the left
+    cl = []                                                   # without repeated points and straight-through points
+    for i, p in enumerate(ring):
+        a, b = ring[i - 1], ring[(i + 1) % len(ring)]
+        if math.hypot(p[0] - a[0], p[1] - a[1]) < 1e-9:
+            continue
+        cross = (p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0])
+        dot = (p[0] - a[0]) * (b[0] - p[0]) + (p[1] - a[1]) * (b[1] - p[1])
+        if abs(cross) < 1e-9 and dot > 0:
+            continue
+        cl.append(p)
+    n = len(cl)
+
+    def unit(a, b):
+        d = math.hypot(b[0] - a[0], b[1] - a[1])
+        return ((b[0] - a[0]) / d, (b[1] - a[1]) / d)
+
+    out = []
+    for i in range(n):
+        p = cl[i]
+        d1, d2 = unit(cl[i - 1], p), unit(p, cl[(i + 1) % n])
+        side = (lambda d: (d[1], -d[0])) if outside else (lambda d: (-d[1], d[0]))      # the normal on the side of the path
+        n1, n2 = side(d1), side(d2)
+        cross = d1[0] * d2[1] - d1[1] * d2[0]
+        dot = d1[0] * d2[0] + d1[1] * d2[1]
+        if (cross > 0) == outside:                            # the moved edges do not meet: an arc from n1 to n2
+            phi = math.atan2(cross, dot)
+            if abs(phi) <= 0.5 * step:                        # a tiny turn (a curve cut into many short edges): one point is enough
+                m = math.hypot(n1[0] + n2[0], n1[1] + n2[1]) or 1.0
+                out.append((p[0] + r * (n1[0] + n2[0]) / m, p[1] + r * (n1[1] + n2[1]) / m))
+                continue
+            k = max(1, math.ceil(abs(phi) / step - ARC_COUNT_SLACK))
+            for j in range(k + 1):
+                c, s_ = math.cos(phi * j / k), math.sin(phi * j / k)
+                out.append((p[0] + r * (n1[0] * c - n1[1] * s_), p[1] + r * (n1[0] * s_ + n1[1] * c)))
+        else:                                                 # they overlap: the corner of the moved edges
+            f = r / (1 + dot)
+            out.append((p[0] + f * (n1[0] + n2[0]), p[1] + f * (n1[1] + n2[1])))
+    out.append(out[0])
+    return out
+
+
 def _quad_segs(r: float, tol: float | None, default: int = 10) -> int:
     """Segments per quarter circle so that the chord is at most `tol` away from the arc (default: a fixed number)."""
     if not tol or r <= tol:
         return default
     return max(4, math.ceil((math.pi / 4) / math.acos(1 - tol / r)))
+
+
+def _tool_path(coords, r: float, outside: bool, tol: float | None, ref):
+    """The tool-centre path around a part ring. With a tolerance: made by hand (offset_ring) when that agrees with the shapely
+    offset `ref` (a Polygon) and does not cross itself; otherwise the shapely offset itself."""
+    fallback = [tuple(c) for c in ref.simplify(0.005).exterior.coords]
+    if not tol:
+        return fallback
+    try:
+        pts = offset_ring(coords, r, outside, tol)
+        ring = LineString(pts)
+        if ring.is_simple or (pts[0] == pts[-1] and LineString(pts[:-1] + [pts[0]]).is_ring):
+            if LineString(pts).hausdorff_distance(ref.exterior) <= max(0.03, 3 * tol) and abs(Polygon(pts).area - ref.area) <= 0.01 * ref.area + 1.0:
+                return pts
+    except (ValueError, ZeroDivisionError):
+        pass
+    return fallback
 
 
 def _tool_for(kind: str, job: CamJob, tools: dict):
@@ -199,8 +276,8 @@ def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spaci
         others = [geoms[k] for k in range(len(geoms)) if k != idx]
         for poly in polys:
             r = outer_tool.diameter / 2
-            ring = Polygon(poly.exterior).buffer(r, quad_segs=_quad_segs(r, arc_tol)).simplify(0.005).exterior
-            pts = [tuple(c) for c in ring.coords]
+            ref = Polygon(poly.exterior).buffer(r, quad_segs=_quad_segs(r, arc_tol))
+            pts = _tool_path(list(poly.exterior.coords), r, True, arc_tol, ref)
             # the tool must not touch the neighbouring parts: they have to be at least a tool diameter apart
             if others:
                 line = LineString(pts)
@@ -218,7 +295,9 @@ def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spaci
                     continue
                 for sp in ([shrunk] if shrunk.geom_type == "Polygon" else list(shrunk.geoms)):
                     hb = Polygon(hole).bounds
-                    inner.append(Contour("inner", name, [tuple(c) for c in sp.simplify(0.005).exterior.coords], job.inner_tool,
+                    hpts = (_tool_path(list(hole.coords), ri, False, arc_tol, sp) if shrunk.geom_type == "Polygon"
+                            else [tuple(c) for c in sp.simplify(0.005).exterior.coords])
+                    inner.append(Contour("inner", name, hpts, job.inner_tool,
                                          list(hole.coords), ri, (round(hb[0], 3), round(hb[1], 3))))
     if too_close:
         names = ", ".join(sorted(set(gouge_names))[:6])

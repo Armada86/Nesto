@@ -23,7 +23,7 @@ PREFIX = "tl_"
 
 def blank(number: int = 1) -> dict:
     return {"number": number, "tool_type": TOOL_TYPES[0], "name": "", **{k: d for k, _l, _h, d in DIMS}, "helical_angle": 30.0,
-            "flutes": 2}
+            "flutes": 2, "holder": ""}
 
 
 def validate(t: dict, others: set) -> list[str]:
@@ -72,6 +72,7 @@ GUIDE_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 430" fon
 
 def _row_to_tool(r) -> dict:
     t = {k: r[k] for k in ("number", "tool_type", "name", "flutes")}
+    t["holder"] = r.get("holder") or ""
     for k, _l, _h, _d in DIMS:
         t[k] = float(r[k])
     t["helical_angle"] = float(r["helical_angle"])
@@ -84,7 +85,7 @@ def _load_form(t: dict):
 
 
 def _form_tool() -> dict:
-    t = {k: st.session_state[PREFIX + k] for k in ("number", "tool_type", "name", "flutes", "helical_angle")}
+    t = {k: st.session_state[PREFIX + k] for k in ("number", "tool_type", "name", "flutes", "helical_angle", "holder")}
     for k, _l, _h, _d in DIMS:
         t[k] = float(st.session_state[PREFIX + k])
     return t
@@ -268,6 +269,8 @@ def step_tools(db, pid):
                 b.text_input("Name (optional)", key=PREFIX + "name", disabled=lock)
                 a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type", disabled=lock)
                 b.number_input("Number of flutes", min_value=1, step=1, key=PREFIX + "flutes", disabled=lock)
+                a.text_input("Holder (optional)", key=PREFIX + "holder", disabled=lock,
+                             help="The name of the tool holder, written in the header of the G-code (for example ADAPTOR).")
                 st.markdown("**Tool parameters** (mm and degrees)")
                 c1, c2 = st.columns(2)
                 for i, (k, lab, hlp, _d) in enumerate(DIMS):

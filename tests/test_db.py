@@ -135,7 +135,7 @@ def test_tool_library_and_project_machining_settings_round_trip(db):
 def _tool(n, **kw):
     t = {"number": n, "tool_type": "END MILL", "name": "t", "diameter": 12.7, "shoulder_diameter": 12.7, "arbor_diameter": 12.7,
          "shoulder_angle": 0.0, "cutting_length": 34.8, "shoulder_length": 43.7, "total_length": 43.7, "chamfer": 0.0,
-         "outside_holder": 122.2, "helical_angle": 30.0, "flutes": 3}
+         "outside_holder": 122.2, "helical_angle": 30.0, "flutes": 3, "holder": "ADAPTOR"}
     t.update(kw)
     return t
 

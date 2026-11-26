@@ -18,7 +18,7 @@ import cam
 import machine_profile as machine
 import post_fanuc
 
-ARC_TOLERANCE = 0.02       # mm: the largest distance of a straight piece from the true arc
+ARC_TOLERANCE = 0.01       # mm: the largest distance of a straight piece from the true arc (as SolidCAM: a quarter circle of R6.35 has 14 pieces)
 
 ASSUMPTIONS = [
     "Depth: ONE pass from the upper level down to (upper level - profile depth). There is no step-down in the steps.",
@@ -30,7 +30,7 @@ ASSUMPTIONS = [
     "corner of the part, from left to right).",
     "Cutting side: holes are cut from inside, outlines from outside (the tool centre path is offset by the tool radius in software, "
     "so there is no cutter compensation G41 / G42). Always climb milling for the spin direction.",
-    f"Arcs: straight lines, at most {ARC_TOLERANCE:g} mm away from the true arc.",
+    f"Arcs: straight pieces of equal length, at most {ARC_TOLERANCE:g} mm away from the true arc, like SolidCAM (a quarter circle of R6.35 is 14 pieces).",
     "Coolant: none. No tabs. No finishing pass and no stock to leave.",
     f"Machine: work offset G{machine.WORK_OFFSET}, smoothing G05.1 Q1 R{machine.DEFAULT_SMOOTHING:g}, rapid at the clearance level, "
     "brushes down after the first cutting move (M96) and up at the end (M97), safe position (G28) like the post.",
@@ -40,7 +40,8 @@ ASSUMPTIONS = [
 def tool_from_row(t: dict, data: dict) -> cam.Tool:
     """The cam.Tool the planner and the post work with: the geometry of the tool from step 2, the feeds and speed from step 3."""
     return cam.Tool(number=int(t["number"]), name=t.get("name", "") or "", diameter=float(t["diameter"]), flutes=int(t.get("flutes", 2)),
-                    rpm=float(data["rpm"]), feed=float(data["feed_xy"]), plunge=float(data["feed_z"]), step_down=1e9, coolant="none")
+                    rpm=float(data["rpm"]), feed=float(data["feed_xy"]), plunge=float(data["feed_z"]), step_down=1e9, coolant="none",
+                    length=float(t.get("outside_holder") or 0.0), holder=str(t.get("holder") or ""))
 
 
 def contour_moves(c: cam.Contour, tool: cam.Tool, data: dict, lv: dict) -> list:
@@ -101,4 +102,4 @@ def text(name: str, sheet: dict, sheet_no: int, t: dict, data: dict, lv: dict, t
     note = (f"WORK OFFSET G{machine.WORK_OFFSET}: ZERO AT THE LOWER LEFT CORNER OF THE SHEET, Z0 = BOTTOM OF THE PARTS, "
             f"TOP OF THE MATERIAL Z{lv['upper']:g}")
     return post_fanuc.program(name, groups, job, sheet_no, (sheet["width"], sheet["height"]), project, run_no,
-                              {"length": length, "minutes": minutes}, z0_note=note, spin="M3" if data["direction"] == "CW" else "M4", operation=operation)
+                              {"length": length, "minutes": minutes}, z0_note=note, spin="M3" if data["direction"] == "CW" else "M4", operation=operation, solidcam=True)
