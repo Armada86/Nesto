@@ -254,7 +254,7 @@ def step_tools(db, pid):
                     bar[0].form_submit_button("Cancel", on_click=_cancel, key="tools_cancel")
                 else:
                     bar[0].form_submit_button("✏️ Edit", on_click=_edit, key="tools_edit_btn")
-                bar[1].form_submit_button("Save tool", type="primary", on_click=_save, key="tools_save", disabled=lock)
+                bar[1].form_submit_button("Save", type="primary", on_click=_save, key="tools_save", disabled=lock)
                 if old is not None:
                     bar[2].form_submit_button("Delete", on_click=_ask_delete, key="tools_ask_delete")
                 if old is not None and ss.get("tools_confirm"):

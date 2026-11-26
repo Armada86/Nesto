@@ -69,4 +69,4 @@ def step_data(db, pid):
         st.radio("Spin direction", ["CW", "CCW"], horizontal=True, key=PREFIX + "direction")
         for p in ss.get("data_problems", []):
             st.error(p)
-        st.form_submit_button("Save data", type="primary", on_click=_save, key="data_save")
+        st.form_submit_button("Save", type="primary", on_click=_save, key="data_save")

@@ -273,7 +273,7 @@ def step_geometry(db, pid, result):
     left.number_input("Material thickness", min_value=0.1, step=0.5, key="camming_thickness",
                       help="Height of the stock: the top of the material is at Z = thickness.")
     sheet_slot = left.container()                             # the sheet selector is drawn here (it needs the run), between the thickness and Save
-    if left.button("Save", key="camming_save_thickness"):
+    if left.button("Save", key="camming_save_thickness", type="primary"):
         try:
             cam = db.get_cam(pid) or {}
             cam["camming"] = {**cam.get("camming", {}), "thickness": float(st.session_state.camming_thickness)}
@@ -376,7 +376,7 @@ def order_editor(db, pid, sheet_no: int, ch: list, saved_ids: list):
     df = pd.DataFrame([{"No.": rank[cid], "Part": by_id[cid]["part"], "Type": by_id[cid]["type"],
                         "Length": round(by_id[cid]["length"], 1), "Z": 0.0} for cid in work])
     hi = work.index(sel) if sel in work else -1
-    styled = df.style.apply(lambda r: ["background-color: #fde68a; color: #1e293b; font-weight: 600"] * len(r) if r.name == hi else [""] * len(r), axis=1).format({"Length": "{:.1f}", "Z": "{:.0f}"})
+    styled = df.style.apply(lambda r: ["background-color: #cfe9f7; color: #0f3d57; font-weight: 600"] * len(r) if r.name == hi else [""] * len(r), axis=1).format({"Length": "{:.1f}", "Z": "{:.0f}"})
     st.dataframe(styled, hide_index=True, width="content", on_select="rerun", selection_mode="single-row", key=tkey)
     changed = list(work) != list(saved_ids)
     if changed:
