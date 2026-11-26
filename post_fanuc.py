@@ -52,7 +52,7 @@ class _Writer:
 
 
 def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, project: str = "", run_no=None,
-            stats: dict | None = None) -> str:
+            stats: dict | None = None, z0_note: str | None = None, spin: str = "M3") -> str:
     """The complete program text for one sheet. groups: [(Tool, [moves])] from cam.groups()."""
     w = _Writer()
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -68,7 +68,7 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
     if job.programmer:
         w.block(_comment(f"PROGRAMMED BY: {job.programmer}"))
     w.block(_comment(f"DATE: {now}"))
-    w.block(_comment(f"WORK OFFSET G{machine.WORK_OFFSET}: ZERO AT THE LOWER LEFT CORNER OF THE SHEET, Z0 = TOP OF THE MATERIAL"))
+    w.block(_comment(z0_note or f"WORK OFFSET G{machine.WORK_OFFSET}: ZERO AT THE LOWER LEFT CORNER OF THE SHEET, Z0 = TOP OF THE MATERIAL"))
     if stats:
         w.block(_comment(f"CUT LENGTH {stats.get('length', 0):.0f} MM, ESTIMATED TIME {stats.get('minutes', 0):.1f} MIN"))
     w.block(_comment("TOOL LIST"))
@@ -90,7 +90,7 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
         w.block(f"G{machine.WORK_OFFSET}")
         w.block(f"M6 T{tool.number}")
         w.block("G0 C0.")
-        w.block(f"S{num(tool.rpm).rstrip('.')} M3")
+        w.block(f"S{num(tool.rpm).rstrip('.')} {spin}")
         w.block("G94")
         w.pos = {"X": None, "Y": None, "Z": None}
         w.feed = None

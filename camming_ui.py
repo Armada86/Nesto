@@ -20,7 +20,7 @@ PICTURE_VERSION = 9  # raise it whenever the drawing code changes: the pictures 
                      # older picture of the same sheet would still be shown after an update
 ZOOM = 1.0
 FONT_PT = 4.5   # size of the dimension numbers          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
-STEPS = [("geometry", "1 · Geometry"), ("tools", "2 · Tools"), ("data", "3 · Data"), ("levels", "4 · Levels")]       # the next steps are added here, one by one
+STEPS = [("geometry", "1 · Geometry"), ("tools", "2 · Tools"), ("data", "3 · Data"), ("levels", "4 · Levels"), ("gcode", "5 · Generate G-code")]       # the next steps are added here, one by one
 
 
 def chains(sheet: dict) -> list[dict]:
@@ -260,11 +260,12 @@ def step_geometry(db, pid, result):
                                for i, c in enumerate(ch, 1)]), hide_index=True, width="stretch")
 
 
-def camming_tab(db, pid, result):
+def camming_tab(db, pid, result, project: str = "", meta: dict | None = None, run_id=None, file_base: str = "nest"):
     from data_ui import step_data
+    from gcode_ui import step_gcode
     from levels_ui import step_levels
     from tools_ui import step_tools
-    t_geo, t_tools, t_data, t_levels = st.tabs([label for _k, label in STEPS])
+    t_geo, t_tools, t_data, t_levels, t_gcode = st.tabs([label for _k, label in STEPS])
     with t_geo:
         step_geometry(db, pid, result)
     with t_tools:
@@ -273,3 +274,5 @@ def camming_tab(db, pid, result):
         step_data(db, pid)
     with t_levels:
         step_levels(db, pid)
+    with t_gcode:
+        step_gcode(db, pid, result, project, meta, run_id, file_base)

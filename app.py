@@ -12,7 +12,7 @@ from fresh_modules import reload_changed
 # after a deploy the server may keep old copies of the local modules in memory: reload the ones that changed
 reload_changed(["machine_profile", "shapes", "nesting", "layout_edit", "nesting_poly", "render", "dxf_io", "step_io",
                 "dxf_export", "step_export", "cutlist_export", "part_view", "sheet_editor", "nest_job", "cam", "post_fanuc",
-                "cam_ui", "camming_ui", "tools_ui", "data_ui", "levels_ui", "branding", "db"])
+                "cam_ui", "camming_ui", "tools_ui", "data_ui", "levels_ui", "gcode_cam", "gcode_ui", "branding", "db"])
 
 import branding
 import db
@@ -936,4 +936,7 @@ with tab_table:
 # NestoCAM is drawn last: it must see the run that was nested or loaded earlier in this same run of the script
 # (Load run, a finished nesting ...); a tab only shows what the script had when it was drawn.
 with tab_camming:
-    camming_tab(db, pid, st.session_state.get("result"))
+    _rid = st.session_state.get("run_id")
+    _safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", proj["name"]).strip("_") or "nest"
+    camming_tab(db, pid, st.session_state.get("result"), proj["name"], st.session_state.get("run_meta") or {"margin": margin, "spacing": spacing},
+                _rid, f"{_safe_name}_run{_rid}" if _rid else _safe_name)
