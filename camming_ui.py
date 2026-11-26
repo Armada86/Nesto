@@ -269,6 +269,8 @@ def step_geometry(db, pid, result):
         n_sheets = max(1, len(result or []))
         st.session_state.camming_sheet = min(max(1, int(_saved(db, pid).get("sheet", 1))), n_sheets)
         st.session_state.camming_loaded_pid = pid
+    if "camming_thickness" not in st.session_state:           # Streamlit forgets a box that was not drawn in a run (the operation was closed)
+        st.session_state.camming_thickness = float(_saved(db, pid).get("thickness", 18.0))
     left, _ = st.columns([1, 2])                              # the thickness and the sheet above each other, wide enough for their text
     left.number_input("Material thickness", min_value=0.1, step=0.5, key="camming_thickness",
                       help="Height of the stock: the top of the material is at Z = thickness.")
@@ -304,6 +306,8 @@ def step_geometry(db, pid, result):
         st.info("Nest first: the geometry is taken from the sheets of the current run.")
         st.button("Save", key="camming_save", type="primary", on_click=_save_all)
         return
+    if "camming_sheet" not in st.session_state:
+        st.session_state.camming_sheet = min(max(1, int(_saved(db, pid).get("sheet", 1))), len(result))
     if not 1 <= st.session_state.get("camming_sheet", 1) <= len(result):
         st.session_state.camming_sheet = 1
     sheet_no = sheet_slot.selectbox("Sheet of this operation", list(range(1, len(result) + 1)), key="camming_sheet",
