@@ -183,8 +183,14 @@ def step_tools(db, pid):
     if msg:
         st.toast(msg, icon=":material/check_circle:")
 
-    top = st.columns([1, 1, 3])
+    top = st.columns([1, 1.4, 3])
     top[0].button("➕ New tool", on_click=_new, key="tools_new")
+    sel = ss.tools_sel or None
+    if sel is not None and sel == used:
+        top[1].button("Do not use for CAM", on_click=_use, args=(None,), key="tools_unuse")
+    else:
+        top[1].button("Use for CAM", on_click=_use, args=(sel,), key="tools_use", disabled=sel is None, type="primary",
+                      help="Tick a tool in the list, then press this to choose it for the next CAM steps of this project.")
     if used is not None:
         u = by_no[used]
         top[2].markdown(f"Tool for the CAM of this project: **T{used}**  {u['name']}  Ø{u['diameter']:g}")
@@ -195,9 +201,7 @@ def step_tools(db, pid):
     list_col, detail_col = st.columns([2, 5]) if open_ else (st.container(), None)
     with list_col:
         if tools:
-            df = pd.DataFrame([{"No.": t["number"], "Name": t["name"], "Type": t["tool_type"], "D": t["diameter"], "Flutes": t["flutes"],
-                                "CL": t["cutting_length"], "TL": t["total_length"], "OHL": t["outside_holder"],
-                                "CAM": "✔ chosen" if t["number"] == used else ""} for t in tools])
+            df = pd.DataFrame([{"No.": t["number"], "Name": t["name"], "Type": t["tool_type"], "Diameter": t["diameter"], "Flutes": t["flutes"]} for t in tools])
             ev = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
                               key=f"tools_table_{ss.tools_ver}")
             rows = tuple(ev.selection.rows)
@@ -237,12 +241,7 @@ def step_tools(db, pid):
             for p in ss.get("tools_problems", []):
                 st.error(p)
             if old is not None:
-                u_, d, _ = st.columns([1.3, 1, 2])
-                if used == old:
-                    u_.button("Do not use", on_click=_use, args=(None,), key="tools_unuse")
-                else:
-                    u_.button("Use for CAM", on_click=_use, args=(old,), key="tools_use",
-                              help="Choose this tool for the next CAM steps of this project.")
+                d, _ = st.columns([1, 3])
                 with d.popover("Delete"):
                     st.write(f"Delete tool **T{old}** completely?")
                     st.button("Yes, delete", on_click=_delete, key="tools_delete")
