@@ -26,7 +26,26 @@ def test_chains_are_the_outline_and_every_hole_of_each_part_on_the_sheet_only():
 
 
 def test_pictures_are_made_and_cached():
-    pts = ((( 0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (0.0, 0.0)),)
-    a = isometric_png(1000.0, 600.0, 18.0, pts)
+    from camming_ui import solids
+    sheet = {"width": 1000.0, "height": 600.0, "placements": [pl("A", box(10, 10, 300, 200).difference(box(100, 60, 200, 150)))]}
+    a = isometric_png(1000.0, 600.0, 18.0, solids(sheet))
+    pts = ((((0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (0.0, 0.0))),)
     assert a[:8] == b"\x89PNG\r\n\x1a\n" and plan_png(1000.0, 600.0, pts, ("Outline",))[:4] == b"\x89PNG"
-    assert isometric_png(1000.0, 600.0, 18.0, pts) == a
+    assert isometric_png(1000.0, 600.0, 18.0, solids(sheet)) == a
+
+
+def test_isometric_picture_shows_the_whole_sheet_for_any_proportion():
+    import io
+    import numpy as np
+    from PIL import Image
+    from camming_ui import isometric_raw_png, solids
+    for w, h in ((6250, 1500), (3500, 1250), (1500, 1500), (2500, 600), (1200, 2400)):
+        sheet = {"width": float(w), "height": float(h), "placements": [pl("A", box(10, 10, w - 10, h - 10))]}
+        im = np.asarray(Image.open(io.BytesIO(isometric_raw_png(float(w), float(h), 18.0, solids(sheet)))).convert("RGB")).astype(int)
+        border = np.concatenate([im[0], im[-1], im[:, 0], im[:, -1]])
+        assert not (np.abs(border - 255).sum(axis=1) > 30).any(), (w, h)          # nothing is cut off at the frame
+
+
+def test_the_origin_is_the_nearest_corner_and_x_runs_to_the_right():
+    from camming_ui import height_scale
+    assert height_scale(6250.0, 1500.0, 18.0) > 5 and height_scale(300.0, 200.0, 18.0) == 1.0     # thin sheets are drawn taller
