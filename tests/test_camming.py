@@ -114,6 +114,13 @@ def test_tools_tab_list_new_save_choose_and_delete():
         assert not at.exception and len(saved) == 1 and saved[0]["number"] == 1 and saved[0]["diameter"] == 12.0
         next(b for b in at.button if b.key == "tools_use").click().run()      # choose it for the CAM of the project
         assert cam["v"]["camming"]["tool"] == 1
+        assert at.number_input(key="tl_diameter").disabled                      # a saved tool is read-only
+        assert next(b for b in at.button if b.key == "tools_save").disabled
+        next(b for b in at.button if b.key == "tools_edit_btn").click().run()   # Edit unlocks it
+        assert not at.number_input(key="tl_diameter").disabled
+        at.number_input(key="tl_diameter").set_value(9.0)
+        next(b for b in at.button if b.key == "tools_save").click().run()
+        assert saved[0]["diameter"] == 9.0 and at.number_input(key="tl_diameter").disabled
         import tools_ui
         assert tools_ui.chosen_tool(sys.modules["db"], 1)["number"] == 1
         next(b for b in at.button if b.key == "tools_delete").click().run()   # delete it completely

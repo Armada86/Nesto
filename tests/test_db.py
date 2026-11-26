@@ -135,7 +135,7 @@ def test_tool_library_and_project_machining_settings_round_trip(db):
 def _tool(n, **kw):
     t = {"number": n, "tool_type": "END MILL", "name": "t", "diameter": 12.7, "shoulder_diameter": 12.7, "arbor_diameter": 12.7,
          "shoulder_angle": 0.0, "cutting_length": 34.8, "shoulder_length": 43.7, "total_length": 43.7, "chamfer": 0.0,
-         "outside_holder": 122.2, "helical_angle": 30.0, "rough": False, "flutes": 3}
+         "outside_holder": 122.2, "helical_angle": 30.0, "flutes": 3}
     t.update(kw)
     return t
 
@@ -150,7 +150,7 @@ def test_tool_library_add_change_renumber_delete(db):
         db.save_cam_tool(_tool(2), None)                    # a new tool with a used number
     with pytest.raises(ValueError):
         db.save_cam_tool(_tool(2), 1)                       # tool 1 renumbered onto tool 2
-    db.save_cam_tool(_tool(1, diameter=10.0, rough=True), 1)                 # change in place
+    db.save_cam_tool(_tool(1, diameter=10.0), 1)                 # change in place
     assert next(r for r in db.list_cam_tools() if r["number"] == 1)["diameter"] == 10.0
     db.save_cam_tool(_tool(5, diameter=10.0), 1)            # renumber 1 -> 5
     assert [r["number"] for r in db.list_cam_tools()] == [2, 5]
