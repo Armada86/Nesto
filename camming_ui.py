@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 PURPLE = "#dc2626"   # the colour of the geometry (bottom contour): red, it becomes the toolpath
-PICTURE_VERSION = 11  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
+PICTURE_VERSION = 12  # raise it whenever the drawing code changes: the pictures are cached by their arguments, so without this an
                      # older picture of the same sheet would still be shown after an update
 ZOOM = 1.0
 FONT_PT = 4.5   # size of the dimension numbers          # size of the isometric drawing inside its frame (the empty frame is cropped away afterwards; larger would clip)
@@ -333,7 +333,7 @@ def step_geometry(db, pid, result):
              caption="The whole sheet seen from the origin corner (lower left corner in plan view), drawn to scale: X to the right, "
                      "Y to the back, Z up. Every part is drawn transparent with dotted edges and its height; its bottom contour (the geometry) is red.")
     pts = tuple(tuple(c["pts"]) for c in ch)
-    labels = tuple((f"{rank[c['id']]}  {c['part']}" if c["type"] == "Outline" else str(rank[c["id"]]), tuple(c["pts"]),
+    labels = tuple((f"({rank[c['id']]}) {c['part']}" if c["type"] == "Outline" else f"({rank[c['id']]})", tuple(c["pts"]),
                     tuple(tuple(h) for h in c["holes"])) for c in ch)
     st.image(plan_png(float(sheet["width"]), float(sheet["height"]), pts, tuple(c["type"] for c in ch), labels, PICTURE_VERSION),
              caption="Plan view: outlines solid, holes dashed; every contour has its saved cutting number (and the part name). "
@@ -396,10 +396,10 @@ def order_editor(db, pid, sheet_no: int, ch: list, saved_ids: list):
         col.button(label, on_click=_move, args=(kind,), key=f"geo_move_{kind}", width="stretch", disabled=sel is None)
     b5.button("Default order", on_click=_reset, args=(default_order(ch),), key="geo_order_reset", width="stretch",
               help="The holes first, then the outlines, each from the lower left corner of the part, left to right.")
-    df = pd.DataFrame([{"No.": rank[cid], "Part": by_id[cid]["part"], "Type": by_id[cid]["type"],
-                        "Length": round(by_id[cid]["length"], 1), "Z": 0.0} for cid in work])
+    has_holes = any(by_id[cid]["type"] == "Hole" for cid in work)          # Type is only needed to tell a hole from its part's outline
+    df = pd.DataFrame([{"No.": rank[cid], "Part": by_id[cid]["part"], **({"Type": by_id[cid]["type"]} if has_holes else {})} for cid in work])
     hi = work.index(sel) if sel in work else -1
-    styled = df.style.apply(lambda r: ["background-color: #cfe9f7; color: #0f3d57; font-weight: 600"] * len(r) if r.name == hi else [""] * len(r), axis=1).format({"Length": "{:.1f}", "Z": "{:.0f}"})
+    styled = df.style.apply(lambda r: ["background-color: #cfe9f7; color: #0f3d57; font-weight: 600"] * len(r) if r.name == hi else [""] * len(r), axis=1)
     st.dataframe(styled, hide_index=True, width="content", on_select="rerun", selection_mode="single-row", key=tkey)
     changed = list(work) != list(saved_ids)
     if changed:
