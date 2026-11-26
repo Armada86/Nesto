@@ -88,13 +88,15 @@ def step_levels(db, pid):
              f"Top of the part. The default is the material thickness of the Geometry step ({thk:g})",
              f"The tool cuts down to Z = {u - d:g} (upper level − profile depth)" + ("  ·  below Z = 0, the bottom of the parts" if u - d < 0 else "")]
     with st.form("levels_form", border=False):             # nothing is sent until Save levels: typing never reruns the page
+        rows_box = st.container(key="lv_rows")              # (the phone keeps each box and its explanation side by side)
         for i, (label, key, step, hlp) in enumerate((
                 ("Clearance level", "clearance", 1.0, "The Z level where the tool moves in rapid mode, above the parts, to go to another location."),
                 ("Safety distance", "safety", 0.5, "The distance above the top of the part where the tool slows down from the rapid move to the feed Z speed."),
                 ("Upper level", "upper", 0.5, "The top of the part. By default it is the material thickness of the Geometry step."),
                 ("Profile depth", "depth", 0.5, "How far the tool goes into the material, measured down from the upper level. "
                                                 "The upper level itself cuts the parts through to Z = 0."))):
-            col, note = st.columns([1, 3])
+            with rows_box:
+                col, note = st.columns([1, 3])
             col.number_input(label, min_value=0.0, step=step, format="%.2f", key=PREFIX + key, help=hlp)
             note.markdown(f"<div style='padding-top:2.1rem'>{notes[i]}</div>", unsafe_allow_html=True)    # level with the box, not its label
         for p in ss.get("levels_problems", []):

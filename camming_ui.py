@@ -368,7 +368,8 @@ def order_editor(db, pid, sheet_no: int, ch: list, saved_ids: list):
         st.caption("Click a row in the table to select a contour, then move it with the buttons.")
     else:
         st.caption(f"Selected: **{rank[sel]} · {by_id[sel]['part']} ({by_id[sel]['type'].lower()})**, highlighted in the table.")
-    b1, b2, b3, b4, b5 = st.columns(5)
+    with st.container(key="order_btns"):                   # (the phone keeps the five buttons side by side)
+        b1, b2, b3, b4, b5 = st.columns(5)
     for col, kind, label in ((b1, "up", "▲ Up"), (b2, "down", "▼ Down"), (b3, "first", "⤒ First"), (b4, "last", "⤓ Last")):
         col.button(label, on_click=_move, args=(kind,), key=f"geo_move_{kind}", width="stretch", disabled=sel is None)
     b5.button("Default order", on_click=_reset, args=(default_order(ch),), key="geo_order_reset", width="stretch",

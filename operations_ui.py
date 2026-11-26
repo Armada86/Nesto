@@ -169,7 +169,8 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
         return
     op = by_id[ss.ops_sel]
     bleft, _ = st.columns([3, 5])                          # right under the table, the same width as the table
-    b1, b2, b3 = bleft.columns(3)
+    with bleft.container(key="ops_btns"):                  # (the phone keeps the three buttons side by side)
+        b1, b2, b3 = st.columns(3)
     b1.button("Close", on_click=_close, key="ops_close", width="stretch")
     with b2.popover("Rename", width="stretch"):
         st.text_input("New name", value=op["name"], key="ops_rename")

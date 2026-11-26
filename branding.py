@@ -27,6 +27,18 @@ CSS = """
 .st-key-camming_save_thickness, .st-key-tools_save, .st-key-data_save, .st-key-levels_save { width: 9rem !important; max-width: 9rem !important; }
 .st-key-camming_save_thickness button, .st-key-tools_save button, .st-key-data_save button, .st-key-levels_save button {
     width: 9rem !important; min-height: 2.6rem !important; }
+/* on a phone Streamlit stacks columns; these rows stay side by side */
+@media (max-width: 640px) {
+  .st-key-lv_rows [data-testid="stHorizontalBlock"], .st-key-order_btns [data-testid="stHorizontalBlock"],
+  .st-key-ops_btns [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; gap: 0.4rem !important; }
+  .st-key-lv_rows [data-testid="stColumn"], .st-key-order_btns [data-testid="stColumn"], .st-key-ops_btns [data-testid="stColumn"] {
+      min-width: 0 !important; width: auto !important; flex: 1 1 0 !important; }
+  .st-key-lv_rows [data-testid="stColumn"]:first-child { flex: 1 1 48% !important; }       /* the box */
+  .st-key-lv_rows [data-testid="stColumn"]:last-child { flex: 1 1 52% !important; font-size: 0.9rem; }   /* its explanation */
+  .st-key-order_btns button, .st-key-ops_btns button { padding: 0.25rem 0.15rem !important; min-height: 2.5rem !important; }
+  .st-key-order_btns button p, .st-key-ops_btns button p { font-size: 0.72rem !important; line-height: 1.15 !important; white-space: normal !important;
+      text-align: center; }
+}
 </style>
 """
 
