@@ -55,8 +55,10 @@ CREATE TABLE IF NOT EXISTS nesto_tools (
     outside_holder DOUBLE PRECISION NOT NULL,
     helical_angle DOUBLE PRECISION NOT NULL DEFAULT 30,
     rough BOOLEAN NOT NULL DEFAULT FALSE,
-    flutes INT NOT NULL DEFAULT 2
+    flutes INT NOT NULL DEFAULT 2,
+    holder TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE nesto_tools ADD COLUMN IF NOT EXISTS holder TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS nest_runs (
     id SERIAL PRIMARY KEY,
     project_id INT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -233,7 +235,7 @@ def save_tools(tools: list[dict]):
 
 
 TOOL_FIELDS = ("number", "tool_type", "name", "diameter", "shoulder_diameter", "arbor_diameter", "shoulder_angle", "cutting_length",
-               "shoulder_length", "total_length", "chamfer", "outside_holder", "helical_angle", "flutes")
+               "shoulder_length", "total_length", "chamfer", "outside_holder", "helical_angle", "flutes", "holder")
 
 
 def list_cam_tools():

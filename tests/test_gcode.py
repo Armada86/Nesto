@@ -27,14 +27,14 @@ def sheet():
 
 
 def gcode(data=DATA, lv=LV):
-    return gcode_cam.text("p_sheet_01.anc", sheet(), 1, TOOL, data, lv, 15.0, "proj", 3, 5.0, 14.0)
+    """The program as lines, without the space at the end of the blocks."""
+    return [x.rstrip() for x in gcode_cam.text("p_sheet_01.anc", sheet(), 1, TOOL, data, lv, 15.0, "proj", 3, 5.0, 14.0).split("\r\n")]
 
 
 def test_program_follows_the_post_and_the_levels():
-    g = gcode().splitlines()
+    g = gcode()
     assert g[0] == "%" and g[-1] == "%" and "M30" in g
     assert "M6 T1" in g and "G56" in g and "S10000 M3" in g and "G0 G43 H1 Z45." in g
-    assert any("Z0 = BOTTOM OF THE PARTS" in x for x in g)
     zs = [float(m.group(1)) for x in g for m in [re.search(r" Z(-?[\d.]+)", x)] if m and x.startswith(("G0 ", "G1 ")) and "G28" not in x]
     assert max(zs) == 45.0 and min(zs) == 0.0                 # rapid at the clearance level, the cut goes down to upper - depth = 0
     assert any(x.startswith("G0") and x.endswith("Z17.") for x in g)       # rapid down to upper level + safety distance
@@ -42,7 +42,7 @@ def test_program_follows_the_post_and_the_levels():
 
 
 def test_no_lead_in_or_out_the_loop_starts_and_ends_at_the_same_point_with_brushes_like_the_post():
-    g = gcode().splitlines()
+    g = gcode()
     feeds = {m.group(1) for x in g if x.startswith("G1") for m in [re.search(r"F([\d.]+)", x)] if m}
     assert feeds == {"100.", "2500."}                                  # only feed Z and feed XY
     plunge = [i for i, x in enumerate(g) if x.startswith("G1 Z0. F100.")]
@@ -57,13 +57,13 @@ def test_no_lead_in_or_out_the_loop_starts_and_ends_at_the_same_point_with_brush
 
 
 def test_cut_depth_follows_the_profile_depth_and_the_upper_level():
-    g = gcode(lv={**LV, "upper": 20.0, "depth": 12.0, "clearance": 50.0}).splitlines()
+    g = gcode(lv={**LV, "upper": 20.0, "depth": 12.0, "clearance": 50.0})
     assert any(x.startswith("G1") and "Z8." in x and "F100." in x for x in g)           # 20 - 12
     assert any(x.startswith("G0") and x.endswith("Z22.") for x in g)                     # 20 + 2
 
 
 def test_ccw_spin_uses_m4_and_reverses_the_contour_direction():
-    cw, ccw = gcode().splitlines(), gcode(data={**DATA, "direction": "CCW"}).splitlines()
+    cw, ccw = gcode(), gcode(data={**DATA, "direction": "CCW"})
     assert "S10000 M4" in ccw and "S10000 M3" in cw
     assert [x for x in cw if x.startswith("G1")] != [x for x in ccw if x.startswith("G1")]
 
@@ -137,7 +137,7 @@ def test_generate_tab_shows_the_gcode_of_the_operation_and_names_the_file_after_
         assert [t.label for t in at.tabs][4] == "5 · Generate G-code"
         code = "\n".join(c.value for c in at.code)
         assert "M6 T1" in code and "G0 G43 H1 Z45." in code and "S10000 M3" in code
-        assert "<sheet_01_Milling.anc>" in code and "(OPERATION: sheet_01 Milling)" in code      # the file name is the operation name
+        assert "<sheet_01_Milling.anc>" in code and "(sheet_01 Milling" in code      # the file name is the operation name
         assert not at.error
         settings["tool"] = None                                                                   # no tool chosen: an error and no G-code
         at = AppTest.from_function(app, default_timeout=60).run()
@@ -160,7 +160,7 @@ def test_custom_order_is_followed_by_the_toolpaths_and_the_gcode():
     order = [ids["C"], ids["B"], dflt[0], ids["A"]]                                    # my own order: C, B, the hole of A, A
     plan, _g, _t, _j = gcode_cam.build(sheet(), TOOL, DATA, LV, 15.0, order_ids=order)
     assert [(c.kind, c.part) for c in plan.contours] == [("outer", "C"), ("outer", "B"), ("inner", "A"), ("outer", "A")]
-    g = gcode_cam.text("x.anc", sheet(), 1, TOOL, DATA, LV, 15.0, order_ids=order).splitlines()
+    g = gcode_cam.text("x.anc", sheet(), 1, TOOL, DATA, LV, 15.0, order_ids=order).split("\r\n")
     plunges = [i for i, x in enumerate(g) if x.startswith("G1 Z0. F100.")]
     assert len(plunges) == 4
     # the contours that are not in the saved order come after it, in the default order (holes first)
@@ -222,3 +222,53 @@ def test_geometry_step_lists_the_contours_in_order_and_moves_them():
         assert "order" not in settings                                                          # the default order is not stored
     finally:
         sys.modules.pop("db", None)
+
+
+def test_the_program_is_written_like_the_solidcam_file():
+    tool = {**TOOL, "name": '1/2" END MILL', "outside_holder": 122.237, "holder": "ADAPTOR"}
+    raw = gcode_cam.text("sheet_01_Milling.anc", sheet(), 1, tool, DATA, LV, 15.0, "proj", 3, 5.0, 14.0, "F-CONTOUR")
+    assert raw.startswith("%\r\n<sheet_01_Milling.anc>\r\n") and raw.endswith("\r\n%")          # CR LF, nothing after the last %
+    assert "\n" not in raw.replace("\r\n", "")
+    g = raw.split("\r\n")
+    box = "(" + "-" * 48 + ")"
+    assert g[2:5] == [box, "(           POST PROCESSOR INFORMATION           )", box]
+    assert g[6:11] == ["(LICENSED TO    : MARIANI                        )", "(MACHINE        : CR ONSRUD 336G18CW7            )",
+                       "(CONTROLLER     : FANUC                          )", "(POST VERSION   : 0.4                            )",
+                       "(POST CREATED BY: SSG                            )"]
+    assert g[11:15] == [box, "(               PROGRAM INFORMATION              )", box, "(PART NAME   : SHEET_01_MILLING                  )"]
+    assert re.fullmatch(r"\(G-CODE DATE : \d\d-[A-Z]{3}-\d{4} {23}\)", g[15]) and re.fullmatch(r"\(G-CODE TIME : \d\d:\d\d:\d\d {26}\)", g[16])
+    assert re.fullmatch(r"\(EST M/C TIME: \d\d:\d\d:\d\d {26}\)", g[17])
+    assert g[18:26] == [box, "(                    TOOL LIST                   )", box, "(TOOL|              TOOL              |   TOOL   )",
+                        "( NO |           DESCRIPTION          |  LENGTH  )", box, '(  1 | 1/2" END MILL 3F               |  122mm   )', box]
+    k = g.index("G90 G21 G40 G49 G80 G94 G98 G17")
+    assert g[k + 1:k + 4] == ["(METRIC PROGRAM)", "G0 G28 G91 Z0. ", "G90"]                      # a space ends a block
+    i = g.index("(              OPERATION INFORMATION             )")
+    assert g[i + 2:i + 12] == ["(F-CONTOUR                                       )", box, box, "(                TOOL INFORMATION                )", box,
+                               '(1/2" END MILL 3F                                )', "(TOOL LENGTH: 122.24mm                           )",
+                               "(HOLDER: ADAPTOR                                 )", box, "N1 "]
+    assert g[i + 12:i + 16] == ["G56 ", "M6 T1 ", "G0 C0. ", "S10000 M3 "]
+    assert g[i + 16].startswith("G94 G0 X") and g[i + 16].endswith(" ")                         # G94 and the first rapid on one line
+    assert "M96 (BRUSHES DOWN)" in g and "G05.1 Q1 R7 (AICC/AIAPC HIGH SPEED MODE ON)" in g    # comment lines: no space at the end
+    assert g[-11:] == ["G0 Z45. ", "G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)", "G0 G28 G91 Z0. ", "G90", "M97 (BRUSHES UP)", "M5 ",
+                       "G0 G28 G91 Z0. ", "G90", "G0 C0. ", "M30 ", "%"]
+    for x in g:                                       # every block that is not a comment line, a G90 line or the % ends with a space
+        if x and not x.startswith(("(", "%", "<")) and "(" not in x and x != "G90" and not x.startswith("G90 G21"):
+            assert x.endswith(" "), x
+
+
+def test_no_holder_no_holder_line():
+    raw = gcode_cam.text("a.anc", sheet(), 1, {**TOOL, "holder": ""}, DATA, LV, 15.0)
+    assert "HOLDER" not in raw
+
+
+def test_arcs_have_equal_pieces_like_solidcam():
+    import cam
+    r = 6.35
+    ring = cam.offset_ring([(5, 5), (2416, 5), (2416, 1195), (5, 1195), (5, 5)], r, True, 0.01)
+    assert len(ring) == 61                                                          # 4 x (14 pieces + 1 point) + the closing point
+    ring = cam._restart_at(cam._orient(ring, False), (5 - r, 5))
+    assert ring[0] == (5 - r, 5) and ring[1] == (5 - r, 1195)                       # the straight edge up the left side
+    assert abs(ring[2][0] - (-1.3103)) < 1e-3 and abs(ring[2][1] - 1195.711) < 1e-3  # the first arc point, as in the SolidCAM file
+    arc = ring[1:16]                                                                # the pieces of one arc are all the same length
+    d = [math.hypot(a[0] - b[0], a[1] - b[1]) for a, b in zip(arc, arc[1:])]
+    assert max(d) - min(d) < 1e-6
