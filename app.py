@@ -452,12 +452,17 @@ with tab_dxf:
                "inner closed contours become holes (other parts can nest inside them). "
                "**STEP**: flat (plate-like) parts - the largest flat face gives the outline and holes, "
                "any orientation, thickness ignored. One part per solid. Bent parts: export the flat pattern as DXF.")
-    files = st.file_uploader("DXF / STEP files", type=["dxf", "step", "stp"], accept_multiple_files=True)
-    c_a, c_b, c_c = st.columns(3)
-    dxf_qty = c_a.number_input("Quantity per part", min_value=0, value=1, help="0 = add to the project but do not nest yet")
-    dxf_scale = c_b.number_input("Scale (e.g. 25.4 for inch → mm)", min_value=0.0001, value=1.0, format="%.4f")
-    split = c_c.checkbox("DXF: one part per closed contour", help="Use for DXFs that contain many separate parts.")
-    if files and st.button("Add parts from files"):
+    # a form: the options do not make the page react while you set them; they are read when you press Add parts from files
+    with st.form("import_form", border=False, enter_to_submit=False):
+        files = st.file_uploader("DXF / STEP files", type=["dxf", "step", "stp"], accept_multiple_files=True)
+        c_a, c_b, c_c = st.columns(3)
+        dxf_qty = c_a.number_input("Quantity per part", min_value=0, value=1, help="0 = add to the project but do not nest yet")
+        dxf_scale = c_b.number_input("Scale (e.g. 25.4 for inch → mm)", min_value=0.0001, value=1.0, format="%.4f")
+        split = c_c.checkbox("DXF: one part per closed contour", help="Use for DXFs that contain many separate parts.")
+        add_clicked = st.form_submit_button("Add parts from files")
+    if add_clicked and not files:
+        st.warning("No file chosen.")
+    if files and add_clicked:
         added = 0
         used = {p["name"] for p in parts_state}
         for f in files:
@@ -515,22 +520,27 @@ with tab_lib:
             shown = [i for i, p in enumerate(current) if q.strip().lower() in p["name"].lower()]
             # the box is as high as its parts (a button row is about 3.5 rem), at most 10 rows: more parts scroll; it can be pulled taller
             rows = min(max(len(shown), 1), 10)
-            ticked = [i for i in range(len(current)) if st.session_state.get(f"lib_chk_{i}")]
-            if st.button(f"Delete ticked parts ({len(ticked)})" if ticked else "Delete ticked parts", icon=":material/delete:",
-                         key="lib_delete", disabled=not ticked,
-                         help="Tick the parts you want to remove, then press this button (you are asked to confirm)."):
-                delete_parts_dialog(pid, [current[i]["name"] for i in ticked], min(ticked),
-                                    [p_ for k, p_ in enumerate(current) if k not in ticked])
-            with st.container(height=int(rows * 56 + 22), border=True, key="lib_list"):
-                if not shown:
-                    st.caption("No part matches.")
-                for i in shown:
-                    p = current[i]
-                    c_chk, c_name = st.columns([1, 7], vertical_alignment="center")
-                    c_chk.checkbox("Tick to delete", key=f"lib_chk_{i}", label_visibility="collapsed")
-                    c_name.button(f"{p['name']}   ·   " + (f"× {p['qty']}" if p["qty"] > 0 else "not nested"),
-                                  key=f"lib_btn_{i}", width="stretch", type="primary" if i == idx else "secondary",
-                                  on_click=lambda i=i: st.session_state.__setitem__("lib_idx", i))
+            # a form: ticking a part does not make the page react; the ticks are read when a button of the form is pressed
+            with st.form("lib_form", border=False, enter_to_submit=False):
+                delete_clicked = st.form_submit_button("Delete ticked parts", icon=":material/delete:", key="lib_delete",
+                                                       help="Tick the parts you want to remove, then press this button (you are asked to confirm).")
+                if delete_clicked:
+                    ticked = [i for i in shown if st.session_state.get(f"lib_chk_{i}")]
+                    if not ticked:
+                        st.warning("No part selected.")
+                    else:
+                        delete_parts_dialog(pid, [current[i]["name"] for i in ticked], min(ticked),
+                                            [p_ for k, p_ in enumerate(current) if k not in ticked])
+                with st.container(height=int(rows * 56 + 22), border=True, key="lib_list"):
+                    if not shown:
+                        st.caption("No part matches.")
+                    for i in shown:
+                        p = current[i]
+                        c_chk, c_name = st.columns([1, 7], vertical_alignment="center")
+                        c_chk.checkbox("Tick to delete", key=f"lib_chk_{i}", label_visibility="collapsed")
+                        c_name.form_submit_button(f"{p['name']}   ·   " + (f"× {p['qty']}" if p["qty"] > 0 else "not nested"),
+                                                  key=f"lib_btn_{i}", width="stretch", type="primary" if i == idx else "secondary",
+                                                  on_click=lambda i=i: st.session_state.__setitem__("lib_idx", i))
         with right:
             p = current[idx]
             g = part_geometry(p)
@@ -715,14 +725,17 @@ with history_box:
         _msg, _icon = st.session_state.pop("flash")
         st.toast(_msg, icon=_icon)
     if labels:
-        pick = st.selectbox("Past runs", list(labels))
-        b_load, b_del = st.columns(2)
-        if b_load.button("Load run", width="stretch"):
+        with st.form("history_form", border=False, enter_to_submit=False):         # choosing a run does not make the page react
+            pick = st.selectbox("Past runs", list(labels))
+            b_load, b_del = st.columns(2)
+            load_clicked = b_load.form_submit_button("Load run", width="stretch")
+            delete_clicked = b_del.form_submit_button("Delete…", icon=":material/delete:", width="stretch")
+        if load_clicked:
             if unsaved_moves():
                 unsaved_dialog("load_run", labels[pick])
             else:
                 do_load_run(labels[pick])
-        if b_del.button("Delete…", icon=":material/delete:", width="stretch"):
+        if delete_clicked:
             st.session_state.del_runs_sel = [pick]
             delete_runs_dialog(pid, labels)
     else:
