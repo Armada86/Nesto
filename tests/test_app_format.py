@@ -259,15 +259,22 @@ def test_there_is_no_save_button_in_the_sidebar_and_the_parts_list_saves_itself(
     assert saved and saved[-1][0]["name"] == "a" and saved[-1][0]["qty"] == 3
 
 
-def test_deleting_a_part_in_parts_details_asks_first(fake_db):
+def test_parts_are_ticked_in_the_list_and_deleted_together_after_a_confirmation(fake_db):
     from streamlit.testing.v1 import AppTest
     saved = []
     fake_db.save_parts = lambda pid, ps: saved.append([p["name"] for p in ps])
     fake_db.load_parts = lambda i: [{"name": n, "shape": "rectangle", "width": 300.0, "height": 200.0, "qty": 1, "rotate": True,
-                                     "flip": True, "outline": None} for n in ("a", "b")]
+                                     "flip": True, "outline": None} for n in ("a", "b", "c")]
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["pid"] = 1
     at.run()
     assert not at.exception
-    next(b for b in at.button if b.key == "lib_del_1").click().run()             # the bin beside part b in the list            # the question comes first: nothing is deleted yet
-    assert not saved and any("Delete **b**" in w.value for w in at.warning)
+    top = next(b for b in at.button if b.key == "lib_delete")
+    assert top.disabled and top.label == "Delete ticked parts"                  # nothing ticked: nothing to delete
+    assert not [b for b in at.button if str(b.key).startswith("lib_del_")]      # no bin on the rows any more
+    at.checkbox(key="lib_chk_0").check().run()
+    at.checkbox(key="lib_chk_2").check().run()
+    top = next(b for b in at.button if b.key == "lib_delete")
+    assert not top.disabled and top.label == "Delete ticked parts (2)"
+    top.click().run()                                                           # the question comes first: nothing is deleted yet
+    assert not saved and any("**a**" in w.value and "**c**" in w.value for w in at.warning)

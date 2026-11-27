@@ -76,6 +76,7 @@ def open_project(pid: int | None):
     for k in ("result", "nest_info", "parts", "loaded_pid", "lib_idx", "lib_search", "result_original", "run_id",
               "edit_history", "edit_rev", "parts_sig", "editor_rev"):
         st.session_state.pop(k, None)
+    clear_part_ticks()
     st.session_state.pid = pid
     if pid is None:
         st.query_params.clear()
@@ -170,10 +171,16 @@ def delete_project_dialog(pid: int, name: str):
         st.rerun()
 
 
-@st.dialog("Delete part")
-def delete_part_dialog(pid: int, name: str, idx: int, remaining: list):
-    """Remove one part from the project, after a confirmation. `remaining`: the parts list without it."""
-    st.warning(f"Delete **{name}** from this project? The part is removed from the parts list. Runs that are already in the history "
+def clear_part_ticks():
+    for k in [k for k in st.session_state if str(k).startswith("lib_chk_")]:
+        del st.session_state[k]
+
+
+@st.dialog("Delete parts")
+def delete_parts_dialog(pid: int, names: list, first: int, remaining: list):
+    """Remove the ticked parts from the project, after a confirmation. `remaining`: the parts list without them."""
+    what = f"**{names[0]}**" if len(names) == 1 else f"these {len(names)} parts: " + ", ".join(f"**{n}**" for n in names)
+    st.warning(f"Delete {what} from this project? They are removed from the parts list. Runs that are already in the history "
                "keep their layouts. This cannot be undone.")
     d1, d2 = st.columns(2)
     if d1.button("Cancel", width="stretch", key="del_part_cancel"):
@@ -182,8 +189,9 @@ def delete_part_dialog(pid: int, name: str, idx: int, remaining: list):
         db.save_parts(pid, remaining)
         st.session_state.parts = remaining
         st.session_state.parts_sig = parts_signature(remaining)
-        st.session_state.editor_rev = st.session_state.get("editor_rev", 0) + 1          # the table is drawn again without it
-        st.session_state.lib_idx = max(0, min(idx, len(remaining) - 1))
+        st.session_state.editor_rev = st.session_state.get("editor_rev", 0) + 1          # the table is drawn again without them
+        st.session_state.lib_idx = max(0, min(first, len(remaining) - 1))
+        clear_part_ticks()
         st.rerun()
 
 
@@ -507,18 +515,22 @@ with tab_lib:
             shown = [i for i, p in enumerate(current) if q.strip().lower() in p["name"].lower()]
             # the box is as high as its parts (a button row is about 3.5 rem), at most 10 rows: more parts scroll; it can be pulled taller
             rows = min(max(len(shown), 1), 10)
+            ticked = [i for i in range(len(current)) if st.session_state.get(f"lib_chk_{i}")]
+            if st.button(f"Delete ticked parts ({len(ticked)})" if ticked else "Delete ticked parts", icon=":material/delete:",
+                         key="lib_delete", disabled=not ticked,
+                         help="Tick the parts you want to remove, then press this button (you are asked to confirm)."):
+                delete_parts_dialog(pid, [current[i]["name"] for i in ticked], min(ticked),
+                                    [p_ for k, p_ in enumerate(current) if k not in ticked])
             with st.container(height=int(rows * 56 + 22), border=True, key="lib_list"):
                 if not shown:
                     st.caption("No part matches.")
                 for i in shown:
                     p = current[i]
-                    c_name, c_del = st.columns([7, 1], vertical_alignment="center")
+                    c_chk, c_name = st.columns([1, 7], vertical_alignment="center")
+                    c_chk.checkbox("Tick to delete", key=f"lib_chk_{i}", label_visibility="collapsed")
                     c_name.button(f"{p['name']}   ·   " + (f"× {p['qty']}" if p["qty"] > 0 else "not nested"),
                                   key=f"lib_btn_{i}", width="stretch", type="primary" if i == idx else "secondary",
                                   on_click=lambda i=i: st.session_state.__setitem__("lib_idx", i))
-                    if c_del.button("", icon=":material/delete:", key=f"lib_del_{i}", type="tertiary",
-                                    help=f"Delete {p['name']} from the project (you are asked to confirm)."):
-                        delete_part_dialog(pid, p["name"], i, [q_ for k, q_ in enumerate(current) if k != i])
         with right:
             p = current[idx]
             g = part_geometry(p)
