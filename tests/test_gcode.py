@@ -345,3 +345,10 @@ def test_the_toolpath_picture_shows_the_whole_toolpath_even_when_it_leaves_the_s
     assert ax.get_ylim()[0] <= min(ys) and ax.get_ylim()[1] >= max(max(ys), 80.0)
     import matplotlib.pyplot as plt
     plt.close(fig)
+
+
+def test_the_estimated_time_is_in_whole_seconds_not_decimal_minutes():
+    import cam
+    assert cam.duration_text(0.4) == "24 s" and cam.duration_text(0) == "0 s" and cam.duration_text(59.4 / 60) == "59 s"
+    assert cam.duration_text(1.4) == "1 min 24 s" and cam.duration_text(2) == "2 min 00 s"
+    assert cam.duration_text(65.17) == "1 h 05 min 10 s"

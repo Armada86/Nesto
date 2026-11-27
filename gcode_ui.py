@@ -71,7 +71,7 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
     m1, m2, m3 = st.columns(3)
     m1.metric("Contours", len(plan.contours), help="Holes and outlines of the parts on this sheet.")
     m2.metric("Contour length", f"{length:,.0f}")
-    m3.metric("Estimated time", f"{minutes:.1f} min")
+    m3.metric("Estimated time", cam.duration_text(minutes))
     from cam_ui import _preview
     fig = _preview(sheet, plan)
     st.pyplot(fig)
