@@ -425,3 +425,58 @@ def camming_tab(db, pid, result, project: str = "", meta: dict | None = None, ru
         autocam_page(db, pid, result, project, meta, run_id)
         return
     operations_tab(db, pid, result, project, meta, run_id)
+
+
+TOOL_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#be185d", "#4d7c0f"]     # one colour per tool
+
+
+def tool_color_map(numbers) -> dict:
+    """{tool number: colour}: the same colours in the picture and in its legend."""
+    return {n: TOOL_COLORS[i % len(TOOL_COLORS)] for i, n in enumerate(sorted(set(numbers)))}
+
+
+def toolpath_png(width: float, height: float, thickness: float, parts: tuple, paths: tuple) -> bytes:
+    """The whole sheet in an isometric view (seen from the origin corner, like the geometry picture) with the toolpaths drawn on the top
+    of the material, every path in the colour of its tool (tool_color_map) and marked with its tool number (T4). parts: solids(sheet);
+    paths: ((tool number, ((x, y), ...) closed path), ...)."""
+    from mpl_toolkits.mplot3d import art3d
+
+    color = tool_color_map(n for n, _p in paths)
+    big = max(width, height)
+    z = thickness
+    fig = plt.figure(figsize=(11, 5.2), dpi=300)
+    ax = fig.add_subplot(111, projection="3d")
+    slab = [[(0, 0, 0), (width, 0, 0), (width, 0, z), (0, 0, z)], [(width, 0, 0), (width, height, 0), (width, height, z), (width, 0, z)],
+            [(0, 0, z), (width, 0, z), (width, height, z), (0, height, z)]]
+    ax.add_collection3d(art3d.Poly3DCollection(slab, facecolor="#cbd5e1", edgecolor="none", alpha=0.3))
+    for zz in (0, z):
+        ax.plot([0, width, width, 0, 0], [0, 0, height, height, 0], [zz] * 5, color="#475569", lw=0.5)
+    for x, y in ((0, 0), (width, 0), (width, height), (0, height)):
+        ax.plot([x, x], [y, y], [0, z], color="#475569", lw=0.5)
+    for ext, holes in parts:                                    # the parts: a dotted top outline
+        for ring in (ext, *holes):
+            xs, ys = zip(*ring)
+            ax.plot(xs, ys, [z] * len(xs), color="#94a3b8", lw=0.5, ls=(0, (2, 3)))
+    for n, pts in paths:                                        # the toolpaths and the number of their tool
+        xs, ys = zip(*pts)
+        ax.plot(xs, ys, [z] * len(xs), color=color[n], lw=1.1)
+        sx, sy = pts[0]
+        ax.plot([sx], [sy], [z], "o", color=color[n], ms=2.5)
+        small = (max(xs) - min(xs)) < 0.12 * big and (max(ys) - min(ys)) < 0.12 * big     # a hole: its number in the middle; a big path: at its start
+        lx, ly = ((sum(xs) / len(xs), sum(ys) / len(ys)) if small else (sx, sy))
+        ax.text(lx, ly, z + 0.02 * big, f"T{n}", fontsize=6.5, color="white", fontweight="bold", ha="center", va="center",
+                bbox=dict(boxstyle="round,pad=0.18", fc=color[n], ec="none", alpha=0.95))
+    arm = 0.05 * big
+    for vec, col in (((arm, 0, 0), "#dc2626"), ((0, arm, 0), "#16a34a"), ((0, 0, arm), "#2563eb")):      # the coordinate system at the origin
+        ax.quiver(0, 0, 0, *vec, color=col, linewidth=0.8, arrow_length_ratio=0.22, normalize=False)
+    zr = max(z, arm * 1.6)
+    xr0, xr1 = -0.08 * big, width + 0.08 * big
+    yr0, yr1 = -0.06 * big, height + 0.06 * big
+    ax.set_xlim(xr0, xr1)
+    ax.set_ylim(yr0, yr1)
+    ax.set_zlim(0, zr)
+    ax.set_box_aspect((xr1 - xr0, yr1 - yr0, zr), zoom=1.0)
+    ax.set_proj_type("ortho")
+    ax.view_init(elev=30, azim=-135)
+    ax.set_axis_off()
+    return _crop_to_content(_png(fig))

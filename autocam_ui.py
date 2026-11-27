@@ -36,7 +36,16 @@ def _run(db, pid, result, project, meta, run_id):
         ss.autocam_result = {"errors": [f"AutoCam could not finish: {e}"]}
         return
     warnings = list(planned["warnings"]) + planned["skipped"] + [w for p in plans for w in p.warnings]
-    ss.autocam_result = {"run_id": run_id, "sheet": sheet_no, "text": text, "name": name, "warnings": warnings,
+    from camming_ui import solids, toolpath_png, tool_color_map
+    paths = tuple((op["tool"]["number"], tuple(c.pts)) for op, p in zip(planned["operations"], plans) for c in p.contours)
+    tools_used = {op["tool"]["number"]: op["tool"] for op in planned["operations"]}
+    legend = [(n, f"**T{n}** {t['name']} Ø{t['diameter']:g}") for n, t in sorted(tools_used.items())]
+    try:
+        picture = toolpath_png(float(sheet["width"]), float(sheet["height"]), thickness, solids(sheet), paths) if paths else None
+    except Exception:  # noqa: BLE001 - the picture is a help, the G-code does not depend on it
+        picture = None
+    ss.autocam_result = {"run_id": run_id, "sheet": sheet_no, "text": text, "name": name, "warnings": warnings, "picture": picture,
+                         "legend": [(tool_color_map(tools_used)[n], t) for n, t in legend],
                          "rows": [{"Operation": op["name"], "What": {"drill": "drills the holes", "hole": "mills the holes", "outline": "mills the outlines"}[op["kind"]],
                                    "Tool": f"T{op['tool']['number']} {op['tool']['name']} Ø{op['tool']['diameter']:g}", "Contours": len(op["contours"])}
                                   for op in planned["operations"]]}
@@ -85,6 +94,11 @@ def autocam_page(db, pid, result, project: str = "", meta: dict | None = None, r
     st.dataframe(pd.DataFrame(res["rows"]), hide_index=True, width="content")
     for w in res["warnings"]:
         st.warning(w)
+    if res.get("picture"):
+        st.image(res["picture"], caption="The sheet in an isometric view (seen from the lower left corner) with the toolpaths on the top of "
+                                         "the material: every path has the colour and the number of its tool.")
+        st.markdown(" &nbsp;&nbsp; ".join(f'<span style="color:{col};font-size:1.2em">■</span> {text}' for col, text in res["legend"]),
+                    unsafe_allow_html=True)
     shown = res["text"].replace("\r\n", "\n")
     with st.expander(f"G-code of sheet {res['sheet']} ({len(shown.splitlines()):,} lines)", expanded=False):
         st.code(shown, language=None, height=600)
