@@ -512,9 +512,13 @@ with tab_lib:
                     st.caption("No part matches.")
                 for i in shown:
                     p = current[i]
-                    st.button(f"{p['name']}   ·   " + (f"× {p['qty']}" if p["qty"] > 0 else "not nested"),
-                              key=f"lib_btn_{i}", width="stretch", type="primary" if i == idx else "secondary",
-                              on_click=lambda i=i: st.session_state.__setitem__("lib_idx", i))
+                    c_name, c_del = st.columns([7, 1], vertical_alignment="center")
+                    c_name.button(f"{p['name']}   ·   " + (f"× {p['qty']}" if p["qty"] > 0 else "not nested"),
+                                  key=f"lib_btn_{i}", width="stretch", type="primary" if i == idx else "secondary",
+                                  on_click=lambda i=i: st.session_state.__setitem__("lib_idx", i))
+                    if c_del.button("", icon=":material/delete:", key=f"lib_del_{i}", type="tertiary",
+                                    help=f"Delete {p['name']} from the project (you are asked to confirm)."):
+                        delete_part_dialog(pid, p["name"], i, [q_ for k, q_ in enumerate(current) if k != i])
         with right:
             p = current[idx]
             g = part_geometry(p)
@@ -532,9 +536,6 @@ with tab_lib:
             r2a.metric("Cut length", f"{stats['cut_length']:,.0f}")
             r2b.metric("Holes", len(stats["holes"]))
             st.caption("Sizes are in the units of your drawing / typed dimensions (usually mm).")
-            if st.button("Delete part", icon=":material/delete:", key="lib_delete",
-                         help="Remove this part from the project (you are asked to confirm)."):
-                delete_part_dialog(pid, p["name"], idx, [q_ for k, q_ in enumerate(current) if k != idx])
 
 # an action the user confirmed in the "Unsaved moves" dialog
 _pending = st.session_state.pop("pending_action", None)
