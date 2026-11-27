@@ -141,6 +141,8 @@ def test_generate_tab_shows_the_gcode_of_the_operation_and_names_the_file_after_
         assert code.rstrip().endswith("%") and "\n..." not in code and "\r" not in code           # the whole program, not a part of it
         assert not next(e for e in at.expander if e.label.startswith("G-code of")).proto.expanded   # hidden until it is opened      # the file name is the operation name
         assert not at.error
+        assert {m.label: m.value for m in at.metric if m.label in ("Holes", "Contours")} == {"Holes": "1", "Contours": "3"}      # sheet(): 1 hole, 3 outlines
+        assert any(m.label == "Cutting length" for m in at.metric) and not any(m.label == "Contour length" for m in at.metric)
         settings["tool"] = None                                                                   # no tool chosen: an error and no G-code
         at = AppTest.from_function(app, default_timeout=60).run()
         assert at.error and not any("M6 T1" in c.value for c in at.code)
