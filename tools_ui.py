@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-TOOL_TYPES = ["END MILL"]
+TOOL_TYPES = ["END MILL", "DRILL"]
 # (key, label, help, default, minimum, maximum)
 DIMS = [
     ("diameter", "Diameter (D)", "Cutting diameter of the tool.", 12.0),

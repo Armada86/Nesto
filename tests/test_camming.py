@@ -302,3 +302,28 @@ def test_chains_carry_the_holes_of_their_outline_for_the_labels():
     sheet = {"width": 1000.0, "height": 600.0, "placements": [pl("A", box(10, 10, 300, 200).difference(box(100, 60, 200, 150)))]}
     ch = chains(sheet)
     assert len(ch[0]["holes"]) == 1 and ch[1]["holes"] == []
+
+
+def test_a_drill_is_a_tool_type_and_gets_a_warning_when_chosen_for_milling():
+    import tools_ui
+    import gcode_cam
+    import test_gcode as tg
+    assert tools_ui.TOOL_TYPES == ["END MILL", "DRILL"]
+    assert not any("mills" in w for w in gcode_cam.warnings({**tg.TOOL, "tool_type": "END MILL"}, tg.LV))
+    w = gcode_cam.warnings({**tg.TOOL, "tool_type": "DRILL"}, tg.LV)
+    assert w and "drill" in w[0] and "end mill" in w[0]
+
+
+def test_a_new_tool_can_be_saved_as_a_drill():
+    import sys
+    saved, cam = [], {}
+    try:
+        at = _tools_app(saved, cam).run()
+        next(b for b in at.button if b.key == "tools_new").click().run()
+        assert at.selectbox(key="tl_tool_type").options == ["END MILL", "DRILL"]
+        at.selectbox(key="tl_tool_type").set_value("DRILL")
+        at.text_input(key="tl_name").set_value('1/4" DRILL')
+        next(b for b in at.button if b.key == "tools_save").click().run()
+        assert not at.exception and saved[0]["tool_type"] == "DRILL" and saved[0]["name"] == '1/4" DRILL'
+    finally:
+        sys.modules.pop("db", None)
