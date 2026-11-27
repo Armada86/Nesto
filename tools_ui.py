@@ -284,12 +284,13 @@ def step_tools(db, pid):
             params, guide = st.columns([3, 2])
             with params:
                 st.markdown("**Tool parameters** (mm and degrees)")
-                c1, c2 = st.columns(2)
-                for i, (k, lab, hlp, _d) in enumerate(DIMS):
-                    (c1 if i % 2 == 0 else c2).number_input(lab + (" [°]" if k in ANGLES else " [mm]"), min_value=0.0, step=0.5, format="%.3f",
-                                                            key=PREFIX + k, help=hlp, disabled=lock)
-                c1.number_input("Helical angle [°]", min_value=0.0, max_value=89.0, step=1.0, format="%.1f", key=PREFIX + "helical_angle",
-                                help="30 is the standard helix.", disabled=lock)
+                with st.container(key="tools_params"):               # two columns also on a phone (see branding.py)
+                    c1, c2 = st.columns(2)
+                    for i, (k, lab, hlp, _d) in enumerate(DIMS):
+                        (c1 if i % 2 == 0 else c2).number_input(lab + (" [°]" if k in ANGLES else " [mm]"), min_value=0.0, step=0.5, format="%.3f",
+                                                                key=PREFIX + k, help=hlp, disabled=lock)
+                    c2.number_input("Helical angle [°]", min_value=0.0, max_value=89.0, step=1.0, format="%.1f", key=PREFIX + "helical_angle",
+                                    help="30 is the standard helix.", disabled=lock)
             with guide.container(key="tools_guide"):
                 st.image(GUIDE_SVG)
                 st.caption("D diameter · SD shoulder diameter · AD arbor diameter · SA shoulder angle · CL cutting length · "
