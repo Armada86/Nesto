@@ -270,11 +270,10 @@ def test_parts_are_ticked_in_the_list_and_deleted_together_after_a_confirmation(
     at.run()
     assert not at.exception
     top = next(b for b in at.button if b.key == "lib_delete")
-    assert top.disabled and top.label == "Delete ticked parts"                  # nothing ticked: nothing to delete
-    assert not [b for b in at.button if str(b.key).startswith("lib_del_")]      # no bin on the rows any more
-    at.checkbox(key="lib_chk_0").check().run()
-    at.checkbox(key="lib_chk_2").check().run()
-    top = next(b for b in at.button if b.key == "lib_delete")
-    assert not top.disabled and top.label == "Delete ticked parts (2)"
-    top.click().run()                                                           # the question comes first: nothing is deleted yet
+    assert not top.disabled                                                     # always active
+    top.click().run()
+    assert any(w.value == "No part selected." for w in at.warning) and not saved       # nothing ticked: a message
+    at.checkbox(key="lib_chk_0").check()                                        # ticking does not run the script (it is in a form)
+    at.checkbox(key="lib_chk_2").check()
+    next(b for b in at.button if b.key == "lib_delete").click().run()           # the question comes first: nothing is deleted yet
     assert not saved and any("**a**" in w.value and "**c**" in w.value for w in at.warning)
