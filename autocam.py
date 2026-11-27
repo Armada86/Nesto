@@ -9,7 +9,7 @@ The rules (all of them are written in the report that AutoCam shows):
   * the cutting order: the drilled holes (one operation per drill), the milled holes (one operation per end mill), then the outlines, so
     a part is still held by the sheet while its holes are cut; inside an operation from the lower left corner of the part, left to right;
   * the cutting data, the levels and the material thickness come from the CAM options (cutting data) and the thickness of the run.
-This module has no screen: it makes the operations (a name and settings, as the operations of the NestoCAM tab have them) and the program.
+This module has no screen: it makes the operations (a name (Sheet<n>-<DRILL | HOLES | CONTOUR>-<name of the tool>) and settings, as the operations of the NestoCAM tab have them) and the program.
 """
 from __future__ import annotations
 
@@ -115,7 +115,10 @@ def plan(sheet: dict, sheet_no: int, tools: list, defaults: dict | None, thickne
         else:
             data, drill = dict(mdata), None
             label = "HOLES" if kind == "hole" else "CONTOUR"
-        name = f"Sheet{sheet_no}-{label}-{row['diameter']:g}"
+        tool_name = (row.get("name") or "").strip() or f"T{row['number']}"            # the name typed when the tool was defined
+        name = f"Sheet{sheet_no}-{label}-{tool_name}"
+        if any(o["name"].lower() == name.lower() for o in out["operations"]):          # two tools with the same name: the number tells them apart
+            name = f"{name} T{row['number']}"
         settings = {"sheet": sheet_no, "thickness": float(thickness), "tool": int(row["number"]), "data": data, "levels": dict(lv_store),
                     "contours": list(ids), "autocam": True, "autocam_sheet": sheet_no, "kind": kind}
         if drill:

@@ -39,13 +39,13 @@ TOOLS = [tool(1, "END MILL", 12.7), tool(2, "END MILL", 6.35), tool(3, "END MILL
 def test_round_holes_that_match_a_drill_are_drilled_the_others_milled_with_the_largest_end_mill_that_fits():
     p = autocam.plan(sheet(), 1, TOOLS, None, 18.0, margin=10.0, spacing=14.0)
     ops = {o["name"]: o for o in p["operations"]}
-    assert [o["name"] for o in p["operations"]] == ["Sheet1-DRILL-20", "Sheet1-DRILL-8", "Sheet1-HOLES-12.7", "Sheet1-HOLES-3", "Sheet1-CONTOUR-12.7"]
+    assert [o["name"] for o in p["operations"]] == ["Sheet1-DRILL-DRILL 20", "Sheet1-DRILL-DRILL 8", "Sheet1-HOLES-END MILL 12.7", "Sheet1-HOLES-END MILL 3", "Sheet1-CONTOUR-END MILL 12.7"]
     assert [o["kind"] for o in p["operations"]] == ["drill", "drill", "hole", "hole", "outline"]       # drills, milled holes, outlines
-    assert ops["Sheet1-DRILL-20"]["tool"]["number"] == 4 and len(ops["Sheet1-DRILL-20"]["contours"]) == 1
-    assert ops["Sheet1-DRILL-8"]["tool"]["number"] == 5
-    assert ops["Sheet1-HOLES-12.7"]["tool"]["number"] == 1                      # the 40 x 40 square hole: the largest end mill fits
-    assert ops["Sheet1-HOLES-3"]["tool"]["number"] == 3                         # the D4 hole of part B: only the 3 mm end mill fits (not D4 itself)
-    assert ops["Sheet1-CONTOUR-12.7"]["tool"]["number"] == 1 and len(ops["Sheet1-CONTOUR-12.7"]["contours"]) == 2   # both outlines
+    assert ops["Sheet1-DRILL-DRILL 20"]["tool"]["number"] == 4 and len(ops["Sheet1-DRILL-DRILL 20"]["contours"]) == 1
+    assert ops["Sheet1-DRILL-DRILL 8"]["tool"]["number"] == 5
+    assert ops["Sheet1-HOLES-END MILL 12.7"]["tool"]["number"] == 1                      # the 40 x 40 square hole: the largest end mill fits
+    assert ops["Sheet1-HOLES-END MILL 3"]["tool"]["number"] == 3                         # the D4 hole of part B: only the 3 mm end mill fits (not D4 itself)
+    assert ops["Sheet1-CONTOUR-END MILL 12.7"]["tool"]["number"] == 1 and len(ops["Sheet1-CONTOUR-END MILL 12.7"]["contours"]) == 2   # both outlines
     assert not p["problems"] and not p["skipped"]
 
 
@@ -57,7 +57,7 @@ def close_sheet(gap):
 def test_the_outline_tool_keeps_clear_of_the_neighbours_and_the_edge_of_the_sheet():
     p = autocam.plan(sheet(), 1, TOOLS, None, 18.0, margin=3.0, spacing=14.0)        # the margin 3 mm: only a tool of at most 6 mm leaves the sheet alone
     outline = [o for o in p["operations"] if o["kind"] == "outline"][0]
-    assert outline["tool"]["number"] == 3 and outline["name"] == "Sheet1-CONTOUR-3"
+    assert outline["tool"]["number"] == 3 and outline["name"] == "Sheet1-CONTOUR-END MILL 3"
     p = autocam.plan(close_sheet(8.0), 1, TOOLS, None, 18.0, margin=20.0, spacing=8.0)   # the parts only 8 mm apart: at most an 8 mm tool
     outline = [o for o in p["operations"] if o["kind"] == "outline"][0]
     assert outline["tool"]["diameter"] <= 8.0 and not p["warnings"]
@@ -96,7 +96,7 @@ def test_the_program_of_a_sheet_has_every_operation_with_its_tool_and_the_drilli
     text, plans = autocam.program("t.anc", sheet(), 1, p, 18.0, "proj", 3, 10.0, 14.0)
     g = [x.rstrip() for x in text.split("\r\n")]
     boxes = [g[i + 2] for i, x in enumerate(g) if x == "(              OPERATION INFORMATION             )"]
-    assert [b.strip("() ") for b in boxes] == ["Sheet1-DRILL-20", "Sheet1-DRILL-8", "Sheet1-HOLES-12.7", "Sheet1-HOLES-3", "Sheet1-CONTOUR-12.7"]
+    assert [b.strip("() ") for b in boxes] == ["Sheet1-DRILL-DRILL 20", "Sheet1-DRILL-DRILL 8", "Sheet1-HOLES-END MILL 12.7", "Sheet1-HOLES-END MILL 3", "Sheet1-CONTOUR-END MILL 12.7"]
     assert [x for x in g if re.fullmatch(r"N\d+", x)] == ["N1", "N2", "N3", "N4", "N5"]
     assert [x for x in g if x.startswith("M6 ")] == ["M6 T4", "M6 T5", "M6 T1", "M6 T3", "M6 T1"]       # a tool change wherever the tool changes
     assert g.count("M1") == 4 and "M5" not in g[:-8]                                                    # M1 + safe position before every tool change, no M5
@@ -167,3 +167,15 @@ def test_a_hole_slightly_off_a_drill_diameter_is_drilled_within_the_tolerance_an
     assert "no drill" in p["skipped"][0]
     square = {"width": 300.0, "height": 100.0, "placements": [pl("S", box(0, 0, 150, 50).difference(box(60, 20, 66, 26)))]}
     assert "not round" in autocam.plan(square, 1, tools, None, 18.0, margin=10.0, spacing=14.0)["skipped"][0]
+
+
+def test_the_operation_is_named_after_the_tool_name_that_was_typed_when_the_tool_was_defined():
+    tools = [tool(1, "END MILL", 12.7, '1/2" END MILL'), tool(4, "DRILL", 20.0, '20 mm DRILL')]
+    p = autocam.plan(sheet(), 3, tools, None, 18.0, margin=10.0, spacing=14.0)
+    assert [o["name"] for o in p["operations"]][0] == "Sheet3-DRILL-20 mm DRILL"
+    assert [o["name"] for o in p["operations"]][-1] == 'Sheet3-CONTOUR-1/2" END MILL'
+    p = autocam.plan(sheet(), 1, [tool(1, "END MILL", 12.7, " ")], None, 18.0, margin=10.0, spacing=14.0)       # no name typed: the tool number
+    assert [o["name"] for o in p["operations"]][-1] == "Sheet1-CONTOUR-T1"
+    p = autocam.plan(sheet(), 1, [tool(1, "END MILL", 12.7, "MILL"), tool(2, "END MILL", 3.0, "MILL")], None, 18.0, margin=10.0, spacing=14.0)
+    names = [o["name"] for o in p["operations"]]
+    assert len({n.lower() for n in names}) == len(names)                                                      # two tools with one name: still unique
