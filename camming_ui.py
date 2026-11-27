@@ -439,6 +439,8 @@ def toolpath_png(width: float, height: float, thickness: float, parts: tuple, pa
     """The whole sheet in an isometric view (seen from the origin corner, like the geometry picture) with the toolpaths drawn on the top
     of the material, every path dotted, in the colour of its tool (tool_color_map) and marked with its tool number (T4). parts: solids(sheet);
     paths: ((tool number, ((x, y), ...) closed path), ...)."""
+    import math
+
     from mpl_toolkits.mplot3d import art3d
 
     color = tool_color_map(n for n, _p in paths)
@@ -457,14 +459,31 @@ def toolpath_png(width: float, height: float, thickness: float, parts: tuple, pa
         for ring in (ext, *holes):
             xs, ys = zip(*ring)
             ax.plot(xs, ys, [z] * len(xs), color="#94a3b8", lw=0.5, ls=(0, (2, 3)))
-    for n, pts in paths:                                        # the toolpaths and the number of their tool
+    gap = 0.055 * big                                           # how far the tool number sits outside its path (it is bigger than a small hole)
+    placed = []                                                 # where the numbers are, so that two numbers do not sit on each other
+    for n, pts in paths:                                        # the toolpaths (dotted) and the number of their tool, OUTSIDE the path
         xs, ys = zip(*pts)
-        ax.plot(xs, ys, [z] * len(xs), color=color[n], lw=1.4, ls=(0, (1.2, 1.8)))      # dotted, in the colour of the tool
+        ax.plot(xs, ys, [z] * len(xs), color=color[n], lw=0.8, ls=(0, (4, 3)))      # thin, with longer dots, in the colour of the tool
         sx, sy = pts[0]
-        ax.plot([sx], [sy], [z], "o", color=color[n], ms=2.5)
-        small = (max(xs) - min(xs)) < 0.12 * big and (max(ys) - min(ys)) < 0.12 * big     # a hole: its number in the middle; a big path: at its start
-        lx, ly = ((sum(xs) / len(xs), sum(ys) / len(ys)) if small else (sx, sy))
-        ax.text(lx, ly, z + 0.02 * big, f"T{n}", fontsize=6.5, color="white", fontweight="bold", ha="center", va="center",
+        cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
+        small = (max(xs) - min(xs)) < 0.12 * big and (max(ys) - min(ys)) < 0.12 * big
+        if small:                                               # a hole: the number to the upper right of the circle, with a short line to it
+            r = max(math.hypot(x - cx, y - cy) for x, y in pts)
+            ux, uy = math.cos(math.radians(45)), math.sin(math.radians(45))
+            ex, ey = cx + ux * r, cy + uy * r                   # the point of the circle the line starts at
+        else:                                                   # a big path: the number outside the path at its start point
+            ax.plot([sx], [sy], [z], "o", color=color[n], ms=2.0)
+            d = math.hypot(sx - cx, sy - cy) or 1.0
+            ux, uy = (sx - cx) / d, (sy - cy) / d
+            ex, ey = sx, sy
+        lx, ly = ex + ux * gap, ey + uy * gap
+        for _ in range(8):                                      # two numbers closer than this are pushed apart
+            if all(math.hypot(lx - px, ly - py) > 0.05 * big for px, py in placed):
+                break
+            lx, ly = lx + ux * 0.04 * big, ly + uy * 0.04 * big
+        placed.append((lx, ly))
+        ax.plot([ex, lx], [ey, ly], [z, z], color=color[n], lw=0.6)
+        ax.text(lx, ly, z, f"T{n}", fontsize=6.5, color="white", fontweight="bold", ha="center", va="center",
                 bbox=dict(boxstyle="round,pad=0.18", fc=color[n], ec="none", alpha=0.95))
     arm = 0.05 * big
     for vec, col in (((arm, 0, 0), "#dc2626"), ((0, arm, 0), "#16a34a"), ((0, 0, arm), "#2563eb")):      # the coordinate system at the origin
