@@ -54,6 +54,14 @@ def fake_db(monkeypatch):
         return i
     db.create_operation = create_operation
     db.list_operations = lambda run_id: [o for o in ops.values() if o["run_id"] == run_id]
+
+    def set_operation_order(run_id, ids):
+        items = dict(ops)
+        ops.clear()
+        for i in ids:
+            ops[i] = items.pop(i)
+        ops.update(items)
+    db.set_operation_order = set_operation_order
     db.get_operation = lambda i: ops.get(i)
     db.save_operation_settings = lambda i, s: ops[i].__setitem__("settings", s)
     db.latest_operation_settings = lambda pid: None
@@ -377,3 +385,33 @@ def test_a_new_operation_does_not_inherit_the_contours_of_an_autocam_operation(f
     for key in ("contours", "kind", "drill", "autocam", "autocam_sheet", "order", "order_sheet", "tool"):
         assert key not in s                                                      # the whole sheet, no tool: a fresh operation
     assert s["thickness"] == 12.0 and s["data"]["feed_xy"] == 2500.0 and s["data"]["rpm"] == 10000.0      # the thickness stays, the data are the milling defaults
+
+
+def test_the_operations_of_a_run_can_be_reordered(fake_db):
+    from streamlit.testing.v1 import AppTest
+    import operations_ui
+    assert operations_ui.moved_order([1, 2, 3, 4], 3, "up") == [1, 3, 2, 4] and operations_ui.moved_order([1, 2, 3, 4], 3, "down") == [1, 2, 4, 3]
+    assert operations_ui.moved_order([1, 2, 3, 4], 3, "first") == [3, 1, 2, 4] and operations_ui.moved_order([1, 2, 3, 4], 1, "last") == [2, 3, 4, 1]
+    assert operations_ui.moved_order([1, 2, 3], 1, "up") == [1, 2, 3] and operations_ui.moved_order([1, 2, 3], 9, "up") == [1, 2, 3]
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.session_state["pending_settings"] = {"effort_label": "Quick"}
+    at.run()
+    fake_db.load_run = lambda i: {"id": i, "sheet_w": 1000.0, "sheet_h": 600.0, "margin": 5.0, "spacing": 3.0, "seconds": 1.0,
+                                  "result": [{"width": 1000.0, "height": 600.0, "placements": [
+                                      {"part": "a", "x": 10.0, "y": 10.0, "w": 300.0, "h": 200.0, "rotated": False}]}]}
+    next(b for b in at.button if b.label == "Load run").click().run()
+    assert not any(b.key == "ops_move_up" for b in at.button)                    # one operation (or none): nothing to reorder
+    for name in ("first", "second", "third"):
+        fake_db.create_operation(7, name, {"sheet": 1})
+    at.run()
+    assert not at.exception and [o["name"] for o in fake_db.list_operations(7)] == ["first", "second", "third"]
+    assert next(b for b in at.button if b.key == "ops_move_up").disabled         # nothing selected yet
+    at.session_state[f"ops_ord_tbl_{at.session_state['ops_move_ver']}"] = {"selection": {"rows": [2], "columns": []}}      # click the third row
+    at.run()
+    next(b for b in at.button if b.key == "ops_move_up").click().run()
+    assert not at.exception and [o["name"] for o in fake_db.list_operations(7)] == ["first", "third", "second"]
+    next(b for b in at.button if b.key == "ops_move_first").click().run()        # the moved operation stays selected
+    assert [o["name"] for o in fake_db.list_operations(7)] == ["third", "first", "second"]
+    next(b for b in at.button if b.key == "ops_move_last").click().run()
+    assert [o["name"] for o in fake_db.list_operations(7)] == ["first", "second", "third"]

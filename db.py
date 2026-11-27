@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS cam_operations (
     created TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (run_id, name)
 );
+ALTER TABLE cam_operations ADD COLUMN IF NOT EXISTS position INT;
+UPDATE cam_operations SET position = id WHERE position IS NULL;
 """
 
 
@@ -280,9 +282,20 @@ def delete_cam_tool(number: int):
 
 
 def list_operations(run_id: int):
-    """The CAM operations of a run, oldest first."""
+    """The CAM operations of a run in the order that was set (new operations come last)."""
     with connect() as c:
-        return c.execute("SELECT id, name, settings FROM cam_operations WHERE run_id=%s ORDER BY id", (run_id,)).fetchall()
+        return c.execute("SELECT id, name, settings FROM cam_operations WHERE run_id=%s ORDER BY COALESCE(position, id), id", (run_id,)).fetchall()
+
+
+def set_operation_order(run_id: int, ids: list) -> None:
+    """Put the operations of the run in this order (ids: the operation ids, first to last); operations that are not named keep their place after them."""
+    with connect() as c:
+        for n, i in enumerate(ids, 1):
+            c.execute("UPDATE cam_operations SET position=%s WHERE id=%s AND run_id=%s", (n, int(i), run_id))
+        rest = c.execute("SELECT id FROM cam_operations WHERE run_id=%s AND id <> ALL(%s) ORDER BY COALESCE(position, id), id",
+                         (run_id, [int(i) for i in ids] or [0])).fetchall()
+        for k, r in enumerate(rest, len(ids) + 1):
+            c.execute("UPDATE cam_operations SET position=%s WHERE id=%s", (k, r["id"]))
 
 
 def get_operation(op_id: int):
@@ -295,8 +308,9 @@ def create_operation(run_id: int, name: str, settings: dict) -> int:
     with connect() as c:
         if c.execute("SELECT 1 FROM cam_operations WHERE run_id=%s AND lower(name)=lower(%s)", (run_id, name)).fetchone():
             raise ValueError(f"This run already has an operation called {name}.")
-        return c.execute("INSERT INTO cam_operations(run_id, name, settings) VALUES (%s,%s,%s) RETURNING id",
-                         (run_id, name, json.dumps(settings))).fetchone()["id"]
+        return c.execute("INSERT INTO cam_operations(run_id, name, settings, position) VALUES (%s,%s,%s,"
+                         " COALESCE((SELECT MAX(COALESCE(position, id)) FROM cam_operations WHERE run_id=%s), 0) + 1) RETURNING id",
+                         (run_id, name, json.dumps(settings), run_id)).fetchone()["id"]
 
 
 def save_operation_settings(op_id: int, settings: dict):
