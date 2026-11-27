@@ -63,7 +63,7 @@ ROT_STEPS = {"None": 0, "90°": 90, "45°": 45, "30°": 30, "15°": 15, "10°": 
 PRECISION = {"Fast": 500, "Balanced": 800, "Fine": 1400}
 EFFORT = {"Quick": 0, "Normal": 15, "Thorough": 60}  # seconds of extra search for irregular parts
 
-# settings stored with every project (widget keys)
+# the sheet and nesting settings (widget keys); they are stored with every run
 DEFAULTS = {"sheet_w": 2500.0, "sheet_h": 1250.0, "margin": 5.0, "spacing": 3.0,
             "rot_label": "90°", "prec_label": "Balanced", "effort_label": "Normal"}
 for _k, _v in DEFAULTS.items():
@@ -74,14 +74,15 @@ for _k, _v in DEFAULTS.items():
 def open_project(pid: int | None):
     """Make `pid` the open project (None = close). Settings are applied before the widgets are drawn."""
     for k in ("result", "nest_info", "parts", "loaded_pid", "lib_idx", "lib_search", "result_original", "run_id",
-              "edit_history", "edit_rev"):
+              "edit_history", "edit_rev", "parts_sig", "editor_rev"):
         st.session_state.pop(k, None)
     st.session_state.pid = pid
     if pid is None:
         st.query_params.clear()
         st.session_state.pending_settings = {}
         return
-    st.session_state.pending_settings = (db.get_project(pid) or {}).get("settings") or {}
+    # the sheet and nesting settings belong to the runs: a project opens with the settings of its newest run (or the defaults)
+    st.session_state.pending_settings = db.latest_run_settings(pid) or {}
     st.query_params["project"] = str(pid)
 
 
@@ -169,6 +170,23 @@ def delete_project_dialog(pid: int, name: str):
         st.rerun()
 
 
+@st.dialog("Delete part")
+def delete_part_dialog(pid: int, name: str, idx: int, remaining: list):
+    """Remove one part from the project, after a confirmation. `remaining`: the parts list without it."""
+    st.warning(f"Delete **{name}** from this project? The part is removed from the parts list. Runs that are already in the history "
+               "keep their layouts. This cannot be undone.")
+    d1, d2 = st.columns(2)
+    if d1.button("Cancel", width="stretch", key="del_part_cancel"):
+        st.rerun()
+    if d2.button("Delete", type="primary", width="stretch", key="del_part_ok"):
+        db.save_parts(pid, remaining)
+        st.session_state.parts = remaining
+        st.session_state.parts_sig = parts_signature(remaining)
+        st.session_state.editor_rev = st.session_state.get("editor_rev", 0) + 1          # the table is drawn again without it
+        st.session_state.lib_idx = max(0, min(idx, len(remaining) - 1))
+        st.rerun()
+
+
 def set_result(result, run_id=None):
     """Show `result` (a list of sheets) and start a fresh editing session for it."""
     st.session_state.result = result
@@ -243,26 +261,11 @@ def do_load_run(run_id):
             new[k] = opts[k]
     if new != settings_snapshot():
         st.session_state.pending_settings = new
-        try:
-            db.save_settings(pid, new)
-        except Exception as e:  # noqa: BLE001
-            st.toast(f"Could not save the settings: {e}", icon=":material/error:")
         st.rerun()
 
 
 def settings_snapshot():
     return {k: st.session_state[k] for k in DEFAULTS}
-
-
-def autosave_settings():
-    """Called the moment a sheet / nesting setting changes: store it with the open project right away."""
-    pid_ = st.session_state.get("pid")
-    if not pid_:
-        return
-    try:
-        db.save_settings(pid_, settings_snapshot())
-    except Exception as e:  # noqa: BLE001
-        st.toast(f"Could not save the settings: {e}", icon=":material/error:")
 
 
 @st.dialog("Delete runs from the history")
@@ -314,10 +317,9 @@ with st.sidebar:
         new_project_dialog()
     if r1b.button("Load", icon=":material/folder_open:", width="stretch"):
         load_project_dialog()
-    save_clicked = r2a.button("Save", icon=":material/save:", type="primary", width="stretch", disabled=not proj)
-    if r2b.button("Rename", icon=":material/edit:", width="stretch", disabled=not proj):
+    if r2a.button("Rename", icon=":material/edit:", width="stretch", disabled=not proj):
         rename_project_dialog(pid, proj["name"])
-    if st.button("Delete", icon=":material/delete:", width="stretch", disabled=not proj):
+    if r2b.button("Delete", icon=":material/delete:", width="stretch", disabled=not proj):
         delete_project_dialog(pid, proj["name"])
 
 if not proj:
@@ -331,7 +333,18 @@ st.markdown(branding.header_html(proj["name"]), unsafe_allow_html=True)
 if st.session_state.get("loaded_pid") != pid:
     st.session_state.parts = db.load_parts(pid)
     st.session_state.loaded_pid = pid
+    st.session_state.parts_sig = None
 parts_state: list[dict] = st.session_state.parts
+
+
+def parts_signature(ps) -> str:
+    """What the parts table shows (not the drawings): to see whether the stored parts list has to be saved again."""
+    return json.dumps([[p["name"], p.get("shape", "rectangle"), float(p["width"]), float(p["height"]), int(p["qty"]), bool(p["rotate"]),
+                        bool(p.get("flip", True))] for p in ps])
+
+
+if st.session_state.get("parts_sig") is None:
+    st.session_state.parts_sig = parts_signature(parts_state)
 
 # The Machining tab (tool library, toolpaths, G-code: cam.py, post_fanuc.py, cam_ui.py) is switched off for now while its
 # flow is being redesigned: set SHOW_MACHINING = True to bring it back. Nothing of it was removed.
@@ -358,7 +371,7 @@ with tab_table:
         )
         df.index = range(1, len(df) + 1)                      # serial numbers 1, 2, 3 ... shown as the first column
         edited = st.data_editor(
-            df, num_rows="dynamic", width="stretch", key=f"editor_{pid}_{len(parts_state)}", hide_index=False,
+            df, num_rows="add", width="stretch", key=f"editor_{pid}_{st.session_state.get('editor_rev', 0)}", hide_index=False,
             column_config={
                 "_index": st.column_config.Column("No.", width=48, disabled=True, alignment="left"),
                 "name": "Name",
@@ -373,9 +386,9 @@ with tab_table:
                                                              "Leave on when both sides of the sheet are the same."),
             },
         )
-        outlines = {p["name"]: p.get("outline") for p in parts_state}
+        outlines = {i + 1: p.get("outline") for i, p in enumerate(parts_state)}      # the drawing stays with its row (also when renamed)
         current = []
-        for i, (_, r) in enumerate(edited.iterrows()):
+        for i, (label, r) in enumerate(edited.iterrows()):
             shape = r["shape"] if isinstance(r["shape"], str) else "rectangle"
             w = float(r["width"]) if pd.notna(r["width"]) else 0.0
             h = float(r["height"]) if pd.notna(r["height"]) else 0.0
@@ -388,7 +401,13 @@ with tab_table:
                             "qty": int(r["qty"]) if pd.notna(r["qty"]) else 1,
                             "rotate": bool(r["rotate"]),
                             "flip": bool(r["flip"]) if pd.notna(r["flip"]) else True,   # old rows / new rows: on
-                            "outline": outlines.get(nm)})
+                            "outline": outlines.get(label)})
+        if parts_signature(current) != st.session_state.get("parts_sig"):       # the parts list is saved by itself, as it changes
+            try:
+                db.save_parts(pid, current)
+                st.session_state.parts_sig = parts_signature(current)
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Could not save the parts: {e}")
 
     # the sheet and the nesting options belong to the run: they sit in the Nesting tab, above the Nest button
     col_hist, col_set = st.columns([1.3, 3])
@@ -396,7 +415,7 @@ with tab_table:
     # a form: typing in the boxes does not make the page react; the numbers are read when Nest is pressed (Enter does not submit)
     with col_set.form("nest_form", border=False, enter_to_submit=False):
         with st.container(border=True):
-            st.caption("Sheet and nesting settings are saved with the project when you press Nest.")
+            st.caption("Sheet and nesting settings are saved with the run when you press Nest.")
             col_sheet, col_nest = st.columns(2)
             with col_sheet:
                 st.subheader("Sheet")
@@ -417,7 +436,7 @@ with tab_table:
                                                 help="Quick = one pass. Normal / Thorough keep trying many different layouts "
                                                      "(pairing, placement rules, random restarts) for 15 / 60 seconds and keep the best.")
         _job0 = nest_jobs().get(pid)
-        nest_clicked = st.form_submit_button("▶ Nest", key="nest_btn", type="primary", on_click=autosave_settings,
+        nest_clicked = st.form_submit_button("▶ Nest", key="nest_btn", type="primary",
                                              disabled=bool(_job0 and _job0.state == "running"))
 
 with tab_dxf:
@@ -460,6 +479,8 @@ with tab_dxf:
         if added:
             st.session_state.parts = parts_state
             db.save_parts(pid, parts_state)
+            st.session_state.parts_sig = parts_signature(parts_state)
+            st.session_state.editor_rev = st.session_state.get("editor_rev", 0) + 1       # the table is drawn again with the new parts
             st.rerun()
 
 
@@ -511,6 +532,9 @@ with tab_lib:
             r2a.metric("Cut length", f"{stats['cut_length']:,.0f}")
             r2b.metric("Holes", len(stats["holes"]))
             st.caption("Sizes are in the units of your drawing / typed dimensions (usually mm).")
+            if st.button("Delete part", icon=":material/delete:", key="lib_delete",
+                         help="Remove this part from the project (you are asked to confirm)."):
+                delete_part_dialog(pid, p["name"], idx, [q_ for k, q_ in enumerate(current) if k != idx])
 
 # an action the user confirmed in the "Unsaved moves" dialog
 _pending = st.session_state.pop("pending_action", None)
@@ -568,27 +592,6 @@ with tab_table:
         unsaved_dialog("nest")                       # would replace the moved layout: ask first
         run = False
 
-if save_clicked:  # sidebar Save: sheet/nesting settings first (small and safe), then the parts
-    snap = settings_snapshot()
-    try:
-        db.save_settings(pid, snap)
-        settings_msg = (f"sheet {snap['sheet_w']:g} × {snap['sheet_h']:g}, margin {snap['margin']:g}, "
-                        f"kerf {snap['spacing']:g}, rotation {snap['rot_label']}, precision {snap['prec_label']}, "
-                        f"effort {snap['effort_label']}")
-    except Exception as e:  # noqa: BLE001
-        settings_msg = None
-        st.error(f"Could not save the settings: {e}")
-    try:
-        st.session_state.parts = current
-        db.save_parts(pid, current)
-        parts_ok = True
-    except Exception as e:  # noqa: BLE001
-        parts_ok = False
-        st.error(f"Could not save the parts: {e}")
-    if settings_msg and parts_ok:
-        st.toast(f"Saved “{proj['name']}”: {len(current)} parts · {settings_msg}", icon=":material/check_circle:")
-    elif settings_msg:
-        st.toast(f"Settings saved ({settings_msg}), but the parts were NOT saved.", icon=":material/warning:")
 
 
 # ---------- nesting ----------
@@ -625,7 +628,6 @@ with tab_table:
                 db.save_parts(pid, current)
                 run_id = db.save_run(pid, sheet_w, sheet_h, margin, spacing, s["sheets"], s["utilization"], result, elapsed,
                                      options=nest_options())
-                st.session_state.parts = current
                 st.session_state.nest_info = {}
                 set_result(result, run_id)
                 st.session_state.nest_seconds = elapsed
@@ -636,7 +638,6 @@ with tab_table:
         else:
             # irregular parts can take minutes: nest in a background thread so that locking the phone or losing the
             # connection does not stop it; the thread saves the finished run to the History itself
-            st.session_state.parts = current
             snap = dict(sheet_w=sheet_w, sheet_h=sheet_h, margin=margin, spacing=spacing)
             cfg = dict(snap, rot_step=ROT_STEPS[rot_label], cell=max(sheet_w, sheet_h) / PRECISION[prec_label],
                        time_limit=EFFORT[effort_label])
