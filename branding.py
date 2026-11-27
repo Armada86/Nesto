@@ -37,6 +37,10 @@ CSS = """
       min-width: 0 !important; width: auto !important; flex: 1 1 0 !important; }
   .st-key-lv_rows [data-testid="stColumn"]:first-child { flex: 1 1 48% !important; }       /* the box */
   .st-key-lv_rows [data-testid="stColumn"]:last-child { flex: 1 1 52% !important; font-size: 0.9rem; }   /* its explanation */
+  .st-key-tools_params [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; gap: 0.5rem !important; }
+  .st-key-tools_params [data-testid="stColumn"] { min-width: 0 !important; width: auto !important; flex: 1 1 0 !important; }
+  .st-key-tools_params label p { font-size: 0.8rem !important; line-height: 1.15 !important; }
+  .st-key-tools_params input { padding-left: 0.5rem !important; padding-right: 0.2rem !important; }
   .st-key-lib_list [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; gap: 0.3rem !important; }
   .st-key-lib_list [data-testid="stColumn"] { min-width: 0 !important; width: auto !important; flex: 1 1 0 !important; }
   .st-key-lib_list [data-testid="stColumn"]:first-child { flex: 0 0 2rem !important; }
