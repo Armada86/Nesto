@@ -108,23 +108,49 @@ def _op():
     return OpDB(sys.modules["db"], 1)
 
 
-def test_tools_tab_list_new_save_choose_and_delete():
+def _lib_app(saved):
+    """An AppTest of the tool library page (CAM options), on a fake db."""
     import sys
-    saved, cam = [], {}
+    import types
+    db = types.ModuleType("db")
+    db.list_cam_tools = lambda: sorted(saved, key=lambda t: t["number"])
+
+    def save(t, old=None):
+        saved[:] = [x for x in saved if x["number"] != old]
+        saved.append(t)
+    db.save_cam_tool = save
+    db.delete_cam_tool = lambda n: saved.__setitem__(slice(None), [x for x in saved if x["number"] != n])
+    sys.modules["db"] = db
+
+    def app():
+        import db
+        from tools_ui import tool_library
+        tool_library(db)
+    from streamlit.testing.v1 import AppTest
+    return AppTest.from_function(app, default_timeout=60)
+
+
+def _select_row(at, key_prefix, row=0):
+    """What a click on a row of the list does (the list is a dataframe whose selection is its state)."""
+    ver = at.session_state[key_prefix + "_ver"]
+    at.session_state[f"{key_prefix}_table_{ver}"] = {"selection": {"rows": [row], "columns": []}}
+    at.run()
+
+
+def test_the_tool_library_page_creates_changes_and_deletes_tools():
+    import sys
+    saved = []
     try:
-        at = _tools_app(saved, cam).run()
+        at = _lib_app(saved).run()
         assert not at.exception
-        assert [t.label for t in at.tabs][:2] == ["1 · Geometry", "2 · Tools"]
-        assert not [b for b in at.button if b.key == "tools_save"]            # nothing is open before a tool is chosen
+        assert not [b for b in at.button if b.key in ("tools_save", "tools_use")]      # nothing is open before a tool is chosen; no Use for CAM here
         next(b for b in at.button if b.key == "tools_new").click().run()
         next(b for b in at.button if b.key == "tools_save").click().run()
         assert not at.exception and len(saved) == 1 and saved[0]["number"] == 1 and saved[0]["diameter"] == 12.0
         assert not [b for b in at.button if b.key == "tools_save"]            # the new tool is not selected in the list: no details open
-        at.session_state[f"tools_table_{at.session_state['tools_ver']}"] = {"selection": {"rows": [0], "columns": []}}      # the person clicks it
-        at.run()
+        _select_row(at, "tools")                                              # the person clicks it
         assert [b.key for b in at.button if b.key == "tools_save"]
-        next(b for b in at.button if b.key == "tools_use").click().run()      # choose it for the CAM of the project
-        assert cam["v"]["camming"]["tool"] == 1
+        assert not [b for b in at.button if b.key in ("tools_use", "tools_unuse")]
         assert at.number_input(key="tl_diameter").disabled                      # a saved tool is read-only
         assert next(b for b in at.button if b.key == "tools_save").disabled
         next(b for b in at.button if b.key == "tools_edit_btn").click().run()   # Edit unlocks it
@@ -132,13 +158,33 @@ def test_tools_tab_list_new_save_choose_and_delete():
         at.number_input(key="tl_diameter").set_value(9.0)
         next(b for b in at.button if b.key == "tools_save").click().run()
         assert saved[0]["diameter"] == 9.0 and at.number_input(key="tl_diameter").disabled
-        import tools_ui
-        assert tools_ui.chosen_tool(_op(), 1)["number"] == 1
         next(b for b in at.button if b.key == "tools_ask_delete").click().run()
         assert saved                                                           # asked first, nothing deleted yet
         next(b for b in at.button if b.key == "tools_delete").click().run()   # delete it completely
-        assert saved == [] and cam["v"]["camming"]["tool"] is None
-        assert tools_ui.chosen_tool(_op(), 1) is None
+        assert saved == []
+    finally:
+        sys.modules.pop("db", None)
+
+
+def test_an_operation_only_chooses_a_tool_it_cannot_create_change_or_delete_one():
+    import sys
+    tool = {"number": 1, "tool_type": "END MILL", "name": "1/2 END MILL", "flutes": 3, "holder": "", "diameter": 12.7, "shoulder_diameter": 12.7,
+            "arbor_diameter": 12.7, "shoulder_angle": 0.0, "cutting_length": 34.8, "shoulder_length": 43.7, "total_length": 43.7,
+            "chamfer": 0.0, "outside_holder": 122.2, "helical_angle": 30.0}
+    saved, cam = [dict(tool)], {}
+    try:
+        at = _tools_app(saved, cam).run()
+        assert not at.exception
+        assert [t.label for t in at.tabs][:2] == ["1 · Geometry", "2 · Tools"]
+        assert not [b for b in at.button if b.key in ("tools_new", "tools_save", "tools_edit_btn", "tools_ask_delete", "tools_delete")]
+        assert next(b for b in at.button if b.key == "tools_use").disabled      # nothing selected yet
+        _select_row(at, "pick")
+        next(b for b in at.button if b.key == "tools_use").click().run()        # choose it for the CAM of the operation
+        assert not at.exception and cam["v"]["camming"]["tool"] == 1
+        import tools_ui
+        assert tools_ui.chosen_tool(_op(), 1)["number"] == 1
+        next(b for b in at.button if b.key == "tools_unuse").click().run()
+        assert cam["v"]["camming"]["tool"] is None and tools_ui.chosen_tool(_op(), 1) is None
     finally:
         sys.modules.pop("db", None)
 
@@ -230,9 +276,6 @@ def test_the_boxes_of_an_operation_keep_their_saved_values_after_it_was_closed_a
             if st.session_state.get("show", True):
                 operation_view(db, {"id": 7, "name": "x", "settings": {}}, [test_gcode.sheet()], "p", {}, 3)
         at = AppTest.from_function(app, default_timeout=60).run()
-        at.session_state["tools_sel"] = 0                                   # a new tool is open in the Tools step
-        at.run()
-        assert at.number_input(key="tl_diameter").value == 12.0
         at.session_state["show"] = False
         at.run()                                                            # the operation is closed: none of its boxes is drawn
         at.session_state["show"] = True
@@ -243,7 +286,6 @@ def test_the_boxes_of_an_operation_keep_their_saved_values_after_it_was_closed_a
         assert at.number_input(key="dt_feed_xy").value == 1800.0
         assert at.number_input(key="lv_clearance").value == 50.0 and at.number_input(key="lv_safety").value == 3.0
         assert at.number_input(key="lv_upper").value == 15.0 and at.number_input(key="lv_depth").value == 15.0
-        assert at.number_input(key="tl_diameter").value == 12.0
     finally:
         sys.modules.pop("db", None)
 
@@ -259,13 +301,12 @@ def test_the_details_of_a_tool_are_only_open_while_that_tool_is_selected_in_the_
             "shoulder_length": 43.7, "total_length": 43.7, "chamfer": 0.0, "outside_holder": 122.2, "helical_angle": 30.0, "number": 11}
     db = types.ModuleType("db")
     db.list_cam_tools = lambda: [tool]
-    db.get_cam = lambda pid: None
     sys.modules["db"] = db
     try:
         def app():
             import db
-            from tools_ui import step_tools
-            step_tools(db, 1)
+            from tools_ui import tool_library
+            tool_library(db)
         at = AppTest.from_function(app, default_timeout=60)
         at.session_state["tools_sel"] = 11                                  # left over: tool 11 was open, nothing is selected now
         at.session_state["tools_confirm"] = True                            # and its "Delete completely?" question too
@@ -316,9 +357,9 @@ def test_a_drill_is_a_tool_type_and_gets_a_warning_when_chosen_for_milling():
 
 def test_a_new_tool_can_be_saved_as_a_drill():
     import sys
-    saved, cam = [], {}
+    saved = []
     try:
-        at = _tools_app(saved, cam).run()
+        at = _lib_app(saved).run()
         next(b for b in at.button if b.key == "tools_new").click().run()
         assert at.selectbox(key="tl_tool_type").options == ["END MILL", "DRILL"]
         at.selectbox(key="tl_tool_type").set_value("DRILL")

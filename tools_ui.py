@@ -106,18 +106,18 @@ def chosen_tool(db, pid) -> dict | None:
     return next((_row_to_tool(r) for r in db.list_cam_tools() if r["number"] == no), None)
 
 
-def step_tools(db, pid):
-    st.caption("The tool library, shared by all projects. Click a tool in the list to see and change its dimensions, delete it, or "
-               "choose it for the CAM of this operation. The picture only explains what each dimension means; it does not follow the numbers.")
+def tool_library(db):
+    """The tool library page (CAM options): add, change and delete tools. The operations only choose from it (step_tools)."""
+    st.caption("The tool library, shared by all projects and operations. Click a tool in the list to see and change its dimensions or delete it; "
+               "**New tool** adds one. An operation chooses its tool from this list (it keeps the tool by its catalog number: after a tool was "
+               "deleted or renumbered, choose a tool again in the operations that used it). The picture only explains what each dimension "
+               "means; it does not follow the numbers.")
     try:
         tools = [_row_to_tool(r) for r in db.list_cam_tools()]
     except Exception as e:  # noqa: BLE001
         st.error(f"Could not read the tools: {e}")
         return
     by_no = {t["number"]: t for t in tools}
-    used = _cam_settings(db, pid).get("tool")
-    if used not in by_no:
-        used = None
     ss = st.session_state
     ss.setdefault("tools_sel", None)           # None: nothing open, 0: a new tool, n: tool n
     ss.setdefault("tools_ver", 0)              # a new number gives the list a fresh, empty selection
@@ -155,8 +155,6 @@ def step_tools(db, pid):
         except Exception as e:  # noqa: BLE001
             ss.tools_problems = [f"Could not save: {e}"]
             return
-        if old is not None and used == old and int(t["number"]) != old:      # the chosen tool was renumbered: keep it chosen
-            _use(int(t["number"]))
         ss.tools_problems = []
         ss.tools_edit = False
         ss.tools_msg = f"Tool T{int(t['number'])} saved."
@@ -170,8 +168,6 @@ def step_tools(db, pid):
         n = ss.tools_sel
         try:
             db.delete_cam_tool(n)
-            if used == n:
-                _use(None)
         except Exception as e:  # noqa: BLE001
             ss.tools_problems = [f"Could not delete: {e}"]
             return
@@ -197,34 +193,11 @@ def step_tools(db, pid):
     def _keep():
         ss.tools_confirm = False
 
-    def _use(n):
-        try:
-            cam = db.get_cam(pid) or {}
-            cam["camming"] = {**cam.get("camming", {}), "tool": n}
-            db.save_cam(pid, cam)
-        except Exception as e:  # noqa: BLE001
-            ss.tools_problems = [f"Could not save the choice: {e}"]
-            return
-        if n is not None:
-            ss.tools_msg = f"Tool T{n} is the tool for the CAM of this operation."
-
     msg = ss.pop("tools_msg", None)
     if msg:
         st.toast(msg, icon=":material/check_circle:")
 
-    top = st.columns([1, 1.5, 5])                           # the buttons packed to the left
-    top[0].button("➕ New tool", on_click=_new, key="tools_new")
-    sel = ss.tools_sel or None
-    if sel is not None and sel == used:
-        top[1].button("Do not use for CAM", on_click=_use, args=(None,), key="tools_unuse", width="stretch")
-    else:
-        top[1].button("Use for CAM", on_click=_use, args=(sel,), key="tools_use", disabled=sel is None, type="primary", width="stretch",
-                      help="Tick a tool in the list, then press this to choose it for the next CAM steps of this operation.")
-    if used is not None:                                    # the chosen tool: its own line right above the table
-        u = by_no[used]
-        st.markdown(f"Tool for the CAM of this operation: **T{used}**  {u['name']}  Ø{u['diameter']:g}")
-    else:
-        st.markdown("Tool for the CAM of this operation: **none chosen**")
+    st.button("➕ New tool", on_click=_new, key="tools_new")
 
     open_ = ss.tools_sel is not None
     list_col, detail_col = st.columns([2, 5])             # the list keeps the same narrow width, selected or not
@@ -295,3 +268,66 @@ def step_tools(db, pid):
                 st.image(GUIDE_SVG)
                 st.caption("D diameter · SD shoulder diameter · AD arbor diameter · SA shoulder angle · CL cutting length · "
                            "SL shoulder length · TL total length · CH chamfer. OHL (outside holder) is the length that sticks out of the holder.")
+
+
+def step_tools(db, pid):
+    """Step 2 of an operation: only CHOOSE a tool of the library for it. Tools are created, changed and deleted in CAM options."""
+    st.caption("Choose the tool of this operation: click a tool in the list, then press **Use for CAM**. Tools are created, changed and "
+               "deleted in **CAM options** (next to Create operation).")
+    try:
+        tools = [_row_to_tool(r) for r in db.list_cam_tools()]
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Could not read the tools: {e}")
+        return
+    by_no = {t["number"]: t for t in tools}
+    used = _cam_settings(db, pid).get("tool")
+    if used not in by_no:
+        used = None
+    ss = st.session_state
+    ss.setdefault("pick_ver", 0)               # a new number gives the list a fresh, empty selection
+    ss.setdefault("pick_sel", None)
+
+    def _use(n):
+        try:
+            cam = db.get_cam(pid) or {}
+            cam["camming"] = {**cam.get("camming", {}), "tool": n}
+            db.save_cam(pid, cam)
+        except Exception as e:  # noqa: BLE001
+            ss.pick_error = f"Could not save the choice: {e}"
+            return
+        ss.pick_error = None
+        if n is not None:
+            ss.tools_msg = f"Tool T{n} is the tool for the CAM of this operation."
+
+    msg = ss.pop("tools_msg", None)
+    if msg:
+        st.toast(msg, icon=":material/check_circle:")
+    if ss.get("pick_error"):
+        st.error(ss.pick_error)
+    list_col, detail_col = st.columns([2, 5])             # the list keeps the same narrow width
+    with list_col:
+        if not tools:
+            st.info("There are no tools yet. Create them in **CAM options**.")
+        else:
+            df = pd.DataFrame([{"No.": t["number"], "Name": t["name"], "Type": t["tool_type"], "Diameter": t["diameter"], "Flutes": t["flutes"]}
+                               for t in tools])
+            ev = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row", key=f"pick_table_{ss.pick_ver}")
+            rows = tuple(ev.selection.rows)
+            ss.pick_sel = tools[rows[0]]["number"] if rows else None
+    sel = ss.pick_sel
+    with detail_col:
+        b1, b2, _ = st.columns([1.6, 1.6, 4])
+        if sel is not None and sel == used:
+            b1.button("Do not use for CAM", on_click=_use, args=(None,), key="tools_unuse", width="stretch")
+        else:
+            b1.button("Use for CAM", on_click=_use, args=(sel,), key="tools_use", disabled=sel is None, type="primary", width="stretch",
+                      help="Click a tool in the list, then press this to choose it for the next CAM steps of this operation.")
+        if used is not None:
+            u = by_no[used]
+            st.markdown(f"Tool for the CAM of this operation: **T{used}**  {u['name']}  Ø{u['diameter']:g}")
+        else:
+            st.markdown("Tool for the CAM of this operation: **none chosen**")
+        if sel is not None:
+            s = by_no[sel]
+            st.caption(f"Selected in the list: T{sel} {s['name']} · {s['tool_type'].lower()} · Ø{s['diameter']:g} · {s['flutes']} flutes · "
+                       f"cutting length {s['cutting_length']:g} · outside holder {s['outside_holder']:g}")
