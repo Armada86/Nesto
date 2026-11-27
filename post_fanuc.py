@@ -91,20 +91,24 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
     w.safe_position()
     first = True
     brush_down = False
+    last_tool = None
     for job_no, (tool, moves) in enumerate(groups, 1):
         if solidcam:
-            _solidcam_operation(w, operation or "CONTOUR", tool)
+            base = operation or "CONTOUR"
+            _solidcam_operation(w, base if job_no == 1 else f"{base}{job_no - 1}", tool)      # F-CONTOUR, F-CONTOUR1, ...
             w.block(f"N{job_no}")
         else:
             w.block(_comment(f"OPERATION: {operation}" if operation else f"OPERATION: CONTOURS WITH T{tool.number} {tool.name or 'ENDMILL'}"))
-        if not first:
+        if not first and not solidcam:
             w.block("M1")                           # @start_of_job: optional stop before a tool change
             w.block("M9") if w.coolant_on else None
             w.coolant_on = None
             w.safe_position()
         # @rapid_move of the first move: work offset, tool call, C axis, spindle, first position, smoothing, coolant, length offset
         w.block(f"G{machine.WORK_OFFSET}")
-        w.block(f"M6 T{tool.number}")
+        if not solidcam or first or tool.number != last_tool:      # the next operation with the same tool has no tool change
+            w.block(f"M6 T{tool.number}")
+        last_tool = tool.number
         w.block("G0 C0.")
         w.block(f"S{num(tool.rpm).rstrip('.')} {spin}")
         w.pos = {"X": None, "Y": None, "Z": None}
@@ -155,7 +159,7 @@ def _box(text: str, center: bool = False) -> str:
     if center:
         pad = _BOX - len(text)
         return "(" + " " * (pad - pad // 2) + text + " " * (pad // 2) + ")"
-    return "(" + text.ljust(_BOX) + ")"
+    return "(" + text[:_BOX].ljust(_BOX) + ")"
 
 
 _RULE = "(" + "-" * _BOX + ")"
