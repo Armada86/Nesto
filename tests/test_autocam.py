@@ -99,8 +99,14 @@ def test_the_program_of_a_sheet_has_every_operation_with_its_tool_and_the_drilli
     assert [b.strip("() ") for b in boxes] == ["Sheet1-DRILL-20", "Sheet1-DRILL-8", "Sheet1-HOLES-12.7", "Sheet1-HOLES-3", "Sheet1-CONTOUR-12.7"]
     assert [x for x in g if re.fullmatch(r"N\d+", x)] == ["N1", "N2", "N3", "N4", "N5"]
     assert [x for x in g if x.startswith("M6 ")] == ["M6 T4", "M6 T5", "M6 T1", "M6 T3", "M6 T1"]       # a tool change wherever the tool changes
-    assert g.count("M96 (BRUSHES DOWN)") == 1 and g.index("M96 (BRUSHES DOWN)") < g.index("M97 (BRUSHES UP)")
-    assert [x for x in g if x.startswith("G98 G83")] == ["G98 G83 X120. Y150. Z0. R20. Q5. F150.", "G98 G83 X200. Y150. Z0. R20. Q5. F150."]
+    assert g.count("M1") == 4 and "M5" not in g[:-8]                                                    # M1 + safe position before every tool change, no M5
+    i = g.index("N2")
+    assert g[i + 1:i + 5] == ["M1", "G0 G28 G91 Z0.", "G90", "G56"] and g[i + 5] == "M6 T5"
+    assert g.count("M96 (BRUSHES DOWN)") == 1 and min(i for i, x in enumerate(g) if x.startswith("G1 ")) < g.index("M96 (BRUSHES DOWN)")   # brushes only for milling
+    assert not any(x.startswith("M97") for x in g[:g.index("N3")])                                      # none after the drilling operations
+    # the drilling operation like the SolidCAM post: rapid to the hole, the cycle without X and Y, G80, G05.1 Q0
+    k = g.index("G0 G43 H4 Z45.")
+    assert g[k + 1:k + 5] == ["G0 X120. Y150. Z45.", "G81 G98 Z0. R20 Q5. F150.".replace("G81", "G83"), "G80", "G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)"]
     assert g.count("G80") == 2                                                                          # one per drilling operation
     assert text.startswith("%\r\n<t.anc>") and text.endswith("%")
     assert min(i for i, x in enumerate(g) if "G83" in x) < min(i for i, x in enumerate(g) if x.startswith("G1 "))   # drilling before milling
@@ -111,9 +117,9 @@ def test_a_drilling_cycle_is_written_once_and_the_next_holes_only_have_x_and_y()
     moves = [("G0", 10, 10, 45, None), ("G81", 10, 10, 0.0, 120, 17.0, 0.0), ("G81", 50, 30, 0.0, 120, 17.0, 0.0), ("G81", 80, 30, 0.0, 120, 17.0, 0.0)]
     text = post_fanuc.program("a.anc", [(t, moves)], cam.CamJob(thickness=18), 1, (150, 80), solidcam=True, op_names=["x"])
     g = [x.rstrip() for x in text.split("\r\n")]
-    i = g.index("G98 G81 X10. Y10. Z0. R17. F120.")
-    assert g[i + 1:i + 4] == ["X50. Y30.", "X80. Y30.", "G80"]
-    assert not any("G05.1" in x for x in g)                                                             # no smoothing for drilling
+    i = g.index("G81 G98 Z0. R17 F120.")                                                                # R without a decimal point, as SolidCAM
+    assert g[i - 1] == "G0 X10. Y10. Z45." and g[i + 1:i + 5] == ["X50. Y30.", "X80. Y30.", "G80", "G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)"]
+    assert not any("G05.1 Q1" in x for x in g)                                                          # no smoothing ON for drilling
     assert cam.estimate_minutes([(t, moves)]) > 0
 
 

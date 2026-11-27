@@ -46,7 +46,7 @@ def tool_from_row(t: dict, data: dict) -> cam.Tool:
     """The cam.Tool the planner and the post work with: the geometry of the tool from step 2, the feeds and speed from step 3."""
     return cam.Tool(number=int(t["number"]), name=t.get("name", "") or "", diameter=float(t["diameter"]), flutes=int(t.get("flutes", 2)),
                     rpm=float(data["rpm"]), feed=float(data["feed_xy"]), plunge=float(data["feed_z"]), step_down=1e9, coolant="none",
-                    length=float(t.get("outside_holder") or 0.0), holder="")                       # the tool records have no holder: no HOLDER line in the header
+                    length=float(t.get("outside_holder") or 0.0), holder="", kind=str(t.get("tool_type") or "END MILL"))                       # the tool records have no holder: no HOLDER line in the header
 
 
 def contour_moves(c: cam.Contour, tool: cam.Tool, data: dict, lv: dict) -> list:
