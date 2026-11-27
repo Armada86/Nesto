@@ -97,7 +97,7 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
         if solidcam:
             base = operation or "CONTOUR"
             if op_names and job_no <= len(op_names):
-                label = op_names[job_no - 1]                                                   # HOLES, PERIMETER
+                label = op_names[job_no - 1]                                                   # <operation>-HOLES, <operation>-CONTOUR
             else:
                 label = base if job_no == 1 else f"{base}{job_no - 1}"                         # F-CONTOUR, F-CONTOUR1, ...
             _solidcam_operation(w, label, tool)
