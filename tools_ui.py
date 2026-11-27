@@ -159,9 +159,12 @@ def step_tools(db, pid):
             _use(int(t["number"]))
         ss.tools_problems = []
         ss.tools_edit = False
-        ss.tools_sel = int(t["number"])
         ss.tools_msg = f"Tool T{int(t['number'])} saved."
-        _reset_list()
+        if old is not None and int(t["number"]) == old:       # the same row: it stays selected in the list and its details stay open
+            ss.tools_sel = old
+        else:                                                 # a new or renumbered tool: its row is somewhere else, so nothing is selected
+            ss.tools_sel = None
+            _reset_list()
 
     def _delete():
         n = ss.tools_sel
@@ -239,6 +242,9 @@ def step_tools(db, pid):
                 elif ss.tools_sel:
                     ss.tools_sel = None
                     st.rerun()
+            elif not rows and ss.tools_sel:                   # the details of a tool are only shown while that tool is selected in the list
+                ss.tools_sel = None
+                st.rerun()
         else:
             st.info("No tools yet. Press **New tool**, fill the form and press **Save tool**.")
 
