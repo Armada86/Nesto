@@ -130,3 +130,34 @@ def test_an_operation_with_a_list_of_contours_cuts_only_those_and_a_drill_operat
     cycles = [m for m in groups[0][1] if m[0] == "G81"]
     assert len(cycles) == 3 and all(m[3] == 0.0 and m[5] == 20.0 for m in cycles)                       # down to the bottom, R plane = upper + safety
     assert [m[1] for m in cycles] == sorted(m[1] for m in cycles)                                       # from left to right
+
+
+def uneven_circle(cx, cy, r, angles_deg):
+    """A circle cut into straight pieces at uneven angles (like a circle that was imported as a few arcs)."""
+    return [(cx + r * math.cos(math.radians(a)), cy + r * math.sin(math.radians(a))) for a in angles_deg]
+
+
+def test_a_circle_with_unevenly_spaced_vertices_is_still_a_circle_but_a_square_or_a_slot_is_not():
+    angles = [0, 5, 10, 20, 40, 80, 120, 150, 170, 180, 200, 230, 260, 290, 320, 350]       # many vertices on one side: their centroid is off
+    c = cam._circle_of(uneven_circle(70.0, 22.0, 3.175, angles) + [uneven_circle(70.0, 22.0, 3.175, [0])[0]])
+    assert c and abs(c[0] - 70.0) < 1e-6 and abs(c[1] - 22.0) < 1e-6 and abs(c[2] - 3.175) < 1e-6
+    assert cam._circle_of([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]) is None
+    slot = list(box(0, 0, 40, 10).buffer(0).exterior.coords)
+    assert cam._circle_of(slot) is None
+    half = uneven_circle(0, 0, 5.0, range(0, 181, 10))                                         # only half a circle
+    assert cam._circle_of(half) is None
+
+
+def test_a_hole_slightly_off_a_drill_diameter_is_drilled_within_the_tolerance_and_the_message_says_why_otherwise():
+    hole = Point(70.0, 22.0).buffer(3.125, 32)                                                   # D 6.25
+    sh = {"width": 300.0, "height": 100.0, "placements": [pl("PART6", box(0, 0, 150, 50).difference(hole))]}
+    tools = [tool(1, "END MILL", 12.7), tool(4, "DRILL", 6.35)]
+    p = autocam.plan(sh, 1, tools, None, 18.0, margin=10.0, spacing=14.0)                      # 0.1 mm apart: within the default tolerance
+    assert [o["kind"] for o in p["operations"]] == ["drill", "outline"] and not p["skipped"]
+    p = autocam.plan(sh, 1, tools, {"drill": {"tolerance": 0.05}}, 18.0, margin=10.0, spacing=14.0)
+    assert [o["kind"] for o in p["operations"]] == ["outline"]
+    assert len(p["skipped"]) == 1 and "T4" in p["skipped"][0] and "tolerance" in p["skipped"][0] and "6.25" in p["skipped"][0]
+    p = autocam.plan(sh, 1, [tool(1, "END MILL", 12.7)], None, 18.0, margin=10.0, spacing=14.0)
+    assert "no drill" in p["skipped"][0]
+    square = {"width": 300.0, "height": 100.0, "placements": [pl("S", box(0, 0, 150, 50).difference(box(60, 20, 66, 26)))]}
+    assert "not round" in autocam.plan(square, 1, tools, None, 18.0, margin=10.0, spacing=14.0)["skipped"][0]
