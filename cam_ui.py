@@ -186,7 +186,7 @@ def machining_tab(db, pid, project: str, result, meta: dict, run_id, file_base: 
             m1, m2, m3 = st.columns(3)
             m1.metric("Contours", len(plan.contours), help="Holes and outlines of the parts on this sheet.")
             m2.metric("Contour length", f"{length:,.0f}", help="One pass around every contour (the tool centre path).")
-            m3.metric("Estimated time", f"{minutes:.1f} min")
+            m3.metric("Estimated time", cam.duration_text(minutes))
             fig = _preview(result[sheet_no - 1], plan)
             st.pyplot(fig)
             plt.close(fig)

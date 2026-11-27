@@ -476,6 +476,17 @@ def contour_moves(c: Contour, tool: Tool, job: CamJob) -> list:
     return moves
 
 
+def duration_text(minutes: float) -> str:
+    """A time in whole seconds, never in decimal minutes: "24 s", "1 min 24 s", "1 h 05 min 10 s"."""
+    s = int(round(minutes * 60))
+    if s < 60:
+        return f"{s} s"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m} min {s:02d} s"
+    return f"{m // 60} h {m % 60:02d} min {s:02d} s"
+
+
 def estimate_minutes(moves_by_tool: list, start=(0.0, 0.0, 0.0)) -> float:
     """Cutting time from the moves: every feed move at its feed, every rapid at the machine's rapid speed."""
     t = 0.0
