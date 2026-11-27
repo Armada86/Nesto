@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS nesto_tools (
     holder TEXT NOT NULL DEFAULT ''
 );
 ALTER TABLE nesto_tools ADD COLUMN IF NOT EXISTS holder TEXT NOT NULL DEFAULT '';
+ALTER TABLE nesto_tools ADD COLUMN IF NOT EXISTS point_angle DOUBLE PRECISION;
 CREATE TABLE IF NOT EXISTS nest_runs (
     id SERIAL PRIMARY KEY,
     project_id INT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -251,7 +252,7 @@ def save_tools(tools: list[dict]):
 
 
 TOOL_FIELDS = ("number", "tool_type", "name", "diameter", "shoulder_diameter", "arbor_diameter", "shoulder_angle", "cutting_length",
-               "shoulder_length", "total_length", "chamfer", "outside_holder", "helical_angle", "flutes", "holder")
+               "shoulder_length", "total_length", "chamfer", "outside_holder", "helical_angle", "flutes", "holder", "point_angle")
 
 
 def list_cam_tools():
@@ -269,7 +270,7 @@ def save_cam_tool(tool: dict, old_number: int | None = None):
         if old_number is not None:
             c.execute("DELETE FROM nesto_tools WHERE number=%s", (int(old_number),))
         c.execute(f"INSERT INTO nesto_tools({', '.join(TOOL_FIELDS)}) VALUES ({', '.join(['%s'] * len(TOOL_FIELDS))})",
-                  [tool[f] for f in TOOL_FIELDS])
+                  [tool.get(f) for f in TOOL_FIELDS])
 
 
 def delete_cam_tool(number: int):
