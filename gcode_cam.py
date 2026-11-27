@@ -26,7 +26,7 @@ ASSUMPTIONS = [
     "closed loop that ends where it started; there are no lead in / lead out moves.",
     "Start point: the lowest left vertex of the part (the lowest vertex, the leftmost of those): the contour starts where the "
     "tool path of the edge that leaves this vertex begins.",
-    "Operations: the holes and the outlines are two operations (the names are the operation name and the operation name + 1), each with "
+    "Operations: the holes and the outlines are two operations (named <operation>-HOLES and <operation>-CONTOUR in the operation box), each with "
     "its own boxes, N block and end sequence (G05.1 Q0, safe position, M97); the tool change M6 and M96 are written once.",
     "Round holes: a hole that is a circle is cut as a true circle (not as the polygon it is stored as), starting at its top.",
     "Order: the order of the contours that was set in step 1 (by default the holes first, then the outlines, each from the lower left "
@@ -91,13 +91,28 @@ def build(sheet: dict, t: dict, data: dict, lv: dict, thickness: float, margin: 
     job = cam.CamJob(thickness=thickness, inner_tool=tool.number, outer_tool=tool.number, climb=(data["direction"] == "CW"))
     plan = cam.plan_sheet(sheet, job, {tool.number: tool}, margin, spacing, start="lowleft", order="left_right", arc_tol=ARC_TOLERANCE,
                           custom_order=order_ids)
-    groups, kind = [], None                       # an operation for every run of holes or of outlines (SolidCAM: F-CONTOUR, F-CONTOUR1)
+    groups, kind = [], None                       # an operation for every run of holes or of outlines (<operation>-HOLES, <operation>-CONTOUR)
     for c in plan.contours:
         if c.kind != kind:
             groups.append((tool, []))
             kind = c.kind
         groups[-1][1].extend(contour_moves(c, tool, data, lv))
     return plan, groups, tool, job
+
+
+def operation_names(plan: cam.Plan, operation: str | None = None) -> list[str]:
+    """The names of the operations in the program, one for every run of holes or of outlines: the name of the operation, a dash, and
+    HOLES or CONTOUR (Hole test-HOLES, Hole test-CONTOUR; a name that comes again gets a number: ...-HOLES 2), so that whoever reads
+    the program sees which part of it cuts what."""
+    names, kind, seen = [], None, {}
+    for c in plan.contours:
+        if c.kind != kind:
+            kind = c.kind
+            base = "HOLES" if kind == "inner" else "CONTOUR"
+            seen[base] = seen.get(base, 0) + 1
+            label = base if seen[base] == 1 else f"{base} {seen[base]}"
+            names.append(f"{operation}-{label}" if operation else label)
+    return names
 
 
 def text(name: str, sheet: dict, sheet_no: int, t: dict, data: dict, lv: dict, thickness: float, project: str = "", run_no=None,
@@ -108,4 +123,5 @@ def text(name: str, sheet: dict, sheet_no: int, t: dict, data: dict, lv: dict, t
     note = (f"WORK OFFSET G{machine.WORK_OFFSET}: ZERO AT THE LOWER LEFT CORNER OF THE SHEET, Z0 = BOTTOM OF THE PARTS, "
             f"TOP OF THE MATERIAL Z{lv['upper']:g}")
     return post_fanuc.program(name, groups, job, sheet_no, (sheet["width"], sheet["height"]), project, run_no,
-                              {"length": length, "minutes": minutes}, z0_note=note, spin="M3" if data["direction"] == "CW" else "M4", operation=operation, solidcam=True)
+                              {"length": length, "minutes": minutes}, z0_note=note, spin="M3" if data["direction"] == "CW" else "M4", operation=operation, solidcam=True,
+                              op_names=operation_names(plan, operation))

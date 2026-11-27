@@ -59,8 +59,9 @@ class _Writer:
 
 def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, project: str = "", run_no=None,
             stats: dict | None = None, z0_note: str | None = None, spin: str = "M3", operation: str | None = None,
-            brushes: bool = True, solidcam: bool = False) -> str:
+            brushes: bool = True, solidcam: bool = False, op_names: list | None = None) -> str:
     """The complete program text for one sheet. groups: [(Tool, [moves])] from cam.groups().
+    op_names: the names of the operations (one per group) in the operation boxes.
     solidcam: the program exactly as the SolidCAM post writes it (header boxes, N blocks, a space at the end of the blocks, CR LF)."""
     w = _Writer()
     now = local_time()
@@ -95,7 +96,11 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
     for job_no, (tool, moves) in enumerate(groups, 1):
         if solidcam:
             base = operation or "CONTOUR"
-            _solidcam_operation(w, base if job_no == 1 else f"{base}{job_no - 1}", tool)      # F-CONTOUR, F-CONTOUR1, ...
+            if op_names and job_no <= len(op_names):
+                label = op_names[job_no - 1]                                                   # <operation>-HOLES, <operation>-CONTOUR
+            else:
+                label = base if job_no == 1 else f"{base}{job_no - 1}"                         # F-CONTOUR, F-CONTOUR1, ...
+            _solidcam_operation(w, label, tool)
             w.block(f"N{job_no}")
         else:
             w.block(_comment(f"OPERATION: {operation}" if operation else f"OPERATION: CONTOURS WITH T{tool.number} {tool.name or 'ENDMILL'}"))

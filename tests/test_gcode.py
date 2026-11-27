@@ -137,7 +137,7 @@ def test_generate_tab_shows_the_gcode_of_the_operation_and_names_the_file_after_
         assert [t.label for t in at.tabs][4] == "5 · Generate G-code"
         code = "\n".join(c.value for c in at.code)
         assert "M6 T1" in code and "G0 G43 H1 Z45." in code and "S10000 M3" in code
-        assert "<proj-Run3-Sheet1-sheet_01_Milling.anc>" in code and "(sheet_01 Milling" in code      # the file: project - run - sheet - operation
+        assert "<proj-Run3-Sheet1-sheet_01_Milling.anc>" in code and "(sheet_01 Milling-HOLES" in code and "(sheet_01 Milling-CONTOUR" in code      # the file: project - run - sheet - operation
         assert code.rstrip().endswith("%") and "\n..." not in code and "\r" not in code           # the whole program, not a part of it
         assert not next(e for e in at.expander if e.label.startswith("G-code of")).proto.expanded   # hidden until it is opened      # the file name is the operation name
         assert not at.error
@@ -247,7 +247,7 @@ def test_the_program_is_written_like_the_solidcam_file():
     k = g.index("G90 G21 G40 G49 G80 G94 G98 G17")
     assert g[k + 1:k + 4] == ["(METRIC PROGRAM)", "G0 G28 G91 Z0. ", "G90"]                      # a space ends a block
     i = g.index("(              OPERATION INFORMATION             )")
-    assert g[i + 2:i + 12] == ["(F-CONTOUR                                       )", box, box, "(                TOOL INFORMATION                )", box,
+    assert g[i + 2:i + 12] == ["(" + "F-CONTOUR-HOLES".ljust(48) + ")", box, box, "(                TOOL INFORMATION                )", box,
                                '(1/2" END MILL 3F                                )', "(TOOL LENGTH: 122.24mm                           )",
                                "(HOLDER: ADAPTOR                                 )", box, "N1 "]
     assert g[i + 12:i + 16] == ["G56 ", "M6 T1 ", "G0 C0. ", "S10000 M3 "]
@@ -302,7 +302,7 @@ def test_holes_and_outlines_are_two_operations_like_solidcam():
     raw = gcode_cam.text("a.anc", _round_hole_sheet(), 1, {**TOOL, "holder": "ADAPTOR"}, DATA, LV, 15.0, operation="F-CONTOUR")
     g = [x.rstrip() for x in raw.split("\r\n")]
     ops = [g[i + 2] for i, x in enumerate(g) if x == "(              OPERATION INFORMATION             )"]
-    assert ops == ["(F-CONTOUR                                       )", "(F-CONTOUR1                                      )"]
+    assert ops == ["(" + "F-CONTOUR-HOLES".ljust(48) + ")", "(" + "F-CONTOUR-CONTOUR".ljust(48) + ")"]
     assert [x for x in g if re.fullmatch(r"N\d+", x)] == ["N1", "N2"]
     assert g.count("M6 T1") == 1 and g.count("M96 (BRUSHES DOWN)") == 1 and g.count("M97 (BRUSHES UP)") == 2
     assert g.count("G05.1 Q1 R7 (AICC/AIAPC HIGH SPEED MODE ON)") == 2 and g.count("G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)") == 2
