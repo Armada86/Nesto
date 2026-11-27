@@ -435,7 +435,7 @@ def test_an_autocam_drill_operation_makes_drilling_gcode_in_its_own_step_5_and_c
         at = AppTest.from_function(app, default_timeout=60).run()
         assert not at.exception
         code = "\n".join(c.value for c in at.code)
-        assert "G98 G81" in code and "(Sheet1-DRILL-120" in code and "M6 T4" in code
+        assert "G81 G98 Z0. R17" in code and "(Sheet1-DRILL-120" in code and "M6 T4" in code
         assert not any("is not a drill" in w.value for w in at.warning)
     finally:
         sys.modules.pop("db", None)

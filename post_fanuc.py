@@ -107,7 +107,7 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
             w.block(f"N{job_no}")
         else:
             w.block(_comment(f"OPERATION: {operation}" if operation else f"OPERATION: CONTOURS WITH T{tool.number} {tool.name or 'ENDMILL'}"))
-        if not first and not solidcam:
+        if not first and (not solidcam or tool.number != last_tool):
             w.block("M1")                           # @start_of_job: optional stop before a tool change
             w.block("M9") if w.coolant_on else None
             w.coolant_on = None
@@ -115,8 +115,6 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
         # @rapid_move of the first move: work offset, tool call, C axis, spindle, first position, smoothing, coolant, length offset
         w.block(f"G{machine.WORK_OFFSET}")
         if not solidcam or first or tool.number != last_tool:      # the next operation with the same tool has no tool change
-            if not first:
-                w.block("M5")                                      # the spindle stops before another tool is called
             w.block(f"M6 T{tool.number}")
         last_tool = tool.number
         w.block("G0 C0.")
@@ -138,16 +136,15 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
             w.coolant_on = tool.coolant
         w.block(f"G0 G43 H{tool.number} Z" + num(first_move[3]))
         w.pos["Z"] = first_move[3]
+        if drilling:                                                 # like the SolidCAM post: rapid to the first hole, the cycle then works there
+            w.block("G0 X" + num(first_move[1]) + " Y" + num(first_move[2]) + " Z" + num(first_move[3]))
         cycle = None                                                 # the canned cycle that is on (G81 / G83), if any
         for mv in moves[1:]:
             code, x, y, z, f = mv[:5]
-            if code in CYCLES:                                       # a hole: G98 G81 X.. Y.. Z.. R.. F.. then only X.. Y.. for the next holes
-                if brushes and not brush_down:
-                    w.block("M96 (BRUSHES DOWN)")
-                    brush_down = True
+            if code in CYCLES:                                       # a hole: G81 G98 Z.. R.. F.. (at the first hole), then only X.. Y.. for the next holes
                 r, q = mv[5], mv[6]
                 if cycle != (code, z, r, q, f):
-                    parts = [f"G98 {code}", "X" + num(x), "Y" + num(y), "Z" + num(z), "R" + num(r)]
+                    parts = [f"{code} G98", "Z" + num(z), "R" + num(r).rstrip(".")]        # R without a decimal point, as the SolidCAM post writes it
                     if code == "G83":
                         parts.append("Q" + num(q))
                     parts.append("F" + num(f))
@@ -163,8 +160,8 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
         if cycle:
             w.block("G80")                                           # the canned cycle is cancelled
         # @end_of_job
-        if job.smoothing and not drilling:
-            w.block("G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)")
+        if job.smoothing:
+            w.block("G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)")                # at the end of every operation, also after drilling (as SolidCAM)
         w.safe_position()
         if brush_down:
             w.block("M97 (BRUSHES UP)")
@@ -197,7 +194,7 @@ _RULE = "(" + "-" * _BOX + ")"
 
 def _solidcam_line(line: str) -> str:
     """A block ends with a space, like the post writes it; comment lines, program name, the first G90 line, G90 and % do not."""
-    if line.startswith(("(", "%", "<", "G90 G21")) or "(" in line or line == "G90":
+    if line.startswith(("(", "%", "<", "G90 G21")) or "(" in line or line in ("G90", "M1"):
         return line
     return line + " "
 
@@ -208,7 +205,16 @@ def _hms(minutes: float) -> str:
 
 
 def _tool_desc(tool) -> str:
+    """The tool in the boxes: a drill by its name, an end mill with its flutes (1/2" END MILL 3F)."""
+    if str(getattr(tool, "kind", "END MILL")).upper() == "DRILL":
+        return tool.name or "DRILL"
     return f"{tool.name or 'END MILL'} {int(tool.flutes)}F"
+
+
+def _length_text(v: float) -> str:
+    """The tool length as the SolidCAM post writes it: two decimals at most, no trailing zeros (122.24, 154.1)."""
+    s = f"{v:.2f}".rstrip("0").rstrip(".")
+    return s or "0"
 
 
 def _solidcam_header(w, name: str, groups: list, operation, stats, now) -> None:
@@ -223,11 +229,10 @@ def _solidcam_header(w, name: str, groups: list, operation, stats, now) -> None:
                  _RULE, _box("TOOL LIST", True), _RULE, "(TOOL|              TOOL              |   TOOL   )",
                  "( NO |           DESCRIPTION          |  LENGTH  )", _RULE):
         w.block(line)
-    seen = set()
+    by_no = {}
     for tool, _ in groups:
-        if tool.number in seen:
-            continue
-        seen.add(tool.number)
+        by_no.setdefault(tool.number, tool)
+    for tool in (by_no[n] for n in sorted(by_no)):                    # the tool list is in the order of the tool numbers
         txt = f"{int(round(tool.length))}mm"
         pad = 10 - len(txt)
         w.block(f"({str(tool.number).rjust(3)} | {_tool_desc(tool).ljust(31)}|{' ' * (pad // 2)}{txt}{' ' * (pad - pad // 2)})")
@@ -236,7 +241,7 @@ def _solidcam_header(w, name: str, groups: list, operation, stats, now) -> None:
 
 def _solidcam_operation(w, operation: str, tool) -> None:
     for line in (_RULE, _box("OPERATION INFORMATION", True), _RULE, _box(operation), _RULE, _RULE, _box("TOOL INFORMATION", True), _RULE,
-                 _box(_tool_desc(tool)), _box(f"TOOL LENGTH: {tool.length:.2f}mm")):
+                 _box(_tool_desc(tool)), _box(f"TOOL LENGTH: {_length_text(tool.length)}mm")):
         w.block(line)
     if tool.holder:
         w.block(_box(f"HOLDER: {tool.holder.upper()}"))

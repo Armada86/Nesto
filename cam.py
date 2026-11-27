@@ -36,6 +36,7 @@ class Tool:
     coolant: str = "none"             # none | flood | air
     length: float = 0.0               # the length of the tool out of its holder (the header of the program)
     holder: str = ""                  # the holder (the header of the program)
+    kind: str = "END MILL"            # END MILL | DRILL (how the tool is written in the boxes of the program)
 
     def problems(self) -> list[str]:
         out = []

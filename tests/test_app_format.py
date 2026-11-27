@@ -347,7 +347,7 @@ def test_autocam_makes_the_operations_and_the_gcode_of_a_sheet(fake_db):
     assert pic[:8] == b"\x89PNG\r\n\x1a\n" and len(pic) > 5000
     assert [t for _c, t in at.session_state["autocam_result"]["legend"]] == ["**T1** 1/4 END MILL Ø6.35", "**T4** DRILL 20 Ø20"]
     code = next(c.value for c in at.code)
-    assert "G98 G81 X70.137 Y22.345" in code and "G80" in code and code.count("M6 T") == 2
+    assert "G0 X70.137 Y22.345 Z45." in code and "G81 G98 Z0. R20 F150." in code and "G80" in code and code.count("M6 T") == 2
     assert "(Sheet1-DRILL-20" in code and "(Sheet1-CONTOUR-6.35" in code
     next(b for b in at.button if b.key == "autocam_run").click().run()               # again: the operations are replaced, not doubled
     assert [o["name"] for o in fake_db.list_operations(7)] == names
