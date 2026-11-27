@@ -287,6 +287,9 @@ def step_geometry(db, pid, result):
             cam_ = db.get_cam(pid) or {}
             c_ = {**cam_.get("camming", {}), "thickness": float(ss_.camming_thickness)}
             if sheet_no is not None:
+                if int(c_.get("sheet", 1)) != int(sheet_no):          # another sheet: its contours are others, the selection is dropped
+                    for k_ in ("contours", "kind", "drill", "order", "order_sheet"):
+                        c_.pop(k_, None)
                 c_["sheet"] = int(sheet_no)
                 base, work = ss_.get("geo_work_base"), ss_.get("geo_work")
                 if work is not None and base and base[0] == pid and base[1] == sheet_no:
@@ -319,8 +322,10 @@ def step_geometry(db, pid, result):
     sheet = result[sheet_no - 1]
     ch = chains(sheet)
     n_sheet = len(ch)
-    only = _saved(db, pid).get("contours")
-    if only is not None:                                      # an operation made by AutoCam: only its own contours are shown and ordered
+    saved_cam = _saved(db, pid)
+    only = saved_cam.get("contours") if int(saved_cam.get("sheet", 1)) == sheet_no else None    # the contours this operation cuts (None = all)
+    contour_picker(db, pid, sheet_no, ch, only)               # which holes and outlines of the sheet this operation cuts
+    if only is not None:                                      # an operation of some contours: only these are shown and ordered
         keep = set(only)
         ch = [c for c in ch if c["id"] in keep]
     held = [p["part"] for r in result for p in r["placements"] if is_held(p)]
@@ -330,11 +335,12 @@ def step_geometry(db, pid, result):
     if only is None:
         st.metric("Outlines", n_out)
     else:
-        what = {"drill": "drills", "hole": "mills the holes", "outline": "mills the outlines"}.get(_saved(db, pid).get("kind"), "cuts")
+        what = {"drill": "drills", "hole": "mills the holes", "outline": "mills the outlines"}.get(saved_cam.get("kind"), "cuts")
+        made = "This operation was made by AutoCam: it" if saved_cam.get("autocam") and saved_cam.get("kind") else "This operation"
         m1, m2, _m = st.columns([1, 1, 4])
         m1.metric("Holes", len(ch) - n_out)
         m2.metric("Outlines", n_out)
-        st.info(f"This operation was made by AutoCam: it {what} - {len(ch)} of the {n_sheet} contours of this sheet. "
+        st.info(f"{made} {what} - {len(ch)} of the {n_sheet} contours of this sheet. "
                 "The pictures and the cutting order below show only these contours.")
     ss = st.session_state
     saved_ids = full_order(ch, saved_order(db, pid, sheet_no))        # the order that is saved (the plan view shows it)
@@ -355,6 +361,66 @@ def step_geometry(db, pid, result):
     order_editor(db, pid, sheet_no, ch, saved_ids)
     st.button("Save", key="camming_save", type="primary", on_click=_save_all, args=(sheet_no, ch),
               help="Saves everything on this page: the thickness, the sheet and the cutting order.")      # the very bottom of the page
+
+
+def _contour_label(no: int, c: dict) -> str:
+    """One line for a contour in the list: its number, what it is, its size and where it is on the sheet."""
+    xs, ys = zip(*c["pts"])
+    circle = cam._circle_of(c["pts"]) if c["type"] == "Hole" else None
+    size = f"Ø{2 * circle[2]:.2f}" if circle else f"{max(xs) - min(xs):.1f} × {max(ys) - min(ys):.1f}"
+    return f"{no} · {c['part']} · {c['type']} {size} · X{min(xs):.1f} Y{min(ys):.1f}"
+
+
+def contour_picker(db, pid, sheet_no: int, ch: list, only):
+    """Which contours of the sheet this operation cuts: tick them (a form: ticking does not make the page react) and press a button.
+    Everything below on the page (pictures, cutting order) and the G-code then use only these contours. `only` = the saved list (None = all)."""
+    ss = st.session_state
+    order = default_order(ch)
+    by_id = {c["id"]: c for c in ch}
+    ver = ss.setdefault("geo_pick_ver", 0)                       # a new number after every save: the ticks are read from the saved list again
+    ticked_now = set(only) if only is not None else set(order)
+
+    def _save(ids):
+        ids = [i for i in order if i in set(ids)]
+        if not ids:
+            ss.camming_save_error = "Tick at least one contour."
+            return
+        try:
+            cam_ = db.get_cam(pid) or {}
+            c_ = dict(cam_.get("camming", {}))
+            c_["sheet"] = int(sheet_no)
+            if len(ids) == len(order):                           # all contours: no list (the operation follows the sheet)
+                c_.pop("contours", None)
+            else:
+                c_["contours"] = ids
+            c_.pop("kind", None)
+            c_.pop("order", None)                                # the cutting order starts again for the new selection
+            c_.pop("order_sheet", None)
+            cam_["camming"] = c_
+            db.save_cam(pid, cam_)
+            ss.camming_saved_msg = f"This operation cuts {len(ids)} of the {len(order)} contours of the sheet."
+        except Exception as e:  # noqa: BLE001
+            ss.camming_save_error = f"Could not save: {e}"
+        ss.geo_pick_ver = ss.get("geo_pick_ver", 0) + 1
+
+    def _ticked():
+        return [i for i in order if ss.get(f"geo_pick_{ss.get('geo_pick_ver', 0)}_{i}")]
+
+    holes = [i for i in order if by_id[i]["type"] == "Hole"]
+    outs = [i for i in order if by_id[i]["type"] == "Outline"]
+    title = "all" if len(ticked_now & set(order)) == len(order) else f"{len(ticked_now & set(order))} of {len(order)}"
+    with st.expander(f"Contours of this operation: {title} (click to choose which holes and outlines it cuts)"):
+        st.caption("Tick the holes and outlines this operation cuts, then press **Use the ticked contours**. Several holes, a single contour, or "
+                   "any mix. Everything below on this page and the G-code use only the chosen contours.")
+        with st.form("geo_pick_form", border=False, enter_to_submit=False):
+            with st.container(height=int(min(340, 44 * len(order) + 24)), border=True, key="geo_pick_list"):
+                for n, cid in enumerate(order, 1):
+                    st.checkbox(_contour_label(n, by_id[cid]), value=cid in ticked_now, key=f"geo_pick_{ver}_{cid}")
+            b1, b2, b3, b4 = st.columns(4)
+            b1.form_submit_button("Use the ticked contours", on_click=lambda: _save(_ticked()), key="geo_pick_use", type="primary", width="stretch")
+            b2.form_submit_button("All holes", on_click=lambda: _save(holes), key="geo_pick_holes", width="stretch", disabled=not holes)
+            b3.form_submit_button("All outlines", on_click=lambda: _save(outs), key="geo_pick_outs", width="stretch", disabled=not outs)
+            b4.form_submit_button("All contours", on_click=lambda: _save(order), key="geo_pick_all", width="stretch")
 
 
 @st.fragment

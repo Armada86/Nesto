@@ -353,3 +353,27 @@ def test_autocam_makes_the_operations_and_the_gcode_of_a_sheet(fake_db):
     assert [o["name"] for o in fake_db.list_operations(7)] == names
     next(b for b in at.button if b.key == "autocam_back").click().run()
     assert any(b.key == "autocam_btn" for b in at.button) and not any(s.value == "AutoCam" for s in at.subheader)
+
+
+def test_a_new_operation_does_not_inherit_the_contours_of_an_autocam_operation(fake_db):
+    from streamlit.testing.v1 import AppTest
+    fake_db.latest_operation_settings = lambda pid: {
+        "sheet": 1, "thickness": 12.0, "tool": 4, "data": {"feed_xy": 1.0, "feed_z": 150.0, "rpm": 6000.0, "direction": "CW"},
+        "levels": {"clearance": 45.0, "safety": 2.0, "upper": None, "depth": None}, "autocam": True, "autocam_sheet": 1, "kind": "outline",
+        "contours": ["O@0.00,0.00"], "drill": {"extra": 0.0, "peck": 0.0}, "order": ["O@0.00,0.00"], "order_sheet": 1}
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.session_state["pending_settings"] = {"effort_label": "Quick"}
+    at.run()
+    fake_db.load_run = lambda i: {"id": i, "sheet_w": 1000.0, "sheet_h": 600.0, "margin": 5.0, "spacing": 3.0, "seconds": 1.0,
+                                  "result": [{"width": 1000.0, "height": 600.0, "placements": [
+                                      {"part": "a", "x": 10.0, "y": 10.0, "w": 300.0, "h": 200.0, "rotated": False}]}]}
+    next(b for b in at.button if b.label == "Load run").click().run()
+    next(b for b in at.button if b.key == "ops_new").click().run()
+    at.text_input(key="ops_new_name").set_value("by hand")
+    next(b for b in at.button if b.key == "ops_create").click().run()
+    assert not at.exception
+    s = fake_db.list_operations(7)[0]["settings"]
+    for key in ("contours", "kind", "drill", "autocam", "autocam_sheet", "order", "order_sheet", "tool"):
+        assert key not in s                                                      # the whole sheet, no tool: a fresh operation
+    assert s["thickness"] == 12.0 and s["data"]["feed_xy"] == 2500.0 and s["data"]["rpm"] == 10000.0      # the thickness stays, the data are the milling defaults

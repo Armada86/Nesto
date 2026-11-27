@@ -96,6 +96,14 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
             return
         try:
             start = copy.deepcopy(db.latest_operation_settings(pid) or NEW_SETTINGS)       # starts from the newest operation of the project
+            if start.get("autocam"):                                    # one made by AutoCam: its tool, contours and drilling data are its own
+                from cutting_data_ui import get_defaults
+                import autocam
+                d = get_defaults(db)
+                start = {"sheet": start.get("sheet", 1), "thickness": start.get("thickness", 18.0), "data": dict(d["mill"]),
+                         "levels": autocam.levels_for(d)}
+            for key in ("contours", "kind", "drill", "autocam", "autocam_sheet", "order", "order_sheet"):   # a new operation cuts the whole sheet
+                start.pop(key, None)
             start["sheet"] = min(int(start.get("sheet", 1)), max(1, len(result or [])))
             new_id = db.create_operation(run_id, name, start)
         except Exception as e:  # noqa: BLE001

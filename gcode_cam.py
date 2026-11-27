@@ -96,7 +96,7 @@ def drill_contours(sheet: dict, ids, tool: cam.Tool, order_ids: list | None = No
     """The holes of an operation that drills, as contours (the ring of the hole, for the picture and the counts), in drilling order:
     the order that was set (order_ids), else from left to right. Only round holes can be drilled."""
     by_id = {c["id"]: c for c in cam.scan_contours(sheet) if c["kind"] == "inner" and c["circle"]}
-    wanted = [i for i in (ids or []) if i in by_id]
+    wanted = [i for i in (by_id if ids is None else ids) if i in by_id]
     rank = {cid: n for n, cid in enumerate(order_ids or [])}
     wanted.sort(key=lambda i: (rank.get(i, len(rank)), by_id[i]["key"]))
     out = []
@@ -131,8 +131,8 @@ def build(sheet: dict, t: dict, data: dict, lv: dict, thickness: float, margin: 
     if drill is not None:
         holes = drill_contours(sheet, contours, tool, order_ids)
         plan = cam.Plan(contours=[c for c, _p in holes])
-        if len(holes) < len(contours or []):
-            plan.warnings.append(f"{len(contours) - len(holes)} hole(s) of this operation are not (round) holes on this sheet any more.")
+        if contours is not None and len(holes) < len(contours):
+            plan.warnings.append(f"{len(contours) - len(holes)} contour(s) of this operation are not round holes on this sheet (a drill can only drill round holes).")
         moves = drill_moves(holes, tool, data, lv, float(drill.get("extra") or 0.0), float(drill.get("peck") or 0.0))
         return plan, ([(tool, moves)] if moves else []), tool, job
     plan = cam.plan_sheet(sheet, job, {tool.number: tool}, margin, spacing, start="lowleft", order="left_right", arc_tol=ARC_TOLERANCE,
