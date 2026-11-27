@@ -485,3 +485,83 @@ def test_an_autocam_operation_shows_and_orders_only_its_own_contours_in_step_1()
         assert len(order[0]) == 2 and {m.label: m.value for m in at.metric if m.label in ("Holes", "Outlines")} == {"Holes": "0", "Outlines": "2"}
     finally:
         sys.modules.pop("db", None)
+
+
+def _picker_app(settings, tools=()):
+    import sys
+    import types
+    from streamlit.testing.v1 import AppTest
+    saved = []
+    db = types.ModuleType("db")
+    db.list_cam_tools = lambda: list(tools)
+    db.get_operation = lambda i: {"id": i, "run_id": 1, "name": "Op", "settings": settings}
+    db.save_operation_settings = lambda i, s: (saved.append(dict(s)), settings.clear(), settings.update(s))
+    sys.modules["db"] = db
+
+    def app():
+        from operations_ui import operation_view
+        import db
+        import test_autocam
+        operation_view(db, {"id": 7, "name": "Op", "settings": {}}, [test_autocam.sheet()], "p", {"margin": 5.0, "spacing": 14.0}, 3)
+    return AppTest.from_function(app, default_timeout=60), saved
+
+
+def test_the_contours_of_an_operation_are_chosen_in_step_1_one_or_several_holes_or_outlines():
+    import sys
+    settings = {"sheet": 1, "thickness": 18.0, "data": {"feed_xy": 2500.0, "feed_z": 100.0, "rpm": 10000.0, "direction": "CW"},
+                "levels": {"clearance": 45.0, "safety": 2.0, "upper": None, "depth": None}}
+    at, saved = _picker_app(settings)
+    try:
+        at.run()
+        assert not at.exception
+        keys = [c.key for c in at.checkbox if str(c.key).startswith("geo_pick_0_")]
+        assert len(keys) == 6 and all(c.value for c in at.checkbox if str(c.key).startswith("geo_pick_0_"))     # all contours of the sheet, all ticked
+        assert any("all" in e.label and "Contours of this operation" in e.label for e in at.expander)
+        assert any(m.label == "Outlines" and m.value == "2" for m in at.metric)                                 # the whole sheet is shown
+        for k in keys[1:]:                                                                                      # keep only the first contour (a hole)
+            at.checkbox(key=k).uncheck()
+        next(b for b in at.button if b.key == "geo_pick_use").click().run()
+        assert not at.exception and len(settings["contours"]) == 1 and "kind" not in settings and "order" not in settings
+        assert any("1 of the 6 contours" in i.value for i in at.info)                                           # only that contour is shown now
+        assert {m.label: m.value for m in at.metric if m.label in ("Holes", "Outlines")} == {"Holes": "1", "Outlines": "0"}
+        assert len([c for c in at.checkbox if str(c.key).startswith("geo_pick_1_")]) == 6                       # the list always has every contour
+        next(b for b in at.button if b.key == "geo_pick_outs").click().run()                                    # all outlines
+        assert len(settings["contours"]) == 2 and {m.label: m.value for m in at.metric if m.label in ("Holes", "Outlines")} == {"Holes": "0", "Outlines": "2"}
+        next(b for b in at.button if b.key == "geo_pick_holes").click().run()                                   # all holes
+        assert len(settings["contours"]) == 4
+        next(b for b in at.button if b.key == "geo_pick_all").click().run()                                     # all contours: no list
+        assert "contours" not in settings
+        ver = at.session_state["geo_pick_ver"]
+        for c in at.checkbox:                                                                                   # nothing ticked: refused
+            if str(c.key).startswith(f"geo_pick_{ver}_"):
+                c.uncheck()
+        next(b for b in at.button if b.key == "geo_pick_use").click().run()
+        assert any("Tick at least one" in e.value for e in at.error) and "contours" not in settings
+    finally:
+        sys.modules.pop("db", None)
+
+
+def test_an_operation_with_a_drill_chosen_drills_the_round_holes_in_its_step_5_also_when_made_by_hand():
+    import sys
+    import test_gcode as tg
+    import cam
+    import test_autocam as ta
+    drill = {**tg.TOOL, "tool_type": "DRILL", "name": "DRILL 20", "diameter": 20.0, "number": 4, "cutting_length": 34.8, "shoulder_diameter": 20.0,
+             "arbor_diameter": 20.0, "shoulder_angle": 0.0, "shoulder_length": 43.7, "total_length": 43.7, "chamfer": 0.0, "outside_holder": 122.2,
+             "helical_angle": 30.0, "point_angle": 118.0}
+    holes = [c["id"] for c in cam.scan_contours(ta.sheet()) if c["kind"] == "inner" and c["circle"]]
+    settings = {"sheet": 1, "thickness": 15.0, "tool": 4, "data": {"feed_xy": 2500.0, "feed_z": 150.0, "rpm": 6000.0, "direction": "CW"},
+                "levels": {"clearance": 45.0, "safety": 2.0, "upper": None, "depth": None}}       # no contours, no drill settings: made by hand
+    at, _saved = _picker_app(settings, [drill])
+    try:
+        at.run()
+        code = "\n".join(c.value for c in at.code)
+        assert code.count("G81 G98") == 1 and code.count("X") > 0 and "M6 T4" in code                    # all the round holes: one cycle line + X Y lines
+        assert len([ln for ln in code.splitlines() if ln.startswith("X") and " Y" in ln]) == len(holes) - 1
+        settings["contours"] = holes[:1]
+        at, _saved = _picker_app(settings, [drill])
+        at.run()
+        code = "\n".join(c.value for c in at.code)
+        assert code.count("G81 G98") == 1 and not [ln for ln in code.splitlines() if ln.startswith("X") and " Y" in ln]
+    finally:
+        sys.modules.pop("db", None)

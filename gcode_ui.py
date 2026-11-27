@@ -28,7 +28,11 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
     data, lv = get_data(db, pid), get_levels(db, pid, thk)
     cam_set = (db.get_cam(pid) or {}).get("camming", {})
     sheet_no = int(cam_set.get("sheet", 1))
-    only, drill = cam_set.get("contours"), cam_set.get("drill")          # an operation made by AutoCam cuts only some contours (or drills them)
+    only, drill = cam_set.get("contours"), cam_set.get("drill")          # an operation of some contours (AutoCam, or chosen in step 1), or one that drills
+    if drill is None and tool and str(tool.get("tool_type", "")).upper() == "DRILL":     # a drill is chosen: the operation drills the (round) holes
+        from cutting_data_ui import get_defaults
+        dd = get_defaults(db)["drill"]
+        drill = {"extra": dd["extra"], "peck": dd["peck"]}
     meta = meta or {}
     margin, spacing = float(meta.get("margin", 0.0)), float(meta.get("spacing", 0.0))
 
@@ -39,7 +43,7 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
             ("Clearance level / safety distance (step 4)", f"{lv['clearance']:g} / {lv['safety']:g}"),
             ("Upper level / profile depth (step 4)", f"{lv['upper']:g} / {lv['depth']:g}")]
     if only is not None:
-        rows.insert(1, ("Contours (AutoCam)", f"{len(only)} {'holes drilled' if drill is not None else 'contours of the sheet'}"))
+        rows.insert(1, ("Contours (step 1)", f"{len(only)} {'holes drilled' if drill is not None else 'contours of the sheet'}"))
     st.dataframe(pd.DataFrame(rows, columns=["Information", "Value"]), hide_index=True, width="content")
     with st.expander("What the steps do not say (assumed by this G-code)"):
         for a in gcode_cam.ASSUMPTIONS:
