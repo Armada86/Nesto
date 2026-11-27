@@ -119,6 +119,10 @@ def test_tools_tab_list_new_save_choose_and_delete():
         next(b for b in at.button if b.key == "tools_new").click().run()
         next(b for b in at.button if b.key == "tools_save").click().run()
         assert not at.exception and len(saved) == 1 and saved[0]["number"] == 1 and saved[0]["diameter"] == 12.0
+        assert not [b for b in at.button if b.key == "tools_save"]            # the new tool is not selected in the list: no details open
+        at.session_state[f"tools_table_{at.session_state['tools_ver']}"] = {"selection": {"rows": [0], "columns": []}}      # the person clicks it
+        at.run()
+        assert [b.key for b in at.button if b.key == "tools_save"]
         next(b for b in at.button if b.key == "tools_use").click().run()      # choose it for the CAM of the project
         assert cam["v"]["camming"]["tool"] == 1
         assert at.number_input(key="tl_diameter").disabled                      # a saved tool is read-only
@@ -226,9 +230,9 @@ def test_the_boxes_of_an_operation_keep_their_saved_values_after_it_was_closed_a
             if st.session_state.get("show", True):
                 operation_view(db, {"id": 7, "name": "x", "settings": {}}, [test_gcode.sheet()], "p", {}, 3)
         at = AppTest.from_function(app, default_timeout=60).run()
-        at.session_state["tools_sel"] = 1                                   # a tool is open in the Tools step
+        at.session_state["tools_sel"] = 0                                   # a new tool is open in the Tools step
         at.run()
-        assert at.number_input(key="tl_diameter").value == 12.7
+        assert at.number_input(key="tl_diameter").value == 12.0
         at.session_state["show"] = False
         at.run()                                                            # the operation is closed: none of its boxes is drawn
         at.session_state["show"] = True
@@ -239,7 +243,37 @@ def test_the_boxes_of_an_operation_keep_their_saved_values_after_it_was_closed_a
         assert at.number_input(key="dt_feed_xy").value == 1800.0
         assert at.number_input(key="lv_clearance").value == 50.0 and at.number_input(key="lv_safety").value == 3.0
         assert at.number_input(key="lv_upper").value == 15.0 and at.number_input(key="lv_depth").value == 15.0
-        assert at.number_input(key="tl_diameter").value == 12.7
+        assert at.number_input(key="tl_diameter").value == 12.0
+    finally:
+        sys.modules.pop("db", None)
+
+
+def test_the_details_of_a_tool_are_only_open_while_that_tool_is_selected_in_the_list():
+    """A tool that was open earlier (state left over from an operation, a save ...) but is not selected in the list must not show its
+    details, and so must not offer to delete it."""
+    import sys
+    import types
+    from streamlit.testing.v1 import AppTest
+    import test_gcode as tg
+    tool = {**tg.TOOL, "tool_type": "END MILL", "shoulder_diameter": 12.7, "arbor_diameter": 12.7, "shoulder_angle": 0.0,
+            "shoulder_length": 43.7, "total_length": 43.7, "chamfer": 0.0, "outside_holder": 122.2, "helical_angle": 30.0, "number": 11}
+    db = types.ModuleType("db")
+    db.list_cam_tools = lambda: [tool]
+    db.get_cam = lambda pid: None
+    sys.modules["db"] = db
+    try:
+        def app():
+            import db
+            from tools_ui import step_tools
+            step_tools(db, 1)
+        at = AppTest.from_function(app, default_timeout=60)
+        at.session_state["tools_sel"] = 11                                  # left over: tool 11 was open, nothing is selected now
+        at.session_state["tools_confirm"] = True                            # and its "Delete completely?" question too
+        at.run()
+        assert not at.exception
+        assert at.session_state["tools_sel"] is None
+        assert not [b for b in at.button if b.key in ("tools_ask_delete", "tools_delete")]
+        assert not any("completely" in w.value for w in at.warning) and not any(s.value.startswith("Tool T") for s in at.subheader)
     finally:
         sys.modules.pop("db", None)
 
