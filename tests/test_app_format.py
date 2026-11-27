@@ -343,6 +343,9 @@ def test_autocam_makes_the_operations_and_the_gcode_of_a_sheet(fake_db):
     op = {o["name"]: o["settings"] for o in fake_db.list_operations(7)}
     assert op["Sheet1-DRILL-20"]["tool"] == 4 and op["Sheet1-DRILL-20"]["drill"] == {"extra": 0.0, "peck": 0.0}
     assert op["Sheet1-CONTOUR-6.35"]["tool"] == 1 and op["Sheet1-CONTOUR-6.35"]["thickness"] == 18.0
+    pic = at.session_state["autocam_result"]["picture"]                                 # the isometric picture above the G-code, with the tool numbers
+    assert pic[:8] == b"\x89PNG\r\n\x1a\n" and len(pic) > 5000
+    assert [t for _c, t in at.session_state["autocam_result"]["legend"]] == ["**T1** 1/4 END MILL Ø6.35", "**T4** DRILL 20 Ø20"]
     code = next(c.value for c in at.code)
     assert "G98 G81 X70.137 Y22.345" in code and "G80" in code and code.count("M6 T") == 2
     assert "(Sheet1-DRILL-20" in code and "(Sheet1-CONTOUR-6.35" in code
