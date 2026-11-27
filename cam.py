@@ -169,24 +169,36 @@ def _lowleft_start(src, ccw: bool, r: float, toward_left: bool):
 
 
 def _circle_of(ring):
-    """(cx, cy, R) when the closed ring is a circle cut into many equal straight pieces (all its vertices on one circle, evenly
-    spaced), else None. A circular hole is stored like this in a layout; the true circle is what the tool should follow."""
+    """(cx, cy, R) when the closed ring is a circle cut into straight pieces (a least-squares circle through its vertices, all of them
+    within 0.02 mm of it, and the vertices all around it), else None. A circular hole is stored like this in a layout; the true
+    circle is what the tool should follow (or the drill is as wide as)."""
     pts = [tuple(p) for p in ring]
     if len(pts) > 1 and pts[0] == pts[-1]:
         pts = pts[:-1]
     n = len(pts)
-    if n < 12:
+    if n < 8:
         return None
-    cx, cy = sum(p[0] for p in pts) / n, sum(p[1] for p in pts) / n
-    rs = [math.hypot(p[0] - cx, p[1] - cy) for p in pts]
-    R = sum(rs) / n
-    if R < 1e-6 or max(abs(r - R) for r in rs) > 0.002 + 1e-4 * R:
+    import numpy as np
+    a = np.array(pts, dtype=float)
+    mx, my = a[:, 0].mean(), a[:, 1].mean()
+    x, y = a[:, 0] - mx, a[:, 1] - my                       # (centred, for the numbers)
+    try:
+        sol, *_ = np.linalg.lstsq(np.column_stack([2 * x, 2 * y, np.ones(n)]), x * x + y * y, rcond=None)
+    except np.linalg.LinAlgError:
         return None
-    ang = sorted(math.atan2(p[1] - cy, p[0] - cx) for p in pts)
-    gaps = [b - a for a, b in zip(ang, ang[1:])] + [ang[0] + 2 * math.pi - ang[-1]]
-    if max(gaps) > 1.5 * (2 * math.pi / n):
+    cx, cy = sol[0], sol[1]
+    r2 = sol[2] + cx * cx + cy * cy
+    if r2 <= 1e-12:
         return None
-    return cx, cy, R
+    R = math.sqrt(r2)
+    dev = np.abs(np.hypot(x - cx, y - cy) - R).max()
+    if dev > 0.02 + 1e-4 * R:
+        return None
+    ang = sorted(math.atan2(yy - cy, xx - cx) for xx, yy in zip(x, y))
+    gaps = [b - a_ for a_, b in zip(ang, ang[1:])] + [ang[0] + 2 * math.pi - ang[-1]]
+    if max(gaps) > math.radians(60):
+        return None
+    return float(cx + mx), float(cy + my), float(R)
 
 
 def _circle_ring(cx: float, cy: float, r: float, tol: float):

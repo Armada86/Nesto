@@ -20,7 +20,6 @@ import cam
 import machine_profile as machine
 import post_fanuc
 
-DRILL_TOLERANCE = 0.05     # mm: a round hole is drilled when its diameter is this close to the diameter of a drill
 ARC_TOLERANCE = 0.01       # mm: the largest distance of a straight piece from the true arc (as SolidCAM: a quarter circle of R6.35 has 14 pieces)
 
 ASSUMPTIONS = [

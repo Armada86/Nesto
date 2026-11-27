@@ -1,7 +1,8 @@
 """AutoCam: from the holes and the outlines of one sheet to the operations that cut them, without anybody choosing anything.
 
 The rules (all of them are written in the report that AutoCam shows):
-  * a ROUND hole whose diameter is within DRILL_TOLERANCE of a drill of the library is DRILLED with that drill (canned cycle);
+  * a ROUND hole whose diameter is within the drill tolerance (CAM options, Cutting data: 0.1 mm) of a drill of the library is DRILLED with
+    that drill (canned cycle);
   * every other hole is MILLED along its contour with the largest end mill of the library that fits inside it;
   * the OUTLINES are milled with one end mill: the largest one that does not touch the neighbouring parts (the parts have to be at least
     a tool diameter apart) and fits the edge margin;
@@ -17,7 +18,7 @@ import gcode_cam
 
 DEFAULTS = {
     "mill": {"feed_xy": 2500.0, "feed_z": 100.0, "rpm": 10000.0, "direction": "CW"},
-    "drill": {"feed": 150.0, "rpm": 6000.0, "peck": 0.0, "extra": 0.0},
+    "drill": {"feed": 150.0, "rpm": 6000.0, "peck": 0.0, "extra": 0.0, "tolerance": 0.1},
     "levels": {"clearance": 45.0, "safety": 2.0},
 }
 
@@ -81,16 +82,24 @@ def plan(sheet: dict, sheet_no: int, tools: list, defaults: dict | None, thickne
     outlines = sorted((c for c in items if c["kind"] == "outer"), key=lambda c: c["key"])
     drilled: dict[int, list] = {}
     milled: dict[int, list] = {}
+    tol = float(d["drill"]["tolerance"])
     for h in holes:
-        if h["circle"] and drills:
-            diam = 2 * h["circle"][2]
-            best = min(drills, key=lambda t: abs(t["diameter"] - diam))
-            if abs(best["diameter"] - diam) <= gcode_cam.DRILL_TOLERANCE:
-                drilled.setdefault(best["number"], []).append(h["id"])
-                continue
+        diam = 2 * h["circle"][2] if h["circle"] else None
+        best = min(drills, key=lambda t: abs(t["diameter"] - diam)) if (diam and drills) else None
+        if best is not None and abs(best["diameter"] - diam) <= tol + 1e-9:
+            drilled.setdefault(best["number"], []).append(h["id"])
+            continue
         fit = next((t for t in sorted(mills, key=lambda r: -r["diameter"]) if _fits(h["ring"], t["diameter"] / 2)), None)
         if fit is None:
-            out["skipped"].append(f"{h['part']}: the hole at X{h['key'][0]:g} Y{h['key'][1]:g} is too small for every end mill: not cut.")
+            where = f"{h['part']}: the hole at X{h['key'][0]:g} Y{h['key'][1]:g}"
+            if diam is None:
+                out["skipped"].append(f"{where} is too small for every end mill and is not round, so it cannot be drilled: not cut.")
+            elif best is None:
+                out["skipped"].append(f"{where} (round, diameter {diam:.2f}) is too small for every end mill and the tool library has no drill: not cut.")
+            else:
+                out["skipped"].append(f"{where} (round, diameter {diam:.2f}) is too small for every end mill and no drill is within {tol:g} mm of "
+                                      f"its diameter (the nearest is T{best['number']} diameter {best['diameter']:g}): not cut. Add a drill of that "
+                                      "diameter, or raise the diameter tolerance in CAM options (Cutting data).")
             continue
         milled.setdefault(fit["number"], []).append(h["id"])
     by_no = {t["number"]: t for t in tools}

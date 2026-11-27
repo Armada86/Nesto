@@ -14,6 +14,7 @@ FIELDS = [   # (group, key, label, help, step)
     ("drill", "feed", "Feed [mm/min]", "Feed of the drills (feed Z of the drilling cycle).", 10.0),
     ("drill", "rpm", "Spin rate [rpm]", "Spindle speed of the drills.", 500.0),
     ("drill", "peck", "Peck depth [mm]", "0 = drill straight through (G81); more than 0 = peck drilling (G83) with this depth per peck.", 1.0),
+    ("drill", "tolerance", "Diameter tolerance [mm]", "A round hole is drilled when its diameter is within this of the diameter of a drill of the tool library.", 0.01),
     ("drill", "extra", "Extra depth [mm]", "How far the drill goes below the bottom of the parts (0 = down to the bottom), so the hole is through.", 0.5),
     ("levels", "clearance", "Clearance level", "Height of the rapid moves.", 5.0),
     ("levels", "safety", "Safety distance", "The feed down starts this far above the top of the material.", 1.0),
@@ -42,6 +43,8 @@ def validate(d: dict) -> list[str]:
         p.append(f"Drilling: the feed must be more than 0 and at most {machine.MAX_FEED:g} mm/min.")
     if not 0 < dr["rpm"] <= machine.MAX_RPM:
         p.append(f"Drilling: the spin rate must be more than 0 and at most {machine.MAX_RPM:g} rpm.")
+    if not 0 < dr["tolerance"] <= 2:
+        p.append("Drilling: the diameter tolerance must be more than 0 and at most 2 mm.")
     if dr["peck"] < 0 or dr["extra"] < 0:
         p.append("Drilling: the peck depth and the extra depth cannot be negative.")
     if lv["safety"] < 0 or lv["clearance"] <= 0:
