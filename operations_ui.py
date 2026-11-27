@@ -61,6 +61,59 @@ def operation_view(db, op: dict, result, project: str = "", meta: dict | None = 
         step_gcode(odb, oid, result, op["name"], project, meta, run_id)
 
 
+def moved_order(ids: list, sel, kind: str) -> list:
+    """The operation ids after moving `sel` one place up or down, or to the first or the last place."""
+    new = list(ids)
+    if sel not in new:
+        return new
+    i = new.index(sel)
+    new.pop(i)
+    j = {"up": max(0, i - 1), "down": min(len(new), i + 1), "first": 0, "last": len(new)}[kind]
+    new.insert(j, sel)
+    return new
+
+
+@st.fragment
+def ops_order_editor(db, run_id, ops: list):
+    """The order of the operations of the run: click a row to select an operation (only this part of the page reacts), move it with the
+    buttons (the whole page is drawn again with the new order)."""
+    ss = st.session_state
+    ids = [o["id"] for o in ops]
+    ver = ss.setdefault("ops_move_ver", 0)                   # a new table key after every move: the table is drawn again, the row highlighted
+    state = ss.get(f"ops_ord_tbl_{ver}")
+    rows = tuple(state["selection"]["rows"]) if state else ()
+    if rows != ss.get("ops_ord_prev", ()):
+        ss.ops_ord_prev = rows
+        if rows and rows[0] < len(ids):
+            ss.ops_move_sel = ids[rows[0]]
+    if ss.get("ops_move_sel") not in ids:
+        ss.ops_move_sel = None
+    sel = ss.ops_move_sel
+    st.caption("Click a row to select an operation, then move it with the buttons. The order is saved at once.")
+    with st.container(key="ops_order_btns"):
+        b1, b2, b3, b4 = st.columns(4)
+    pressed = None
+    for col, kind, label in ((b1, "up", "▲ Up"), (b2, "down", "▼ Down"), (b3, "first", "⤒ First"), (b4, "last", "⤓ Last")):
+        if col.button(label, key=f"ops_move_{kind}", width="stretch", disabled=sel is None):
+            pressed = kind
+    if pressed:
+        try:
+            db.set_operation_order(run_id, moved_order(ids, sel, pressed))
+        except Exception as e:  # noqa: BLE001
+            st.error(f"Could not change the order: {e}")
+            return
+        ss.ops_move_ver += 1
+        ss.ops_ord_prev = ()
+        ss.ops_sel, ss.ops_prev_rows = None, ()                # nothing is open any more: the rows of the list have other operations now
+        ss.ops_ver = ss.get("ops_ver", 0) + 1
+        st.rerun()                                           # the whole page: the list of the operations above has a new order
+    df = pd.DataFrame([{"No.": i, "Name": o["name"], "Sheet": (o["settings"] or {}).get("sheet", 1),
+                        "Tool": (f"T{o['settings']['tool']}" if (o["settings"] or {}).get("tool") else "")} for i, o in enumerate(ops, 1)])
+    hi = ids.index(sel) if sel in ids else -1
+    styled = df.style.apply(lambda r: ["background-color: #cfe9f7; color: #0f3d57; font-weight: 600"] * len(r) if r.name == hi else [""] * len(r), axis=1)
+    st.dataframe(styled, hide_index=True, width="content", on_select="rerun", selection_mode="single-row", key=f"ops_ord_tbl_{ver}")
+
+
 def _open_cam_options():
     st.session_state.cam_options_open = True
 
@@ -188,6 +241,9 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
         ss.ops_error = None
         ss.ops_creating = False
         st.rerun()
+    if len(ops) > 1:
+        with st.expander("Order of the operations (move an operation up or down)"):
+            ops_order_editor(db, run_id, ops)
     if ss.ops_sel is None:
         st.caption("Click an operation in the list to open it.")
         return

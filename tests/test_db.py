@@ -260,3 +260,25 @@ def test_app_settings_round_trip_and_autocam_operations_are_replaced_per_sheet(d
         db.delete_project(p)
         with db.connect() as c:
             c.execute("DELETE FROM app_settings WHERE name='test-setting-x'")
+
+
+def test_operations_keep_the_order_that_was_set_and_new_ones_come_last(db):
+    p = db.create_project("ops-order-test")
+    try:
+        rid = db.save_run(p, 100.0, 100.0, 1.0, 1.0, 1, 0.5, [], 1.0)
+        ids = [db.create_operation(rid, n, {"sheet": 1}) for n in ("a", "b", "c")]
+        assert [o["name"] for o in db.list_operations(rid)] == ["a", "b", "c"]
+        db.set_operation_order(rid, [ids[2], ids[0], ids[1]])
+        assert [o["name"] for o in db.list_operations(rid)] == ["c", "a", "b"]
+        d = db.create_operation(rid, "d", {"sheet": 1})                                   # a new operation comes last
+        assert [o["name"] for o in db.list_operations(rid)] == ["c", "a", "b", "d"]
+        db.set_operation_order(rid, [d, ids[2]])                                          # the ones that are not named keep their order after these
+        assert [o["name"] for o in db.list_operations(rid)] == ["d", "c", "a", "b"]
+        db.delete_operation(ids[0])
+        assert [o["name"] for o in db.list_operations(rid)] == ["d", "c", "b"]
+        other = db.save_run(p, 100.0, 100.0, 1.0, 1.0, 1, 0.5, [], 1.0)                   # another run has its own order
+        x = db.create_operation(other, "x", {"sheet": 1})
+        db.set_operation_order(rid, [x])                                                  # an id of another run is ignored
+        assert [o["name"] for o in db.list_operations(other)] == ["x"]
+    finally:
+        db.delete_project(p)
