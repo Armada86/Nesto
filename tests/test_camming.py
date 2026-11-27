@@ -439,3 +439,49 @@ def test_an_autocam_drill_operation_makes_drilling_gcode_in_its_own_step_5_and_c
         assert not any("is not a drill" in w.value for w in at.warning)
     finally:
         sys.modules.pop("db", None)
+
+
+def test_an_autocam_operation_shows_and_orders_only_its_own_contours_in_step_1():
+    import sys
+    import types
+    from streamlit.testing.v1 import AppTest
+    import cam
+    import test_autocam as ta
+    sheet = ta.sheet()
+    ids = {c["id"]: c for c in cam.scan_contours(sheet)}
+    holes20 = [i for i, c in ids.items() if c["kind"] == "inner" and c["circle"] and abs(2 * c["circle"][2] - 20.0) < 0.1]
+    outlines = [i for i, c in ids.items() if c["kind"] == "outer"]
+    assert len(holes20) == 1 and len(outlines) == 2
+    settings = {"sheet": 1, "thickness": 18.0, "tool": 4, "data": {"feed_xy": 2500.0, "feed_z": 150.0, "rpm": 6000.0, "direction": "CW"},
+                "levels": {"clearance": 45.0, "safety": 2.0, "upper": None, "depth": None}, "autocam": True, "kind": "drill",
+                "drill": {"extra": 0.0, "peck": 0.0}, "contours": holes20}
+    db = types.ModuleType("db")
+    db.list_cam_tools = lambda: []
+    db.get_operation = lambda i: {"id": i, "run_id": 1, "name": "Sheet1-DRILL-20", "settings": settings}
+    db.save_operation_settings = lambda i, s: None
+    sys.modules["db"] = db
+    try:
+        def app():
+            from operations_ui import operation_view
+            import db
+            import test_autocam
+            operation_view(db, {"id": 7, "name": "Sheet1-DRILL-20", "settings": {}}, [test_autocam.sheet()], "p", {"margin": 5.0, "spacing": 14.0}, 3)
+        at = AppTest.from_function(app, default_timeout=60).run()
+        assert not at.exception
+        assert {m.label: m.value for m in at.metric if m.label in ("Holes", "Outlines")} == {"Holes": "1", "Outlines": "0"}
+        assert any("made by AutoCam" in i.value and "1 of the 6 contours" in i.value for i in at.info)
+        order = [d.value for d in at.dataframe if "Part" in list(d.value.columns)]
+        assert len(order) == 1 and list(order[0]["No."]) == [1]                                      # one row: only the drilled hole, not the outlines
+        # an operation made by hand shows everything of the sheet, as before
+        settings.pop("contours")
+        at = AppTest.from_function(app, default_timeout=60).run()
+        order = [d.value for d in at.dataframe if "Part" in list(d.value.columns)]
+        assert len(order[0]) == 6 and any(m.label == "Outlines" and m.value == "2" for m in at.metric)
+        # an operation that cuts the outlines only
+        settings["contours"], settings["kind"] = outlines, "outline"
+        settings.pop("drill")
+        at = AppTest.from_function(app, default_timeout=60).run()
+        order = [d.value for d in at.dataframe if "Part" in list(d.value.columns)]
+        assert len(order[0]) == 2 and {m.label: m.value for m in at.metric if m.label in ("Holes", "Outlines")} == {"Holes": "0", "Outlines": "2"}
+    finally:
+        sys.modules.pop("db", None)

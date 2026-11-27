@@ -318,22 +318,32 @@ def step_geometry(db, pid, result):
                                     format_func=lambda i: f"Sheet {i}")
     sheet = result[sheet_no - 1]
     ch = chains(sheet)
+    n_sheet = len(ch)
+    only = _saved(db, pid).get("contours")
+    if only is not None:                                      # an operation made by AutoCam: only its own contours are shown and ordered
+        keep = set(only)
+        ch = [c for c in ch if c["id"] in keep]
     held = [p["part"] for r in result for p in r["placements"] if is_held(p)]
     if held:
         st.warning(f"{len(held)} part(s) are in the hold area and are not part of the geometry: {', '.join(held)}")
     n_out = sum(1 for c in ch if c["type"] == "Outline")
-    st.metric("Outlines", n_out)
-    only = _saved(db, pid).get("contours")
-    if only is not None:                                      # an operation made by AutoCam cuts a part of the sheet
+    if only is None:
+        st.metric("Outlines", n_out)
+    else:
         what = {"drill": "drills", "hole": "mills the holes", "outline": "mills the outlines"}.get(_saved(db, pid).get("kind"), "cuts")
-        st.info(f"This operation was made by AutoCam: it {what} - {len(only)} of the {len(ch)} contours of this sheet.")
+        m1, m2, _m = st.columns([1, 1, 4])
+        m1.metric("Holes", len(ch) - n_out)
+        m2.metric("Outlines", n_out)
+        st.info(f"This operation was made by AutoCam: it {what} - {len(ch)} of the {n_sheet} contours of this sheet. "
+                "The pictures and the cutting order below show only these contours.")
     ss = st.session_state
     saved_ids = full_order(ch, saved_order(db, pid, sheet_no))        # the order that is saved (the plan view shows it)
     by_id = {c["id"]: c for c in ch}
     rank = {cid: i for i, cid in enumerate(saved_ids, 1)}
 
     k = 1.0                                                   # always drawn to true scale
-    st.image(isometric_png(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness), solids(sheet), k, PICTURE_VERSION),
+    parts = solids(sheet) if only is None else tuple((tuple(c["pts"]), ()) for c in ch)      # an AutoCam operation: only its own contours
+    st.image(isometric_png(float(sheet["width"]), float(sheet["height"]), float(st.session_state.camming_thickness), parts, k, PICTURE_VERSION),
              caption="The whole sheet seen from the origin corner (lower left corner in plan view), drawn to scale: X to the right, "
                      "Y to the back, Z up. Every part is drawn transparent with dotted edges and its height; its bottom contour (the geometry) is red.")
     pts = tuple(tuple(c["pts"]) for c in ch)
