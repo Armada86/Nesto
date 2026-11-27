@@ -329,3 +329,19 @@ def test_a_round_hole_is_a_true_circle_that_starts_at_its_top_and_runs_counter_c
     assert len(pts) == 43                                                     # 43 pieces within 0.01 mm, as SolidCAM
     assert all(abs(math.hypot(a - 70.1367, b - 22.3454) - 3.65) < 0.002 for a, b in pts)
     assert pts[0][0] < 70.137 and pts[-1] == (70.137, 25.995)                 # first goes to the left: counter-clockwise (climb)
+
+
+def test_the_toolpath_picture_shows_the_whole_toolpath_even_when_it_leaves_the_sheet():
+    import cam
+    import cam_ui
+    sh = {"width": 150.0, "height": 80.0, "placements": [pl("P", box(0, 0, 100, 50))]}
+    plan, _g, _t, _j = gcode_cam.build(sh, TOOL, DATA, LV, 15.0)
+    fig = cam_ui._preview(sh, plan)
+    ax = fig.axes[0]
+    xs = [x for c in plan.contours for x, _ in c.pts]
+    ys = [y for c in plan.contours for _, y in c.pts]
+    assert min(xs) < 0 and max(ys) > 50                                  # the path is outside the part (and left of the sheet)
+    assert ax.get_xlim()[0] <= min(xs) and ax.get_xlim()[1] >= max(max(xs), 150.0)
+    assert ax.get_ylim()[0] <= min(ys) and ax.get_ylim()[1] >= max(max(ys), 80.0)
+    import matplotlib.pyplot as plt
+    plt.close(fig)
