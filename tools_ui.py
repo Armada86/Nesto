@@ -126,7 +126,8 @@ def _load_form(t: dict):
 
 
 def _form_tool() -> dict:
-    t = {k: st.session_state[PREFIX + k] for k in ("number", "tool_type", "name", "flutes", "helical_angle", "holder")}
+    t = {k: st.session_state[PREFIX + k] for k in ("number", "tool_type", "name", "flutes", "helical_angle")}
+    t["holder"] = ""                                            # a tool record has no holder
     t["chamfer"], t["point_angle"] = 0.0, None                  # the boxes of the other type are not part of this tool
     for k, _l, _h, _d in dims_for(t["tool_type"]):
         t[k] = float(st.session_state[PREFIX + k])
@@ -314,14 +315,13 @@ def tool_library(db):
                     n_.form_submit_button("Keep it", on_click=_keep, key="tools_keep")
                 for p in ss.get("tools_problems", []):
                     st.error(p)
-                a, b = st.columns(2)
-                a.number_input("Catalog number (T)", min_value=1, step=1, key=PREFIX + "number", help="The tool number used in the G-code (T and H).", disabled=lock)
-                b.text_input("Name (optional)", key=PREFIX + "name", disabled=lock)
-                a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type", disabled=True,
+                a, b = st.columns(2)                                   # read in this order: type, number, name, flutes (also on a phone,
+                a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type", disabled=True,       # where each row is stacked)
                             help="Chosen when the tool was created; it cannot be changed (the type decides the parameters).")
+                b.number_input("Catalog number (T)", min_value=1, step=1, key=PREFIX + "number", help="The tool number used in the G-code (T and H).", disabled=lock)
+                a, b = st.columns(2)
+                a.text_input("Name (optional)", key=PREFIX + "name", disabled=lock)
                 b.number_input("Number of flutes", min_value=1, step=1, key=PREFIX + "flutes", disabled=lock)
-                a.text_input("Holder (optional)", key=PREFIX + "holder", disabled=lock,
-                             help="The name of the tool holder, written in the header of the G-code (for example ADAPTOR).")
             # the tool parameters with the picture right beside them (not up beside the name)
             params, guide = st.columns([3, 2])
             with params:

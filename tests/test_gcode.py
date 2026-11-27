@@ -249,11 +249,11 @@ def test_the_program_is_written_like_the_solidcam_file():
     k = g.index("G90 G21 G40 G49 G80 G94 G98 G17")
     assert g[k + 1:k + 4] == ["(METRIC PROGRAM)", "G0 G28 G91 Z0. ", "G90"]                      # a space ends a block
     i = g.index("(              OPERATION INFORMATION             )")
-    assert g[i + 2:i + 12] == ["(" + "F-CONTOUR-HOLES".ljust(48) + ")", box, box, "(                TOOL INFORMATION                )", box,
+    assert g[i + 2:i + 11] == ["(" + "F-CONTOUR-HOLES".ljust(48) + ")", box, box, "(                TOOL INFORMATION                )", box,
                                '(1/2" END MILL 3F                                )', "(TOOL LENGTH: 122.24mm                           )",
-                               "(HOLDER: ADAPTOR                                 )", box, "N1 "]
-    assert g[i + 12:i + 16] == ["G56 ", "M6 T1 ", "G0 C0. ", "S10000 M3 "]
-    assert g[i + 16].startswith("G94 G0 X") and g[i + 16].endswith(" ")                         # G94 and the first rapid on one line
+                               box, "N1 "]                                                     # a tool record has no holder: no HOLDER line
+    assert g[i + 11:i + 15] == ["G56 ", "M6 T1 ", "G0 C0. ", "S10000 M3 "]
+    assert g[i + 15].startswith("G94 G0 X") and g[i + 15].endswith(" ")                         # G94 and the first rapid on one line
     assert "M96 (BRUSHES DOWN)" in g and "G05.1 Q1 R7 (AICC/AIAPC HIGH SPEED MODE ON)" in g    # comment lines: no space at the end
     assert g[-11:] == ["G0 Z45. ", "G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)", "G0 G28 G91 Z0. ", "G90", "M97 (BRUSHES UP)", "M5 ",
                        "G0 G28 G91 Z0. ", "G90", "G0 C0. ", "M30 ", "%"]
@@ -264,6 +264,8 @@ def test_the_program_is_written_like_the_solidcam_file():
 
 def test_no_holder_no_holder_line():
     raw = gcode_cam.text("a.anc", sheet(), 1, {**TOOL, "holder": ""}, DATA, LV, 15.0)
+    assert "HOLDER" not in raw
+    raw = gcode_cam.text("a.anc", sheet(), 1, {**TOOL, "holder": "ADAPTOR"}, DATA, LV, 15.0)      # an old record that still has one: ignored
     assert "HOLDER" not in raw
 
 
