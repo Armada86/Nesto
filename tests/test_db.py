@@ -240,3 +240,23 @@ def test_a_drill_keeps_its_point_angle_and_an_end_mill_has_none(db):
     finally:
         db.delete_cam_tool(998)
         db.delete_cam_tool(999)
+
+
+def test_app_settings_round_trip_and_autocam_operations_are_replaced_per_sheet(db):
+    assert db.get_app_setting("test-setting-x") is None
+    db.save_app_setting("test-setting-x", {"a": 1})
+    db.save_app_setting("test-setting-x", {"a": 2})                                           # saving again replaces it
+    assert db.get_app_setting("test-setting-x") == {"a": 2}
+    p = db.create_project("autocam-ops-test")
+    try:
+        rid = db.save_run(p, 100.0, 100.0, 1.0, 1.0, 1, 0.5, [], 1.0)
+        db.create_operation(rid, "by hand", {"sheet": 1})
+        db.create_operation(rid, "auto 1a", {"sheet": 1, "autocam": True, "autocam_sheet": 1})
+        db.create_operation(rid, "auto 1b", {"sheet": 1, "autocam": True, "autocam_sheet": 1})
+        db.create_operation(rid, "auto 2", {"sheet": 2, "autocam": True, "autocam_sheet": 2})
+        assert db.delete_autocam_operations(rid, 1) == 2                                      # only the AutoCam operations of that sheet
+        assert [o["name"] for o in db.list_operations(rid)] == ["by hand", "auto 2"]
+    finally:
+        db.delete_project(p)
+        with db.connect() as c:
+            c.execute("DELETE FROM app_settings WHERE name='test-setting-x'")

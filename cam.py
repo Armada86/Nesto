@@ -282,6 +282,27 @@ def _tool_for(kind: str, job: CamJob, tools: dict):
     return tools.get(job.inner_tool if kind == "inner" else job.outer_tool)
 
 
+def scan_contours(sheet: dict) -> list[dict]:
+    """Every outline and hole of the parts on a sheet (parts in a hold area are not on it): {id, kind ("outer" | "inner"), part, key,
+    ring (closed [(x, y), ...]), circle ((cx, cy, R) when the ring is a circle, else None)}."""
+    out = []
+    for p in sheet["placements"]:
+        if is_held(p):
+            continue
+        g = placement_geom(p)
+        for poly in ([g] if g.geom_type == "Polygon" else [x for x in g.geoms if x.geom_type == "Polygon"]):
+            b = poly.bounds
+            key = (round(b[0], 3), round(b[1], 3))
+            out.append({"id": contour_id("outer", key), "kind": "outer", "part": p["part"], "key": key,
+                        "ring": [tuple(c) for c in poly.exterior.coords], "circle": _circle_of(poly.exterior.coords)})
+            for h in poly.interiors:
+                hb = Polygon(h).bounds
+                hkey = (round(hb[0], 3), round(hb[1], 3))
+                out.append({"id": contour_id("inner", hkey), "kind": "inner", "part": p["part"], "key": hkey,
+                            "ring": [tuple(c) for c in h.coords], "circle": _circle_of(h.coords)})
+    return out
+
+
 def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spacing: float = 0.0, start: str = "auto",
                order: str = "nearest", arc_tol: float | None = None, custom_order: list | None = None) -> Plan:
     """The contours of a sheet (a stored layout dict) in cutting order. `tools`: {number: Tool}.
@@ -492,7 +513,12 @@ def estimate_minutes(moves_by_tool: list, start=(0.0, 0.0, 0.0)) -> float:
     t = 0.0
     x, y, z = start
     for _tool, moves in moves_by_tool:
-        for code, mx, my, mz, f in moves:
+        for mv in moves:
+            code, mx, my, mz, f = mv[:5]
+            if code in ("G81", "G83"):                  # a drilling cycle: rapid to the hole, feed down from the R plane, rapid back
+                t += math.hypot(mx - x, my - y) / machine.RAPID_XY + abs(mv[5] - mz) / f + abs(z - mz) / machine.RAPID_Z
+                x, y = mx, my
+                continue
             d = math.sqrt((mx - x) ** 2 + (my - y) ** 2 + (mz - z) ** 2)
             if code == "G1" and f:
                 t += d / f

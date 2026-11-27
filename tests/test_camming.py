@@ -400,3 +400,42 @@ def test_drill_validation():
     assert tu.validate({**d, "diameter": 0}, set()) and tu.validate({**d, "cutting_length": 60, "shoulder_length": 50}, set())
     assert tu.validate({**d, "chamfer": 99.0}, set()) == []                                  # a drill has no chamfer: not checked
     assert [k for k, *_ in tu.dims_for("DRILL")][:2] == ["diameter", "point_angle"] and "chamfer" not in [k for k, *_ in tu.dims_for("DRILL")]
+
+
+def test_an_autocam_drill_operation_makes_drilling_gcode_in_its_own_step_5_and_cutting_data_validate():
+    import sys
+    import types
+    from streamlit.testing.v1 import AppTest
+    import test_gcode as tg
+    import cutting_data_ui as cd
+    assert cd.validate(cd.autocam.merged_defaults(None)) == []
+    bad = cd.autocam.merged_defaults({"mill": {"rpm": 99999.0}, "drill": {"feed": 0.0}, "levels": {"clearance": 0.0}})
+    assert len(cd.validate(bad)) == 3
+    drill = {**tg.TOOL, "tool_type": "DRILL", "name": "DRILL 20", "diameter": 20.0, "number": 4, "cutting_length": 34.8, "shoulder_diameter": 20.0,
+             "arbor_diameter": 20.0, "shoulder_angle": 0.0, "shoulder_length": 43.7, "total_length": 43.7, "chamfer": 0.0, "outside_holder": 122.2,
+             "helical_angle": 30.0, "point_angle": 118.0}
+    settings = {"sheet": 1, "thickness": 15.0, "tool": 4, "data": {"feed_xy": 2500.0, "feed_z": 150.0, "rpm": 6000.0, "direction": "CW"},
+                "levels": {"clearance": 45.0, "safety": 2.0, "upper": None, "depth": None}, "autocam": True, "kind": "drill",
+                "drill": {"extra": 0.0, "peck": 0.0}, "contours": []}
+    db = types.ModuleType("db")
+    db.list_cam_tools = lambda: [drill]
+    db.get_operation = lambda i: {"id": i, "run_id": 1, "name": "Sheet1-DRILL-120", "settings": settings}
+    db.save_operation_settings = lambda i, s: None
+    sys.modules["db"] = db
+    try:
+        import cam
+        import test_autocam as ta
+        ids = [c["id"] for c in cam.scan_contours(ta.sheet()) if c["kind"] == "inner" and c["circle"] and abs(2 * c["circle"][2] - 20.0) < 0.1]
+        settings["contours"] = ids
+        def app():
+            from operations_ui import operation_view
+            import db
+            import test_autocam
+            operation_view(db, {"id": 7, "name": "Sheet1-DRILL-120", "settings": {}}, [test_autocam.sheet()], "p", {"margin": 5.0, "spacing": 14.0}, 3)
+        at = AppTest.from_function(app, default_timeout=60).run()
+        assert not at.exception
+        code = "\n".join(c.value for c in at.code)
+        assert "G98 G81" in code and "(Sheet1-DRILL-120" in code and "M6 T4" in code
+        assert not any("is not a drill" in w.value for w in at.warning)
+    finally:
+        sys.modules.pop("db", None)

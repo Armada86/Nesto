@@ -57,6 +57,15 @@ def fake_db(monkeypatch):
     db.get_operation = lambda i: ops.get(i)
     db.save_operation_settings = lambda i, s: ops[i].__setitem__("settings", s)
     db.latest_operation_settings = lambda pid: None
+    db.get_app_setting = lambda name: None
+    db.save_app_setting = lambda name, value: None
+
+    def delete_autocam_operations(run_id, sheet_no):
+        gone = [i for i, o in ops.items() if o["run_id"] == run_id and (o["settings"] or {}).get("autocam_sheet") == sheet_no]
+        for i in gone:
+            del ops[i]
+        return len(gone)
+    db.delete_autocam_operations = delete_autocam_operations
     db.rename_operation = lambda i, n: ops[i].__setitem__("name", n)
     db.delete_operation = lambda i: ops.pop(i, None)
     monkeypatch.setitem(sys.modules, "db", db)
@@ -304,3 +313,40 @@ def test_cam_options_opens_a_screen_with_the_tool_library_and_goes_back(fake_db)
     next(b for b in at.button if b.key == "cam_options_back").click().run()
     assert not at.exception and any(b.key == "cam_options_btn" for b in at.button)
     assert not any(b.key == "tools_new" for b in at.button)
+
+
+def test_autocam_makes_the_operations_and_the_gcode_of_a_sheet(fake_db):
+    import math
+    from streamlit.testing.v1 import AppTest
+    base = {"flutes": 3, "shoulder_diameter": 6.0, "arbor_diameter": 6.0, "shoulder_angle": 0.0, "cutting_length": 40.0, "shoulder_length": 50.0,
+            "total_length": 50.0, "chamfer": 0.0, "outside_holder": 100.0, "helical_angle": 30.0, "holder": "", "point_angle": None}
+    fake_db.list_cam_tools = lambda: [{**base, "number": 1, "tool_type": "END MILL", "name": "1/4 END MILL", "diameter": 6.35},
+                                      {**base, "number": 4, "tool_type": "DRILL", "name": "DRILL 20", "diameter": 20.0}]
+    ring = [[70.1367 + 10 * math.cos(2 * math.pi * i / 32), 22.3454 + 10 * math.sin(2 * math.pi * i / 32)] for i in range(32)]
+    sheet = {"width": 150.0, "height": 80.0, "placements": [
+        {"part": "Part2", "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0, "rotated": False,
+         "polys": [{"ext": [[100.0, 0.0], [100.0, 50.0], [0.0, 50.0], [0.0, 0.0], [100.0, 0.0]], "holes": [ring + [ring[0]]]}]}]}
+    fake_db.load_run = lambda i: {"id": i, "sheet_w": 150.0, "sheet_h": 80.0, "margin": 0.0, "spacing": 13.0, "seconds": 1.0, "result": [sheet]}
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.session_state["pending_settings"] = {"effort_label": "Quick"}
+    at.run()
+    assert any(b.key == "autocam_btn" for b in at.button)                            # the button is next to Create operation and CAM options
+    next(b for b in at.button if b.label == "Load run").click().run()
+    next(b for b in at.button if b.key == "autocam_btn").click().run()
+    assert not at.exception and any(s.value == "AutoCam" for s in at.subheader)
+    at.number_input(key="autocam_thickness").set_value(18.0)
+    next(b for b in at.button if b.key == "autocam_run").click().run()
+    assert not at.exception and not at.error
+    names = [o["name"] for o in fake_db.list_operations(7)]
+    assert names == ["Sheet1-DRILL-20", "Sheet1-CONTOUR-6.35"]                       # the round hole is drilled, the outline is milled
+    op = {o["name"]: o["settings"] for o in fake_db.list_operations(7)}
+    assert op["Sheet1-DRILL-20"]["tool"] == 4 and op["Sheet1-DRILL-20"]["drill"] == {"extra": 0.0, "peck": 0.0}
+    assert op["Sheet1-CONTOUR-6.35"]["tool"] == 1 and op["Sheet1-CONTOUR-6.35"]["thickness"] == 18.0
+    code = next(c.value for c in at.code)
+    assert "G98 G81 X70.137 Y22.345" in code and "G80" in code and code.count("M6 T") == 2
+    assert "(Sheet1-DRILL-20" in code and "(Sheet1-CONTOUR-6.35" in code
+    next(b for b in at.button if b.key == "autocam_run").click().run()               # again: the operations are replaced, not doubled
+    assert [o["name"] for o in fake_db.list_operations(7)] == names
+    next(b for b in at.button if b.key == "autocam_back").click().run()
+    assert any(b.key == "autocam_btn" for b in at.button) and not any(s.value == "AutoCam" for s in at.subheader)
