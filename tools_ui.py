@@ -254,9 +254,9 @@ def step_tools(db, pid):
     with detail_col:
         editing = bool(ss.get("tools_edit"))
         lock = not editing
-        left, right = st.columns([3, 2])
-        with left:
-            with st.form("tools_form", border=False):            # nothing is sent until a button is pressed: typing never reruns the page
+        with st.form("tools_form", border=False):            # nothing is sent until a button is pressed: typing never reruns the page
+            head, _gap = st.columns([3, 2])                    # the header, the buttons and the basic boxes keep the narrow width
+            with head:
                 st.subheader("New tool" if old is None else f"Tool T{old}")
                 bar = st.columns([1, 1, 1, 2])
                 if editing:
@@ -280,6 +280,9 @@ def step_tools(db, pid):
                 b.number_input("Number of flutes", min_value=1, step=1, key=PREFIX + "flutes", disabled=lock)
                 a.text_input("Holder (optional)", key=PREFIX + "holder", disabled=lock,
                              help="The name of the tool holder, written in the header of the G-code (for example ADAPTOR).")
+            # the tool parameters with the picture right beside them (not up beside the name)
+            params, guide = st.columns([3, 2])
+            with params:
                 st.markdown("**Tool parameters** (mm and degrees)")
                 c1, c2 = st.columns(2)
                 for i, (k, lab, hlp, _d) in enumerate(DIMS):
@@ -287,7 +290,7 @@ def step_tools(db, pid):
                                                             key=PREFIX + k, help=hlp, disabled=lock)
                 c1.number_input("Helical angle [°]", min_value=0.0, max_value=89.0, step=1.0, format="%.1f", key=PREFIX + "helical_angle",
                                 help="30 is the standard helix.", disabled=lock)
-        with right:
-            st.image(GUIDE_SVG)
-            st.caption("D diameter · SD shoulder diameter · AD arbor diameter · SA shoulder angle · CL cutting length · "
-                       "SL shoulder length · TL total length · CH chamfer. OHL (outside holder) is the length that sticks out of the holder.")
+            with guide.container(key="tools_guide"):
+                st.image(GUIDE_SVG)
+                st.caption("D diameter · SD shoulder diameter · AD arbor diameter · SA shoulder angle · CL cutting length · "
+                           "SL shoulder length · TL total length · CH chamfer. OHL (outside holder) is the length that sticks out of the holder.")

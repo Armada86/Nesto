@@ -27,6 +27,8 @@ CSS = """
 .st-key-camming_save, .st-key-tools_save, .st-key-data_save, .st-key-levels_save { width: 9rem !important; max-width: 9rem !important; }
 .st-key-camming_save button, .st-key-tools_save button, .st-key-data_save button, .st-key-levels_save button {
     width: 9rem !important; min-height: 2.6rem !important; }
+/* the tool picture stays beside the tool parameters while the page is scrolled */
+.st-key-tools_guide { position: sticky; top: 4rem; }
 /* on a phone Streamlit stacks columns; these rows stay side by side */
 @media (max-width: 640px) {
   .st-key-lv_rows [data-testid="stHorizontalBlock"], .st-key-order_btns [data-testid="stHorizontalBlock"],
