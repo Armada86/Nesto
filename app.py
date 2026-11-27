@@ -319,15 +319,13 @@ with st.sidebar:
         st.markdown(f"**{proj['name']}**")
     else:
         st.markdown("_No project open_")
-    r1a, r1b = st.columns(2)
-    r2a, r2b = st.columns(2)
-    if r1a.button("New", icon=":material/note_add:", width="stretch"):
+    if st.button("New", icon=":material/note_add:", width="stretch"):                # one under the other
         new_project_dialog()
-    if r1b.button("Load", icon=":material/folder_open:", width="stretch"):
+    if st.button("Load", icon=":material/folder_open:", width="stretch"):
         load_project_dialog()
-    if r2a.button("Rename", icon=":material/edit:", width="stretch", disabled=not proj):
+    if st.button("Rename", icon=":material/edit:", width="stretch", disabled=not proj):
         rename_project_dialog(pid, proj["name"])
-    if r2b.button("Delete", icon=":material/delete:", width="stretch", disabled=not proj):
+    if st.button("Delete", icon=":material/delete:", width="stretch", disabled=not proj):
         delete_project_dialog(pid, proj["name"])
 
 if not proj:
@@ -418,15 +416,16 @@ with tab_table:
                 st.error(f"Could not save the parts: {e}")
 
     # the sheet and the nesting options belong to the run: they sit in the Nesting tab, above the Nest button
-    col_hist, col_set = st.columns([1.3, 3])
-    history_box = col_hist.container(border=True)           # the run history (filled further down), the first column
-    # a form: typing in the boxes does not make the page react; the numbers are read when Nest is pressed (Enter does not submit)
-    with col_set.form("nest_form", border=False, enter_to_submit=False):
-        with st.container(border=True):
+    # ONE form across the whole width, so the Nest button below it is in the middle of the page: typing in the boxes (or choosing a run in
+    # the history) does not make the page react; everything is read when a button of the form is pressed (Enter does not submit)
+    with st.form("nest_form", border=False, enter_to_submit=False):
+        col_hist, col_set = st.columns([1.55, 3])
+        history_box = col_hist.container(border=True)           # the run history (filled further down), the first column
+        with col_set.container(border=True):
             st.caption("Sheet and nesting settings are saved with the run when you press Nest.")
             col_sheet, col_nest = st.columns(2)
             with col_sheet:
-                st.subheader("Sheet")
+                st.subheader("Sheet details")
                 sheet_w = st.number_input("Length", min_value=1.0, step=10.0, key="sheet_w",
                                           help="Sheet length: the horizontal side in the drawings.")
                 sheet_h = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_h",
@@ -434,7 +433,7 @@ with tab_table:
                 margin = st.number_input("Edge margin", min_value=0.0, step=1.0, key="margin")
                 spacing = st.number_input("Part spacing (kerf)", min_value=0.0, step=0.5, key="spacing")
             with col_nest:
-                st.subheader("Nesting")
+                st.subheader("Nesting options")
                 rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), key="rot_label",
                                              help="Finer steps pack irregular shapes better but take longer. Steps below 15° first search with 15° and then fine-tune "
                                                   "the best layout with the finer angles around the angles it uses (this adds some time).")
@@ -717,7 +716,7 @@ def held_parts(result) -> list:
 
 
 with history_box:
-    st.subheader("History")
+    st.subheader("Nesting history")
     runs = db.list_runs(pid)
     labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.2%}"
               + (f" · {fmt_time(r.get('seconds'))}" if r.get("seconds") is not None else ""): r["id"] for r in runs}
@@ -725,11 +724,10 @@ with history_box:
         _msg, _icon = st.session_state.pop("flash")
         st.toast(_msg, icon=_icon)
     if labels:
-        with st.form("history_form", border=False, enter_to_submit=False):         # choosing a run does not make the page react
-            pick = st.selectbox("Past runs", list(labels))
-            b_load, b_del = st.columns(2)
-            load_clicked = b_load.form_submit_button("Load run", width="stretch")
-            delete_clicked = b_del.form_submit_button("Delete…", icon=":material/delete:", width="stretch")
+        pick = st.selectbox("Past runs", list(labels))                              # in the form of the Nesting tab: no rerun on choosing
+        b_load, b_del = st.columns(2)
+        load_clicked = b_load.form_submit_button("Load run", width="stretch")
+        delete_clicked = b_del.form_submit_button("Delete…", icon=":material/delete:", width="stretch")
         if load_clicked:
             if unsaved_moves():
                 unsaved_dialog("load_run", labels[pick])

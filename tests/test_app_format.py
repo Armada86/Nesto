@@ -277,3 +277,14 @@ def test_parts_are_ticked_in_the_list_and_deleted_together_after_a_confirmation(
     at.checkbox(key="lib_chk_2").check()
     next(b for b in at.button if b.key == "lib_delete").click().run()           # the question comes first: nothing is deleted yet
     assert not saved and any("**a**" in w.value and "**c**" in w.value for w in at.warning)
+
+
+def test_the_nesting_tab_titles(fake_db):
+    from streamlit.testing.v1 import AppTest
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.run()
+    assert not at.exception
+    titles = [s.value for s in at.subheader]
+    assert {"Nesting history", "Sheet details", "Nesting options"} <= set(titles)
+    assert not {"History", "Sheet", "Nesting"} & set(titles)
