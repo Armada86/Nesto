@@ -437,7 +437,7 @@ def tool_color_map(numbers) -> dict:
 
 def toolpath_png(width: float, height: float, thickness: float, parts: tuple, paths: tuple) -> bytes:
     """The whole sheet in an isometric view (seen from the origin corner, like the geometry picture) with the toolpaths drawn on the top
-    of the material, every path in the colour of its tool (tool_color_map) and marked with its tool number (T4). parts: solids(sheet);
+    of the material, every path dotted, in the colour of its tool (tool_color_map) and marked with its tool number (T4). parts: solids(sheet);
     paths: ((tool number, ((x, y), ...) closed path), ...)."""
     from mpl_toolkits.mplot3d import art3d
 
@@ -459,7 +459,7 @@ def toolpath_png(width: float, height: float, thickness: float, parts: tuple, pa
             ax.plot(xs, ys, [z] * len(xs), color="#94a3b8", lw=0.5, ls=(0, (2, 3)))
     for n, pts in paths:                                        # the toolpaths and the number of their tool
         xs, ys = zip(*pts)
-        ax.plot(xs, ys, [z] * len(xs), color=color[n], lw=1.1)
+        ax.plot(xs, ys, [z] * len(xs), color=color[n], lw=1.4, ls=(0, (1.2, 1.8)))      # dotted, in the colour of the tool
         sx, sy = pts[0]
         ax.plot([sx], [sy], [z], "o", color=color[n], ms=2.5)
         small = (max(xs) - min(xs)) < 0.12 * big and (max(ys) - min(ys)) < 0.12 * big     # a hole: its number in the middle; a big path: at its start
