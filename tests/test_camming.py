@@ -145,8 +145,11 @@ def test_the_tool_library_page_creates_changes_and_deletes_tools():
         assert not at.exception
         assert not [b for b in at.button if b.key in ("tools_save", "tools_use")]      # nothing is open before a tool is chosen; no Use for CAM here
         next(b for b in at.button if b.key == "tools_new").click().run()
+        assert not [b for b in at.button if b.key == "tools_save"]            # first the type is asked, no parameters yet
+        next(b for b in at.button if b.key == "tools_type_ok").click().run()  # END MILL (the first type)
         next(b for b in at.button if b.key == "tools_save").click().run()
         assert not at.exception and len(saved) == 1 and saved[0]["number"] == 1 and saved[0]["diameter"] == 12.0
+        assert saved[0]["tool_type"] == "END MILL" and saved[0]["point_angle"] is None
         assert not [b for b in at.button if b.key == "tools_save"]            # the new tool is not selected in the list: no details open
         _select_row(at, "tools")                                              # the person clicks it
         assert [b.key for b in at.button if b.key == "tools_save"]
@@ -355,16 +358,44 @@ def test_a_drill_is_a_tool_type_and_gets_a_warning_when_chosen_for_milling():
     assert w and "drill" in w[0] and "end mill" in w[0]
 
 
-def test_a_new_tool_can_be_saved_as_a_drill():
+def test_a_new_tool_asks_for_its_type_first_and_a_drill_has_its_own_parameters():
     import sys
     saved = []
     try:
         at = _lib_app(saved).run()
         next(b for b in at.button if b.key == "tools_new").click().run()
-        assert at.selectbox(key="tl_tool_type").options == ["END MILL", "DRILL"]
-        at.selectbox(key="tl_tool_type").set_value("DRILL")
+        assert at.selectbox(key="tools_type_pick").options == ["END MILL", "DRILL"]
+        assert not [n for n in at.number_input if n.key == "tl_diameter"]      # no parameters before the type is chosen
+        at.selectbox(key="tools_type_pick").set_value("DRILL")
+        next(b for b in at.button if b.key == "tools_type_ok").click().run()
+        keys = {n.key for n in at.number_input}
+        assert "tl_point_angle" in keys and "tl_chamfer" not in keys           # a drill has the angle (A), not the chamfer
+        assert at.number_input(key="tl_point_angle").value == 118.0 and at.number_input(key="tl_diameter").value == 6.0
+        assert at.selectbox(key="tl_tool_type").value == "DRILL" and at.selectbox(key="tl_tool_type").disabled   # fixed after the choice
         at.text_input(key="tl_name").set_value('1/4" DRILL')
+        at.number_input(key="tl_diameter").set_value(6.35)
+        at.number_input(key="tl_point_angle").set_value(140.0)
         next(b for b in at.button if b.key == "tools_save").click().run()
         assert not at.exception and saved[0]["tool_type"] == "DRILL" and saved[0]["name"] == '1/4" DRILL'
+        assert saved[0]["diameter"] == 6.35 and saved[0]["point_angle"] == 140.0 and saved[0]["chamfer"] == 0.0
+        # an end mill has the chamfer and no angle (A)
+        next(b for b in at.button if b.key == "tools_new").click().run()
+        next(b for b in at.button if b.key == "tools_type_ok").click().run()
+        keys = {n.key for n in at.number_input}
+        assert "tl_chamfer" in keys and "tl_point_angle" not in keys
+        # Cancel in the type question: nothing opens
+        next(b for b in at.button if b.key == "tools_new").click().run()
+        next(b for b in at.button if b.key == "tools_type_cancel").click().run()
+        assert not [b for b in at.button if b.key in ("tools_type_ok", "tools_save")]
     finally:
         sys.modules.pop("db", None)
+
+
+def test_drill_validation():
+    import tools_ui as tu
+    d = tu.blank(4, "DRILL")
+    assert d["tool_type"] == "DRILL" and d["point_angle"] == 118.0 and tu.validate(d, set()) == []
+    assert tu.validate({**d, "point_angle": 180.0}, set()) and tu.validate({**d, "point_angle": 0.0}, set())     # the angle between 0 and 180
+    assert tu.validate({**d, "diameter": 0}, set()) and tu.validate({**d, "cutting_length": 60, "shoulder_length": 50}, set())
+    assert tu.validate({**d, "chamfer": 99.0}, set()) == []                                  # a drill has no chamfer: not checked
+    assert [k for k, *_ in tu.dims_for("DRILL")][:2] == ["diameter", "point_angle"] and "chamfer" not in [k for k, *_ in tu.dims_for("DRILL")]

@@ -225,3 +225,18 @@ def test_the_newest_run_gives_the_settings_a_project_opens_with(db):
         assert db.latest_run_settings(p) == {"sheet_w": 1200.0, "sheet_h": 600.0, "margin": 3.0, "spacing": 1.0}
     finally:
         db.delete_project(p)
+
+
+def test_a_drill_keeps_its_point_angle_and_an_end_mill_has_none(db):
+    base = {"tool_type": "END MILL", "name": "t", "flutes": 2, "holder": "", "diameter": 6.0, "shoulder_diameter": 6.0, "arbor_diameter": 6.0,
+            "shoulder_angle": 0.0, "cutting_length": 20.0, "shoulder_length": 30.0, "total_length": 30.0, "chamfer": 0.0, "outside_holder": 80.0,
+            "helical_angle": 30.0}
+    db.save_cam_tool({**base, "number": 998, "tool_type": "DRILL", "point_angle": 140.0})
+    db.save_cam_tool({**base, "number": 999})                                   # an end mill: no point angle given
+    try:
+        got = {t["number"]: t for t in db.list_cam_tools()}
+        assert got[998]["tool_type"] == "DRILL" and got[998]["point_angle"] == 140.0
+        assert got[999]["point_angle"] is None
+    finally:
+        db.delete_cam_tool(998)
+        db.delete_cam_tool(999)

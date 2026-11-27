@@ -17,32 +17,53 @@ DIMS = [
     ("chamfer", "Chamfer (CH)", "Size of the 45 degree chamfer at the tip (0 = none).", 0.0),
     ("outside_holder", "Outside holder (OHL)", "Length of the tool sticking out of the holder, from the tip.", 100.0),
 ]
-ANGLES = {"shoulder_angle", "helical_angle"}
+# the parameters of a drill: the diameter and the point angle (A) instead of the chamfer
+DRILL_DIMS = [
+    ("diameter", "Diameter (D)", "Cutting diameter of the drill.", 6.0),
+    ("point_angle", "Angle (A)", "Point angle: the angle between the two cutting edges at the tip (118 and 140 are common).", 118.0),
+    ("shoulder_diameter", "Shoulder diameter (SD)", "Diameter of the shank above the flutes.", 6.0),
+    ("arbor_diameter", "Arbor diameter (AD)", "Diameter of the part held in the holder.", 6.0),
+    ("shoulder_angle", "Shoulder angle (SA)", "Angle of the step between the cutting part and the shank (0 = none).", 0.0),
+    ("cutting_length", "Cutting length (CL)", "Length of the flutes, measured from the tip.", 40.0),
+    ("shoulder_length", "Shoulder length (SL)", "Length from the tip to the end of the shoulder.", 50.0),
+    ("total_length", "Total length (TL)", "Length of the tool from the tip to the top of the arbor.", 50.0),
+    ("outside_holder", "Outside holder (OHL)", "Length of the tool sticking out of the holder, from the tip.", 100.0),
+]
+ANGLES = {"shoulder_angle", "helical_angle", "point_angle"}
 PREFIX = "tl_"
 
 
-def blank(number: int = 1) -> dict:
-    return {"number": number, "tool_type": TOOL_TYPES[0], "name": "", **{k: d for k, _l, _h, d in DIMS}, "helical_angle": 30.0,
-            "flutes": 2, "holder": ""}
+def dims_for(tool_type) -> list:
+    """The parameter boxes of a tool type: (key, label, help, default)."""
+    return DRILL_DIMS if str(tool_type).upper() == "DRILL" else DIMS
+
+
+def blank(number: int = 1, tool_type: str = "END MILL") -> dict:
+    """A new tool of the given type with the default parameters of that type."""
+    return {"number": number, "tool_type": tool_type, "name": "", "chamfer": 0.0, "point_angle": 118.0,
+            **{k: d for k, _l, _h, d in dims_for(tool_type)}, "helical_angle": 30.0, "flutes": 2, "holder": ""}
 
 
 def validate(t: dict, others: set) -> list[str]:
     """What is wrong with this tool (empty list = fine)."""
     p = []
+    drill = str(t.get("tool_type", "END MILL")).upper() == "DRILL"
     if not t["number"] or int(t["number"]) < 1:
         p.append("The catalog number must be 1 or more.")
     elif int(t["number"]) in others:
         p.append(f"Catalog number {int(t['number'])} is already used by another tool.")
-    for k, lab, _h, _d in DIMS:
+    for k, lab, _h, _d in dims_for(t.get("tool_type")):
         if k not in ("shoulder_angle", "chamfer") and not t[k] > 0:
             p.append(f"{lab} must be more than 0.")
+    if drill and not 0 < t["point_angle"] < 180:
+        p.append("The point angle (A) must be between 0 and 180 degrees.")
     if t["cutting_length"] > t["shoulder_length"] > 0:
         p.append("Cutting length (CL) cannot be longer than the shoulder length (SL).")
     if t["shoulder_length"] > t["total_length"] > 0:
         p.append("Shoulder length (SL) cannot be longer than the total length (TL).")
     if t["total_length"] > t["outside_holder"] > 0:
         p.append("Outside holder (OHL) cannot be shorter than the total length (TL).")
-    if t["chamfer"] < 0 or t["chamfer"] * 2 > t["diameter"]:
+    if not drill and (t["chamfer"] < 0 or t["chamfer"] * 2 > t["diameter"]):
         p.append("The chamfer (CH) must be between 0 and half the diameter.")
     if not 0 <= t["helical_angle"] < 90:
         p.append("The helical angle must be between 0 and 90 degrees.")
@@ -70,11 +91,31 @@ GUIDE_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 430" fon
 </svg>"""
 
 
+DRILL_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 430" font-family="sans-serif" font-size="13">
+<defs><marker id="a" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker></defs>
+<rect x="125" y="20" width="70" height="75" fill="#d1d5db" stroke="#6b7280"/>
+<rect x="115" y="95" width="90" height="25" fill="#cbd5e1" stroke="#6b7280"/>
+<path d="M115 120 H205 V345 L160 385 L115 345 Z" fill="#e5e7eb" stroke="#6b7280"/>
+<path d="M115 175 q40 -22 90 -30 M115 235 q40 -22 90 -30 M115 295 q40 -22 90 -30" fill="none" stroke="#9ca3af" stroke-width="3"/>
+<path d="M135 362 Q160 345 185 362" fill="none" stroke="#2563eb" stroke-width="1.2" marker-start="url(#a)" marker-end="url(#a)"/>
+<g stroke="#2563eb" stroke-width="1.2" fill="none" marker-start="url(#a)" marker-end="url(#a)">
+<line x1="125" y1="40" x2="195" y2="40"/><line x1="115" y1="108" x2="205" y2="108"/>
+<line x1="95" y1="20" x2="95" y2="385"/><line x1="255" y1="95" x2="255" y2="385"/><line x1="295" y1="190" x2="295" y2="385"/>
+<line x1="115" y1="405" x2="205" y2="405"/></g>
+<g fill="#2563eb"><text x="135" y="34">AD</text><text x="212" y="112">SD</text><text x="72" y="200">TL</text>
+<text x="262" y="260">SL</text><text x="302" y="290">CL</text><text x="153" y="422">D</text><text x="154" y="340">A</text>
+<text x="224" y="82">SA</text></g>
+<path d="M205 95 l14 -12" stroke="#2563eb" fill="none"/>
+</svg>"""
+
+
 def _row_to_tool(r) -> dict:
     t = {k: r[k] for k in ("number", "tool_type", "name", "flutes")}
     t["holder"] = r.get("holder") or ""
     for k, _l, _h, _d in DIMS:
         t[k] = float(r[k])
+    t["point_angle"] = float(r.get("point_angle") or 118.0)
     t["helical_angle"] = float(r["helical_angle"])
     return t
 
@@ -86,8 +127,11 @@ def _load_form(t: dict):
 
 def _form_tool() -> dict:
     t = {k: st.session_state[PREFIX + k] for k in ("number", "tool_type", "name", "flutes", "helical_angle", "holder")}
-    for k, _l, _h, _d in DIMS:
+    t["chamfer"], t["point_angle"] = 0.0, None                  # the boxes of the other type are not part of this tool
+    for k, _l, _h, _d in dims_for(t["tool_type"]):
         t[k] = float(st.session_state[PREFIX + k])
+    if t["tool_type"] == "DRILL":
+        t["point_angle"] = float(st.session_state[PREFIX + "point_angle"])
     return t
 
 
@@ -126,13 +170,16 @@ def tool_library(db):
         ss.tools_sel = None
 
     def _open(n):
+        if n:
+            ss.tools_new_type = None
         ss.tools_sel = n
         ss.tools_confirm = False
         ss.tools_edit = n not in by_no                          # an existing tool is read-only until Edit is pressed
         ss.tools_problems = []
-        _load_form(by_no[n] if n in by_no else blank(max(by_no, default=0) + 1))
+        _load_form(by_no[n] if n in by_no else blank(max(by_no, default=0) + 1, ss.get("tools_new_type") or TOOL_TYPES[0]))
 
-    if ss.tools_sel is not None and PREFIX + "diameter" not in ss:     # the form's boxes were forgotten (the step was not drawn): fill them again
+    choosing_type = ss.tools_sel == 0 and not ss.get("tools_new_type")        # a new tool: first the type is chosen
+    if ss.tools_sel is not None and not choosing_type and PREFIX + "diameter" not in ss:     # the form's boxes were forgotten (the step was not drawn): fill them again
         _open(ss.tools_sel)
 
     def _reset_list():
@@ -141,7 +188,18 @@ def tool_library(db):
 
     def _new():
         _reset_list()
+        ss.tools_new_type = None                              # the type is asked first; the form opens with that type's parameters
+        ss.tools_sel = 0
+        ss.tools_confirm = False
+        ss.tools_problems = []
+
+    def _pick_type():
+        ss.tools_new_type = ss.get("tools_type_pick") or TOOL_TYPES[0]
         _open(0)
+
+    def _cancel_new():
+        ss.tools_new_type = None
+        ss.tools_sel = None
 
     def _save():
         t = _form_tool()
@@ -185,6 +243,7 @@ def tool_library(db):
             _load_form(by_no[ss.tools_sel])
             ss.tools_edit = False
         else:
+            ss.tools_new_type = None
             ss.tools_sel = None
 
     def _ask_delete():
@@ -224,6 +283,15 @@ def tool_library(db):
     if not open_:
         return
     old = ss.tools_sel or None
+    if choosing_type:
+        with detail_col:
+            st.subheader("New tool")
+            st.selectbox("What type of tool is it?", TOOL_TYPES, key="tools_type_pick",
+                         help="The type decides which parameters the tool has. It cannot be changed afterwards.")
+            q1, q2, _q = st.columns([1, 1, 3])
+            q1.button("Continue", on_click=_pick_type, key="tools_type_ok", type="primary", width="stretch")
+            q2.button("Cancel", on_click=_cancel_new, key="tools_type_cancel", width="stretch")
+        return
     with detail_col:
         editing = bool(ss.get("tools_edit"))
         lock = not editing
@@ -249,7 +317,8 @@ def tool_library(db):
                 a, b = st.columns(2)
                 a.number_input("Catalog number (T)", min_value=1, step=1, key=PREFIX + "number", help="The tool number used in the G-code (T and H).", disabled=lock)
                 b.text_input("Name (optional)", key=PREFIX + "name", disabled=lock)
-                a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type", disabled=lock)
+                a.selectbox("Tool type", TOOL_TYPES, key=PREFIX + "tool_type", disabled=True,
+                            help="Chosen when the tool was created; it cannot be changed (the type decides the parameters).")
                 b.number_input("Number of flutes", min_value=1, step=1, key=PREFIX + "flutes", disabled=lock)
                 a.text_input("Holder (optional)", key=PREFIX + "holder", disabled=lock,
                              help="The name of the tool holder, written in the header of the G-code (for example ADAPTOR).")
@@ -259,15 +328,21 @@ def tool_library(db):
                 st.markdown("**Tool parameters** (mm and degrees)")
                 with st.container(key="tools_params"):               # two columns also on a phone (see branding.py)
                     c1, c2 = st.columns(2)
-                    for i, (k, lab, hlp, _d) in enumerate(DIMS):
+                    tool_type = ss[PREFIX + "tool_type"]
+                    for i, (k, lab, hlp, _d) in enumerate(dims_for(tool_type)):
                         (c1 if i % 2 == 0 else c2).number_input(lab + (" [°]" if k in ANGLES else " [mm]"), min_value=0.0, step=0.5, format="%.3f",
                                                                 key=PREFIX + k, help=hlp, disabled=lock)
                     c2.number_input("Helical angle [°]", min_value=0.0, max_value=89.0, step=1.0, format="%.1f", key=PREFIX + "helical_angle",
                                     help="30 is the standard helix.", disabled=lock)
             with guide.container(key="tools_guide"):
-                st.image(GUIDE_SVG)
-                st.caption("D diameter · SD shoulder diameter · AD arbor diameter · SA shoulder angle · CL cutting length · "
-                           "SL shoulder length · TL total length · CH chamfer. OHL (outside holder) is the length that sticks out of the holder.")
+                if str(tool_type).upper() == "DRILL":
+                    st.image(DRILL_SVG)
+                    st.caption("D diameter · A point angle · SD shoulder diameter · AD arbor diameter · SA shoulder angle · CL cutting length · "
+                               "SL shoulder length · TL total length. OHL (outside holder) is the length that sticks out of the holder.")
+                else:
+                    st.image(GUIDE_SVG)
+                    st.caption("D diameter · SD shoulder diameter · AD arbor diameter · SA shoulder angle · CL cutting length · "
+                               "SL shoulder length · TL total length · CH chamfer. OHL (outside holder) is the length that sticks out of the holder.")
 
 
 def step_tools(db, pid):
