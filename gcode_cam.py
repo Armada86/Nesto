@@ -77,6 +77,9 @@ def problems(t: dict | None, data: dict, lv: dict) -> list[str]:
 
 def warnings(t: dict, lv: dict) -> list[str]:
     w = []
+    if str(t.get("tool_type") or "END MILL").upper() != "END MILL":
+        w.append(f"T{int(t['number'])} is a {str(t.get('tool_type')).lower()}. The G-code of this step mills the holes and outlines "
+                 "along their contours, which needs an end mill: choose an end mill in step 2.")
     if lv["depth"] > float(t["cutting_length"]) + 1e-9:
         w.append(f"The profile depth ({lv['depth']:g}) is more than the cutting length of the tool ({float(t['cutting_length']):g}).")
     if lv["depth"] > lv["upper"] + 1e-9:
