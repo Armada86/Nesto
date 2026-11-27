@@ -211,3 +211,17 @@ def test_a_run_keeps_its_nesting_options(db):
     finally:
         with db.connect() as c:
             c.execute("DELETE FROM projects WHERE id=%s", (pid,))
+
+
+def test_the_newest_run_gives_the_settings_a_project_opens_with(db):
+    p = db.create_project("latest-settings-test")
+    try:
+        assert db.latest_run_settings(p) == {}                                               # no run: the defaults
+        db.save_run(p, 2000.0, 1000.0, 4.0, 2.0, 1, 0.5, [], 1.0, options={"rot_label": "45°", "prec_label": "Fine", "effort_label": "Quick"})
+        db.save_run(p, 3000.0, 1500.0, 8.0, 5.0, 1, 0.5, [], 1.0, options={"rot_label": "15°", "prec_label": "Fast", "effort_label": "Thorough"})
+        assert db.latest_run_settings(p) == {"sheet_w": 3000.0, "sheet_h": 1500.0, "margin": 8.0, "spacing": 5.0,
+                                              "rot_label": "15°", "prec_label": "Fast", "effort_label": "Thorough"}
+        db.save_run(p, 1200.0, 600.0, 3.0, 1.0, 1, 0.5, [], 1.0)                             # an old-style run without options
+        assert db.latest_run_settings(p) == {"sheet_w": 1200.0, "sheet_h": 600.0, "margin": 3.0, "spacing": 1.0}
+    finally:
+        db.delete_project(p)

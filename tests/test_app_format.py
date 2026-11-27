@@ -32,7 +32,7 @@ def fake_db(monkeypatch):
     db.get_project = lambda i: {"id": i, "name": "P", "settings": None}
     db.load_parts = lambda i: [dict(p) for p in parts]
     db.save_parts = lambda *a: None
-    db.save_settings = lambda *a: None
+    db.latest_run_settings = lambda pid: {}
     db.save_run = lambda *a, **k: None
     db.list_runs = lambda i: list(runs)
     db.load_run = lambda i: None
@@ -208,13 +208,10 @@ def test_loading_a_run_brings_its_sheet_and_nesting_options_into_the_boxes_in_th
     fake_db.load_run = lambda i: {"id": i, "sheet_w": 3000.0, "sheet_h": 1500.0, "margin": 8.0, "spacing": 4.0, "seconds": 1.0,
                                   "options": {"rot_label": "15°", "prec_label": "Fine", "effort_label": "Thorough"},
                                   "result": [{"width": 3000.0, "height": 1500.0, "placements": []}]}
-    saved = []
-    fake_db.save_settings = lambda pid, s: saved.append(s)
     next(b for b in at.button if b.label == "Load run").click().run()
     assert not at.exception
     assert [at.number_input(key=k).value for k in ("sheet_w", "sheet_h", "margin", "spacing")] == [3000.0, 1500.0, 8.0, 4.0]
     assert [at.select_slider(key=k).value for k in ("rot_label", "prec_label", "effort_label")] == ["15°", "Fine", "Thorough"]
-    assert saved and saved[-1]["sheet_w"] == 3000.0 and saved[-1]["rot_label"] == "15°"      # also stored as the project's settings
     # an old run without options: the sheet comes back, the options stay as they are
     fake_db.load_run = lambda i: {"id": i, "sheet_w": 2000.0, "sheet_h": 1000.0, "margin": 5.0, "spacing": 3.0, "seconds": 1.0,
                                   "result": [{"width": 2000.0, "height": 1000.0, "placements": []}]}
@@ -224,24 +221,54 @@ def test_loading_a_run_brings_its_sheet_and_nesting_options_into_the_boxes_in_th
 
 def test_the_sheet_boxes_are_read_when_nest_is_pressed_and_a_part_that_does_not_fit_gives_a_message(fake_db):
     from streamlit.testing.v1 import AppTest
-    runs, settings = [], []
-    fake_db.save_run = lambda *a, **k: runs.append(a) or 99
-    fake_db.save_settings = lambda pid, s: settings.append(s)
+    runs = []
+    fake_db.save_run = lambda *a, **k: runs.append((a, k)) or 99
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["pid"] = 1
     at.session_state["pending_settings"] = {"effort_label": "Quick"}
     at.run()
     assert not at.exception
-    assert not runs and not settings                                           # nothing nests or saves by itself
+    assert not runs                                                            # nothing nests by itself
     at.number_input(key="sheet_w").set_value(1000.0)
     at.number_input(key="sheet_h").set_value(700.0)
     next(b for b in at.button if b.key == "nest_btn").click().run()          # Nest reads the numbers and stores them
     assert not at.exception
-    assert runs and runs[-1][1:3] == (1000.0, 700.0)
-    assert settings and settings[-1]["sheet_w"] == 1000.0 and settings[-1]["sheet_h"] == 700.0
+    assert runs and runs[-1][0][1:3] == (1000.0, 700.0)                        # the sheet and the options are stored with the run
+    assert runs[-1][1]["options"]["effort_label"] == "Quick"
     at.number_input(key="sheet_w").set_value(100.0)                            # smaller than the parts (300 x 200)
     at.number_input(key="sheet_h").set_value(100.0)
     n = len(runs)
     next(b for b in at.button if b.key == "nest_btn").click().run()
     assert not at.exception and len(runs) == n                                 # no traceback, no run
     assert any("does not fit" in e.value for e in at.error)
+
+
+def test_there_is_no_save_button_in_the_sidebar_and_the_parts_list_saves_itself(fake_db):
+    from streamlit.testing.v1 import AppTest
+    saved = []
+    fake_db.save_parts = lambda pid, ps: saved.append([dict(p) for p in ps])
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.run()
+    assert not at.exception
+    assert not any(b.label == "Save" for b in at.sidebar.button)                 # the project is saved as it changes
+    assert [b.label for b in at.sidebar.button] == ["New", "Load", "Rename", "Delete"]
+    assert not saved                                                             # nothing changed: nothing is written
+    at.session_state["parts_sig"] = "old"                                        # the table is different from what is stored
+    at.run()
+    assert saved and saved[-1][0]["name"] == "a" and saved[-1][0]["qty"] == 3
+
+
+def test_deleting_a_part_in_parts_details_asks_first(fake_db):
+    from streamlit.testing.v1 import AppTest
+    saved = []
+    fake_db.save_parts = lambda pid, ps: saved.append([p["name"] for p in ps])
+    fake_db.load_parts = lambda i: [{"name": n, "shape": "rectangle", "width": 300.0, "height": 200.0, "qty": 1, "rotate": True,
+                                     "flip": True, "outline": None} for n in ("a", "b")]
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.run()
+    assert not at.exception
+    next(b for b in at.button if b.key == "lib_btn_1").click().run()             # choose part b
+    next(b for b in at.button if b.key == "lib_delete").click().run()            # the question comes first: nothing is deleted yet
+    assert not saved and any("Delete **b**" in w.value for w in at.warning)

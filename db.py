@@ -152,6 +152,19 @@ def save_settings(pid: int, settings: dict):
         c.execute("UPDATE projects SET settings=%s WHERE id=%s", (json.dumps(settings), pid))
 
 
+def latest_run_settings(pid: int) -> dict:
+    """The sheet and nesting settings of the newest run of the project (widget keys sheet_w, sheet_h, margin, spacing, rot_label,
+    prec_label, effort_label; the ones the run does not have are left out); {} when the project has no run."""
+    with connect() as c:
+        row = c.execute("SELECT sheet_w, sheet_h, margin, spacing, options FROM nest_runs WHERE project_id=%s ORDER BY id DESC LIMIT 1",
+                        (pid,)).fetchone()
+    if not row:
+        return {}
+    out = {k: float(row[k]) for k in ("sheet_w", "sheet_h", "margin", "spacing") if row.get(k) is not None}
+    out.update({k: v for k, v in (row.get("options") or {}).items() if k in ("rot_label", "prec_label", "effort_label")})
+    return out
+
+
 def delete_project(pid: int):
     with connect() as c:
         c.execute("DELETE FROM projects WHERE id=%s", (pid,))
