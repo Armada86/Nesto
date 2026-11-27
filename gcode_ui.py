@@ -68,10 +68,11 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
     ext = machine.FILE_EXTENSION
     length = sum(cam._ring_length(c.pts) for c in plan.contours)
     minutes = cam.estimate_minutes(groups)
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Contours", len(plan.contours), help="Holes and outlines of the parts on this sheet.")
-    m2.metric("Contour length", f"{length:,.0f}")
-    m3.metric("Estimated time", cam.duration_text(minutes))
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Holes", sum(1 for c in plan.contours if c.kind == "inner"), help="The holes of the parts on this sheet.")
+    m2.metric("Contours", sum(1 for c in plan.contours if c.kind == "outer"), help="The outlines of the parts on this sheet.")
+    m3.metric("Cutting length", f"{length:,.0f}", help="One pass around every hole and outline (the tool centre path), in mm.")
+    m4.metric("Estimated time", cam.duration_text(minutes))
     from cam_ui import _preview
     fig = _preview(sheet, plan)
     st.pyplot(fig)
