@@ -26,6 +26,9 @@ ASSUMPTIONS = [
     "closed loop that ends where it started; there are no lead in / lead out moves.",
     "Start point: the lowest left vertex of the part (the lowest vertex, the leftmost of those): the contour starts where the "
     "tool path of the edge that leaves this vertex begins.",
+    "Operations: the holes and the outlines are two operations (the names are the operation name and the operation name + 1), each with "
+    "its own boxes, N block and end sequence (G05.1 Q0, safe position, M97); the tool change M6 and M96 are written once.",
+    "Round holes: a hole that is a circle is cut as a true circle (not as the polygon it is stored as), starting at its top.",
     "Order: the order of the contours that was set in step 1 (by default the holes first, then the outlines, each from the lower left "
     "corner of the part, from left to right).",
     "Cutting side: holes are cut from inside, outlines from outside (the tool centre path is offset by the tool radius in software, "
@@ -88,10 +91,13 @@ def build(sheet: dict, t: dict, data: dict, lv: dict, thickness: float, margin: 
     job = cam.CamJob(thickness=thickness, inner_tool=tool.number, outer_tool=tool.number, climb=(data["direction"] == "CW"))
     plan = cam.plan_sheet(sheet, job, {tool.number: tool}, margin, spacing, start="lowleft", order="left_right", arc_tol=ARC_TOLERANCE,
                           custom_order=order_ids)
-    moves = []
+    groups, kind = [], None                       # an operation for every run of holes or of outlines (SolidCAM: F-CONTOUR, F-CONTOUR1)
     for c in plan.contours:
-        moves += contour_moves(c, tool, data, lv)
-    return plan, ([(tool, moves)] if moves else []), tool, job
+        if c.kind != kind:
+            groups.append((tool, []))
+            kind = c.kind
+        groups[-1][1].extend(contour_moves(c, tool, data, lv))
+    return plan, groups, tool, job
 
 
 def text(name: str, sheet: dict, sheet_no: int, t: dict, data: dict, lv: dict, thickness: float, project: str = "", run_no=None,

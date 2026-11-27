@@ -84,6 +84,7 @@ class Contour:
     src: list | None = None            # the closed ring of the PART (outline or hole) this path was made from
     radius: float = 0.0                # the tool radius
     key: tuple = (0.0, 0.0)            # lower left of the part (or hole): the left to right order
+    start: tuple | None = None         # where the path must start (the top of a circle); None = the usual start point
 
 
 @dataclass
@@ -165,6 +166,35 @@ def _lowleft_start(src, ccw: bool, r: float, toward_left: bool):
             nx, ny = (-ey, ex) if toward_left else (ey, -ex)
             return (v[0] + r * nx, v[1] + r * ny)
     return v
+
+
+def _circle_of(ring):
+    """(cx, cy, R) when the closed ring is a circle cut into many equal straight pieces (all its vertices on one circle, evenly
+    spaced), else None. A circular hole is stored like this in a layout; the true circle is what the tool should follow."""
+    pts = [tuple(p) for p in ring]
+    if len(pts) > 1 and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    n = len(pts)
+    if n < 12:
+        return None
+    cx, cy = sum(p[0] for p in pts) / n, sum(p[1] for p in pts) / n
+    rs = [math.hypot(p[0] - cx, p[1] - cy) for p in pts]
+    R = sum(rs) / n
+    if R < 1e-6 or max(abs(r - R) for r in rs) > 0.002 + 1e-4 * R:
+        return None
+    ang = sorted(math.atan2(p[1] - cy, p[0] - cx) for p in pts)
+    gaps = [b - a for a, b in zip(ang, ang[1:])] + [ang[0] + 2 * math.pi - ang[-1]]
+    if max(gaps) > 1.5 * (2 * math.pi / n):
+        return None
+    return cx, cy, R
+
+
+def _circle_ring(cx: float, cy: float, r: float, tol: float):
+    """A counter-clockwise ring of equal straight pieces around the circle, starting at its top, at most `tol` from the circle."""
+    k = max(4, math.ceil(2 * math.pi / _max_arc_step(r, tol) - ARC_COUNT_SLACK))
+    pts = [(cx + r * math.cos(math.pi / 2 + 2 * math.pi * j / k), cy + r * math.sin(math.pi / 2 + 2 * math.pi * j / k)) for j in range(k)]
+    pts[0] = (cx, cy + r)
+    return pts + [pts[0]]
 
 
 def _max_arc_step(r: float, tol: float) -> float:
@@ -293,6 +323,13 @@ def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spaci
                     too_small.append(name)
                     plan.skipped += 1
                     continue
+                circle = _circle_of(hole.coords) if arc_tol else None
+                if circle and circle[2] - ri > 1e-6:           # a round hole: the true circle of the tool centre, not the 32-gon
+                    hb = Polygon(hole).bounds
+                    path = _circle_ring(circle[0], circle[1], circle[2] - ri, arc_tol)
+                    inner.append(Contour("inner", name, path, job.inner_tool, list(hole.coords), ri,
+                                         (round(hb[0], 3), round(hb[1], 3)), path[0]))
+                    continue
                 for sp in ([shrunk] if shrunk.geom_type == "Polygon" else list(shrunk.geoms)):
                     hb = Polygon(hole).bounds
                     hpts = (_tool_path(list(hole.coords), ri, False, arc_tol, sp) if shrunk.geom_type == "Polygon"
@@ -319,14 +356,16 @@ def plan_sheet(sheet: dict, job: CamJob, tools: dict, margin: float = 0.0, spaci
     def finish(best, ccw_for_climb, pos):
         ccw = ccw_for_climb if job.climb else not ccw_for_climb
         ring = _orient(best.pts, ccw)
-        if start == "lowleft" and best.src:
+        if start == "lowleft" and best.start:
+            ring = _restart_at(ring, best.start)               # a circle starts at its top
+        elif start == "lowleft" and best.src:
             # outline: the tool runs outside the part, hole: inside the hole; the side is to the left of the travel direction
             # for a clockwise outline / counter-clockwise hole
             toward_left = (best.kind == "outer") != ccw
             ring = _restart_at(ring, _lowleft_start(best.src, ccw, best.radius, toward_left))
         else:
             ring = _start_near(ring, pos)
-        return Contour(best.kind, best.part, ring, best.tool, best.src, best.radius, best.key)
+        return Contour(best.kind, best.part, ring, best.tool, best.src, best.radius, best.key, best.start)
 
     if custom_order:
         rank = {cid: i for i, cid in enumerate(custom_order)}

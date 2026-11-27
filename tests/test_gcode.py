@@ -288,3 +288,44 @@ def test_the_header_date_and_time_are_canada_eastern_time():
     m = re.search(r"G-CODE TIME : (\d\d):(\d\d):(\d\d)", raw)
     now = post_fanuc.local_time()
     assert abs((int(m.group(1)) * 60 + int(m.group(2))) - (now.hour * 60 + now.minute)) <= 1 or abs(int(m.group(1)) - now.hour) in (0, 23)
+
+
+def _round_hole_sheet():
+    """A part 100 x 50 with a round hole R10 stored as a 32-gon (as in a layout), like the SolidCAM test part."""
+    c = (70.1367, 22.3454)
+    ring = [(c[0] + 10 * math.cos(2 * math.pi * i / 32 + math.pi), c[1] + 10 * math.sin(2 * math.pi * i / 32 + math.pi)) for i in range(32)]
+    g = box(0, 0, 100, 50).difference(__import__("shapely.geometry", fromlist=["Polygon"]).Polygon(ring))
+    return {"width": 150.0, "height": 80.0, "placements": [pl("Part2", g)]}
+
+
+def test_holes_and_outlines_are_two_operations_like_solidcam():
+    raw = gcode_cam.text("a.anc", _round_hole_sheet(), 1, {**TOOL, "holder": "ADAPTOR"}, DATA, LV, 15.0, operation="F-CONTOUR")
+    g = [x.rstrip() for x in raw.split("\r\n")]
+    ops = [g[i + 2] for i, x in enumerate(g) if x == "(              OPERATION INFORMATION             )"]
+    assert ops == ["(F-CONTOUR                                       )", "(F-CONTOUR1                                      )"]
+    assert [x for x in g if re.fullmatch(r"N\d+", x)] == ["N1", "N2"]
+    assert g.count("M6 T1") == 1 and g.count("M96 (BRUSHES DOWN)") == 1 and g.count("M97 (BRUSHES UP)") == 2
+    assert g.count("G05.1 Q1 R7 (AICC/AIAPC HIGH SPEED MODE ON)") == 2 and g.count("G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)") == 2
+    k = g.index("N2")
+    i = g.index("N1")
+    j = g.index("M97 (BRUSHES UP)")
+    assert g[j - 4:j + 1] == ["G0 Z45.", "G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)", "G0 G28 G91 Z0.", "G90", "M97 (BRUSHES UP)"]
+    assert g[k + 1:k + 4] == ["G56", "G0 C0.", "S10000 M3"]                  # no tool change in the second operation
+    assert i < j < k
+
+
+def test_a_round_hole_is_a_true_circle_that_starts_at_its_top_and_runs_counter_clockwise():
+    raw = gcode_cam.text("a.anc", _round_hole_sheet(), 1, TOOL, DATA, LV, 15.0, operation="F-CONTOUR")
+    g = [x.rstrip() for x in raw.split("\r\n")]
+    k = g.index("N1")
+    start = next(x for x in g[k:] if x.startswith("G94 G0 X"))
+    assert start == "G94 G0 X70.137 Y25.995"                                  # the top of the circle: centre + R10 - 6.35 = 3.65
+    pts, x, y = [], None, None
+    for line in g[g.index("M96 (BRUSHES DOWN)") + 1:g.index("G0 Z45.", k)]:
+        m = re.match(r"G1(?: X(\S+))?(?: Y(\S+))?", line)
+        x = float(m.group(1)) if m.group(1) else x
+        y = float(m.group(2)) if m.group(2) else y
+        pts.append((x, y))
+    assert len(pts) == 43                                                     # 43 pieces within 0.01 mm, as SolidCAM
+    assert all(abs(math.hypot(a - 70.1367, b - 22.3454) - 3.65) < 0.002 for a, b in pts)
+    assert pts[0][0] < 70.137 and pts[-1] == (70.137, 25.995)                 # first goes to the left: counter-clockwise (climb)
