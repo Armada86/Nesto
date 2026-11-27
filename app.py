@@ -425,7 +425,7 @@ with tab_table:
             st.caption("Sheet and nesting settings are saved with the run when you press Nest.")
             col_sheet, col_nest = st.columns(2)
             with col_sheet:
-                st.subheader("Sheet")
+                st.subheader("Sheet details")
                 sheet_w = st.number_input("Length", min_value=1.0, step=10.0, key="sheet_w",
                                           help="Sheet length: the horizontal side in the drawings.")
                 sheet_h = st.number_input("Width", min_value=1.0, step=10.0, key="sheet_h",
@@ -433,7 +433,7 @@ with tab_table:
                 margin = st.number_input("Edge margin", min_value=0.0, step=1.0, key="margin")
                 spacing = st.number_input("Part spacing (kerf)", min_value=0.0, step=0.5, key="spacing")
             with col_nest:
-                st.subheader("Nesting")
+                st.subheader("Nesting options")
                 rot_label = st.select_slider("Rotation step (irregular shapes)", list(ROT_STEPS), key="rot_label",
                                              help="Finer steps pack irregular shapes better but take longer. Steps below 15° first search with 15° and then fine-tune "
                                                   "the best layout with the finer angles around the angles it uses (this adds some time).")
@@ -716,7 +716,7 @@ def held_parts(result) -> list:
 
 
 with history_box:
-    st.subheader("History")
+    st.subheader("Nesting history")
     runs = db.list_runs(pid)
     labels = {f"#{r['id']} · {r['sheets']} sheets · {r['utilization']:.2%}"
               + (f" · {fmt_time(r.get('seconds'))}" if r.get("seconds") is not None else ""): r["id"] for r in runs}
