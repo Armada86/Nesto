@@ -288,3 +288,19 @@ def test_the_nesting_tab_titles(fake_db):
     titles = [s.value for s in at.subheader]
     assert {"Nesting history", "Sheet details", "Nesting options"} <= set(titles)
     assert not {"History", "Sheet", "Nesting"} & set(titles)
+
+
+def test_cam_options_opens_a_screen_with_the_tool_library_and_goes_back(fake_db):
+    from streamlit.testing.v1 import AppTest
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["pid"] = 1
+    at.run()
+    assert not at.exception
+    next(b for b in at.button if b.key == "cam_options_btn").click().run()      # the button is there also before any run is loaded
+    assert not at.exception
+    assert any(s.value == "CAM options" for s in at.subheader)
+    assert any(b.key == "tools_new" for b in at.button)                           # the tool library: create, change, delete tools
+    assert not any(b.key == "cam_options_btn" for b in at.button)
+    next(b for b in at.button if b.key == "cam_options_back").click().run()
+    assert not at.exception and any(b.key == "cam_options_btn" for b in at.button)
+    assert not any(b.key == "tools_new" for b in at.button)

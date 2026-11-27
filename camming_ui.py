@@ -410,6 +410,10 @@ def order_editor(db, pid, sheet_no: int, ch: list, saved_ids: list):
 
 
 def camming_tab(db, pid, result, project: str = "", meta: dict | None = None, run_id=None, file_base: str = "nest"):
-    """The NestoCAM tab: the operations of the current run; an open operation shows its five steps."""
+    """The NestoCAM tab: the operations of the current run (an open operation shows its five steps), or the CAM options screen."""
     from operations_ui import operations_tab
+    if st.session_state.get("cam_options_open"):
+        from cam_options_ui import cam_options_page
+        cam_options_page(db)
+        return
     operations_tab(db, pid, result, project, meta, run_id)
