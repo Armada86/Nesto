@@ -269,6 +269,5 @@ def test_deleting_a_part_in_parts_details_asks_first(fake_db):
     at.session_state["pid"] = 1
     at.run()
     assert not at.exception
-    next(b for b in at.button if b.key == "lib_btn_1").click().run()             # choose part b
-    next(b for b in at.button if b.key == "lib_delete").click().run()            # the question comes first: nothing is deleted yet
+    next(b for b in at.button if b.key == "lib_del_1").click().run()             # the bin beside part b in the list            # the question comes first: nothing is deleted yet
     assert not saved and any("Delete **b**" in w.value for w in at.warning)
