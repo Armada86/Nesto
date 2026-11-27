@@ -483,8 +483,10 @@ with tab_lib:
         left, right = st.columns([2, 3])
         with left:
             q = st.text_input("Search parts", placeholder="Search parts…", label_visibility="collapsed", key="lib_search")
-            with st.container(height=560, border=True):
-                shown = [i for i, p in enumerate(current) if q.strip().lower() in p["name"].lower()]
+            shown = [i for i, p in enumerate(current) if q.strip().lower() in p["name"].lower()]
+            # the box is as high as its parts (a button row is about 3.5 rem), at most 10 rows: more parts scroll; it can be pulled taller
+            rows = min(max(len(shown), 1), 10)
+            with st.container(height=int(rows * 56 + 22), border=True, key="lib_list"):
                 if not shown:
                     st.caption("No part matches.")
                 for i in shown:
@@ -551,6 +553,8 @@ with tab_table:
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] { background: #fff !important; border: 2px solid #2b8a3e !important;
     box-shadow: 0 2px 6px rgba(15,23,42,.15); }
 [data-testid="stTabs"] [role="tab"][aria-selected="true"] p { font-weight: 600; }
+/* the parts list of the Parts details tab can be pulled taller (the corner at its bottom right) */
+.st-key-lib_list { resize: vertical; overflow: auto !important; min-height: 4.5rem; }
 /* light blue export buttons */
 [class*="st-key-dl_"] button { background-color: #dbeafe !important; border: 1px solid #93c5fd !important; color: #1e3a8a !important; }
 [class*="st-key-dl_"] button p { color: #1e3a8a !important; }
