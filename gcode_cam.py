@@ -14,10 +14,13 @@ is listed in ASSUMPTIONS, so it is easy to see what is still missing when the re
 from __future__ import annotations
 
 
+import math
+
 import cam
 import machine_profile as machine
 import post_fanuc
 
+DRILL_TOLERANCE = 0.05     # mm: a round hole is drilled when its diameter is this close to the diameter of a drill
 ARC_TOLERANCE = 0.01       # mm: the largest distance of a straight piece from the true arc (as SolidCAM: a quarter circle of R6.35 has 14 pieces)
 
 ASSUMPTIONS = [
@@ -75,9 +78,12 @@ def problems(t: dict | None, data: dict, lv: dict) -> list[str]:
     return out
 
 
-def warnings(t: dict, lv: dict) -> list[str]:
+def warnings(t: dict, lv: dict, drilling: bool = False) -> list[str]:
     w = []
-    if str(t.get("tool_type") or "END MILL").upper() != "END MILL":
+    if drilling:
+        if str(t.get("tool_type") or "").upper() != "DRILL":
+            w.append(f"T{int(t['number'])} is not a drill: this operation drills holes, choose a drill in step 2.")
+    elif str(t.get("tool_type") or "END MILL").upper() != "END MILL":
         w.append(f"T{int(t['number'])} is a {str(t.get('tool_type')).lower()}. The G-code of this step mills the holes and outlines "
                  "along their contours, which needs an end mill: choose an end mill in step 2.")
     if lv["depth"] > float(t["cutting_length"]) + 1e-9:
@@ -87,13 +93,61 @@ def warnings(t: dict, lv: dict) -> list[str]:
     return w
 
 
+def drill_contours(sheet: dict, ids, tool: cam.Tool, order_ids: list | None = None) -> list:
+    """The holes of an operation that drills, as contours (the ring of the hole, for the picture and the counts), in drilling order:
+    the order that was set (order_ids), else from left to right. Only round holes can be drilled."""
+    by_id = {c["id"]: c for c in cam.scan_contours(sheet) if c["kind"] == "inner" and c["circle"]}
+    wanted = [i for i in (ids or []) if i in by_id]
+    rank = {cid: n for n, cid in enumerate(order_ids or [])}
+    wanted.sort(key=lambda i: (rank.get(i, len(rank)), by_id[i]["key"]))
+    out = []
+    for cid in wanted:
+        c = by_id[cid]
+        cx, cy, _r = c["circle"]
+        r = tool.diameter / 2
+        ring = [(cx + r * math.cos(2 * math.pi * k / 48), cy + r * math.sin(2 * math.pi * k / 48)) for k in range(48)]
+        out.append((cam.Contour("inner", c["part"], ring + [ring[0]], tool.number, c["ring"], r, c["key"]), (cx, cy)))
+    return out
+
+
+def drill_moves(holes: list, tool: cam.Tool, data: dict, lv: dict, extra: float = 0.0, peck: float = 0.0) -> list:
+    """The moves of a drilling operation: rapid to the first hole at the clearance level, then one canned cycle per hole (G81, or the
+    peck drilling G83 when a peck depth is given): R plane = upper level + safety distance, bottom = upper level - profile depth - extra."""
+    if not holes:
+        return []
+    code = "G83" if peck > 0 else "G81"
+    r_plane = lv["upper"] + lv["safety"]
+    z_bot = lv["upper"] - lv["depth"] - extra
+    x0, y0 = holes[0][1]
+    return [("G0", x0, y0, lv["clearance"], None)] + [(code, cx, cy, z_bot, data["feed_z"], r_plane, peck) for _c, (cx, cy) in holes]
+
+
 def build(sheet: dict, t: dict, data: dict, lv: dict, thickness: float, margin: float = 0.0, spacing: float = 0.0,
-          order_ids: list | None = None):
-    """(plan, groups, tool) for one sheet; groups as post_fanuc.program wants them."""
+          order_ids: list | None = None, contours: list | None = None, drill: dict | None = None):
+    """(plan, groups, tool, job) for one sheet; groups as post_fanuc.program wants them.
+    contours: only these contours (contour ids) are cut (None = all). drill: {"extra", "peck"} makes it a drilling operation: the
+    contours are round holes that are drilled with canned cycles."""
     tool = tool_from_row(t, data)
     job = cam.CamJob(thickness=thickness, inner_tool=tool.number, outer_tool=tool.number, climb=(data["direction"] == "CW"))
+    if drill is not None:
+        holes = drill_contours(sheet, contours, tool, order_ids)
+        plan = cam.Plan(contours=[c for c, _p in holes])
+        if len(holes) < len(contours or []):
+            plan.warnings.append(f"{len(contours) - len(holes)} hole(s) of this operation are not (round) holes on this sheet any more.")
+        moves = drill_moves(holes, tool, data, lv, float(drill.get("extra") or 0.0), float(drill.get("peck") or 0.0))
+        return plan, ([(tool, moves)] if moves else []), tool, job
     plan = cam.plan_sheet(sheet, job, {tool.number: tool}, margin, spacing, start="lowleft", order="left_right", arc_tol=ARC_TOLERANCE,
                           custom_order=order_ids)
+    if contours is not None:                                  # an operation of a few contours: the warnings of the others do not count
+        wanted = set(contours)
+        plan.contours = [c for c in plan.contours if cam.contour_id(c.kind, c.key) in wanted]
+        kinds = {c.kind for c in plan.contours}
+        plan.warnings = [w for w in plan.warnings
+                         if not (("outline(s)" in w or "edge margin" in w) and "outer" not in kinds)
+                         and not ("hole(s) are smaller" in w and "inner" not in kinds)]
+        if len(plan.contours) < len(wanted):
+            plan.warnings.append(f"{len(wanted) - len(plan.contours)} contour(s) of this operation are not on this sheet any more or are "
+                                 "too small for the tool.")
     groups, kind = [], None                       # an operation for every run of holes or of outlines (<operation>-HOLES, <operation>-CONTOUR)
     for c in plan.contours:
         if c.kind != kind:
@@ -119,12 +173,43 @@ def operation_names(plan: cam.Plan, operation: str | None = None) -> list[str]:
 
 
 def text(name: str, sheet: dict, sheet_no: int, t: dict, data: dict, lv: dict, thickness: float, project: str = "", run_no=None,
-         margin: float = 0.0, spacing: float = 0.0, operation: str | None = None, order_ids: list | None = None) -> str:
-    plan, groups, _tool, job = build(sheet, t, data, lv, thickness, margin, spacing, order_ids)
+         margin: float = 0.0, spacing: float = 0.0, operation: str | None = None, order_ids: list | None = None,
+         contours: list | None = None, drill: dict | None = None) -> str:
+    plan, groups, _tool, job = build(sheet, t, data, lv, thickness, margin, spacing, order_ids, contours, drill)
     length = sum(cam._ring_length(c.pts) for c in plan.contours)
     minutes = cam.estimate_minutes(groups) if groups else 0.0
     note = (f"WORK OFFSET G{machine.WORK_OFFSET}: ZERO AT THE LOWER LEFT CORNER OF THE SHEET, Z0 = BOTTOM OF THE PARTS, "
             f"TOP OF THE MATERIAL Z{lv['upper']:g}")
+    if contours is not None or drill is not None:             # an operation of its own (AutoCam): its name is the operation box
+        names = [operation or "OPERATION"] + [f"{operation or 'OPERATION'}{i}" for i in range(1, len(groups))]
+    else:
+        names = operation_names(plan, operation)
     return post_fanuc.program(name, groups, job, sheet_no, (sheet["width"], sheet["height"]), project, run_no,
                               {"length": length, "minutes": minutes}, z0_note=note, spin="M3" if data["direction"] == "CW" else "M4", operation=operation, solidcam=True,
-                              op_names=operation_names(plan, operation))
+                              op_names=names)
+
+
+def sheet_program(name: str, sheet: dict, sheet_no: int, ops: list, thickness: float, project: str = "", run_no=None,
+                  margin: float = 0.0, spacing: float = 0.0):
+    """ONE program for a sheet from several operations (AutoCam): ops = [{"name", "tool" (a tool row), "data", "lv", "contours",
+    "drill" ({"extra", "peck"} or None), "order"}], in cutting order. Every operation has its own boxes and N block; a tool change
+    is written where the tool is not the one of the operation before. Returns (text, plans)."""
+    groups, names, plans, length = [], [], [], 0.0
+    job = None
+    for op in ops:
+        plan, grp, _tool, j = build(sheet, op["tool"], op["data"], op["lv"], thickness, margin, spacing, op.get("order"), op["contours"], op.get("drill"))
+        job = job or j
+        plans.append(plan)
+        length += sum(cam._ring_length(c.pts) for c in plan.contours)
+        for k, g_ in enumerate(grp):
+            groups.append(g_)
+            names.append(op["name"] if k == 0 else f"{op['name']}{k}")
+    if not groups:
+        return "", plans
+    first_lv, first_data = ops[0]["lv"], ops[0]["data"]
+    minutes = cam.estimate_minutes(groups)
+    note = (f"WORK OFFSET G{machine.WORK_OFFSET}: ZERO AT THE LOWER LEFT CORNER OF THE SHEET, Z0 = BOTTOM OF THE PARTS, "
+            f"TOP OF THE MATERIAL Z{first_lv['upper']:g}")
+    return post_fanuc.program(name, groups, job, sheet_no, (sheet["width"], sheet["height"]), project, run_no,
+                              {"length": length, "minutes": minutes}, z0_note=note, spin="M3" if first_data["direction"] == "CW" else "M4",
+                              operation=ops[0]["name"], solidcam=True, op_names=names), plans

@@ -323,6 +323,10 @@ def step_geometry(db, pid, result):
         st.warning(f"{len(held)} part(s) are in the hold area and are not part of the geometry: {', '.join(held)}")
     n_out = sum(1 for c in ch if c["type"] == "Outline")
     st.metric("Outlines", n_out)
+    only = _saved(db, pid).get("contours")
+    if only is not None:                                      # an operation made by AutoCam cuts a part of the sheet
+        what = {"drill": "drills", "hole": "mills the holes", "outline": "mills the outlines"}.get(_saved(db, pid).get("kind"), "cuts")
+        st.info(f"This operation was made by AutoCam: it {what} - {len(only)} of the {len(ch)} contours of this sheet.")
     ss = st.session_state
     saved_ids = full_order(ch, saved_order(db, pid, sheet_no))        # the order that is saved (the plan view shows it)
     by_id = {c["id"]: c for c in ch}
@@ -415,5 +419,9 @@ def camming_tab(db, pid, result, project: str = "", meta: dict | None = None, ru
     if st.session_state.get("cam_options_open"):
         from cam_options_ui import cam_options_page
         cam_options_page(db)
+        return
+    if st.session_state.get("autocam_open"):
+        from autocam_ui import autocam_page
+        autocam_page(db, pid, result, project, meta, run_id)
         return
     operations_tab(db, pid, result, project, meta, run_id)

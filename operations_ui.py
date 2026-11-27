@@ -65,11 +65,17 @@ def _open_cam_options():
     st.session_state.cam_options_open = True
 
 
+def _open_autocam():
+    st.session_state.autocam_open = True
+
+
 def operations_tab(db, pid, result, project: str = "", meta: dict | None = None, run_id=None):
     ss = st.session_state
     if not run_id:
-        st.button("⚙ CAM options", on_click=_open_cam_options, key="cam_options_btn",
-                  help="Settings for all CAM operations: the tool library.")
+        b1, b2, _ = st.columns([1.5, 1.6, 4.9])
+        b1.button("🤖 AutoCam", on_click=_open_autocam, key="autocam_btn", width="stretch")
+        b2.button("⚙ CAM options", on_click=_open_cam_options, key="cam_options_btn", width="stretch",
+                  help="Settings for all CAM operations: the tool library and the cutting data.")
         st.info("Nest first, or load a run: the operations belong to a stored run.")
         return
     if ss.get("ops_run") != run_id:                       # another run: nothing is open
@@ -139,11 +145,13 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
     opened = ss.get("ops_sel") is not None
     creating = bool(ss.get("ops_creating")) and not opened
     ss.ops_creating = creating
-    cbtn, obtn, _ = st.columns([1.9, 1.6, 4.5])
+    cbtn, abtn, obtn, _ = st.columns([1.9, 1.5, 1.6, 3.0])
     cbtn.button("➕ Create operation", on_click=_start_create, key="ops_new", type="primary", width="stretch", disabled=opened or creating,
                 help="Close the open operation first." if opened else None)
+    abtn.button("🤖 AutoCam", on_click=_open_autocam, key="autocam_btn", width="stretch",
+                help="Finds the holes and outlines of a sheet, chooses the tools, makes the operations and the G-code by itself.")
     obtn.button("⚙ CAM options", on_click=_open_cam_options, key="cam_options_btn", width="stretch",
-                help="Settings for all CAM operations: the tool library (create, change and delete tools).")
+                help="Settings for all CAM operations: the tool library (create, change and delete tools) and the cutting data.")
     if creating:                                              # the name box only appears after the button is pressed
         left, _ = st.columns([3, 5])
         with left.form("ops_new_form", border=False):

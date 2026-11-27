@@ -9,6 +9,9 @@ from zoneinfo import ZoneInfo
 import machine_profile as machine
 
 
+CYCLES = ("G81", "G83")          # drilling cycles: a move (code, x, y, z bottom, feed, r plane, peck)
+
+
 def local_time(now: datetime.datetime | None = None) -> datetime.datetime:
     """The time in the time zone of the machine shop (the server clock is UTC): `now` (a time with a zone, default the current time)."""
     return (now or datetime.datetime.now(datetime.timezone.utc)).astimezone(ZoneInfo(machine.TIMEZONE))
@@ -112,6 +115,8 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
         # @rapid_move of the first move: work offset, tool call, C axis, spindle, first position, smoothing, coolant, length offset
         w.block(f"G{machine.WORK_OFFSET}")
         if not solidcam or first or tool.number != last_tool:      # the next operation with the same tool has no tool change
+            if not first:
+                w.block("M5")                                      # the spindle stops before another tool is called
             w.block(f"M6 T{tool.number}")
         last_tool = tool.number
         w.block("G0 C0.")
@@ -125,20 +130,40 @@ def program(name: str, groups: list, job, sheet_no: int, sheet_size: tuple, proj
             w.block("G94")
             w.block("G0 X" + num(first_move[1]) + " Y" + num(first_move[2]))
         w.pos["X"], w.pos["Y"] = first_move[1], first_move[2]
-        if job.smoothing:
+        drilling = len(moves) > 1 and moves[1][0] in CYCLES                 # a drilling operation: canned cycles, no smoothing
+        if job.smoothing and not drilling:
             w.block(f"G05.1 Q1 R{num(job.smoothing).rstrip('.')} (AICC/AIAPC HIGH SPEED MODE ON)")
         if tool.coolant != "none":
             w.block("M8" if tool.coolant == "flood" else "M14")
             w.coolant_on = tool.coolant
         w.block(f"G0 G43 H{tool.number} Z" + num(first_move[3]))
         w.pos["Z"] = first_move[3]
-        for code, x, y, z, f in moves[1:]:
+        cycle = None                                                 # the canned cycle that is on (G81 / G83), if any
+        for mv in moves[1:]:
+            code, x, y, z, f = mv[:5]
+            if code in CYCLES:                                       # a hole: G98 G81 X.. Y.. Z.. R.. F.. then only X.. Y.. for the next holes
+                if brushes and not brush_down:
+                    w.block("M96 (BRUSHES DOWN)")
+                    brush_down = True
+                r, q = mv[5], mv[6]
+                if cycle != (code, z, r, q, f):
+                    parts = [f"G98 {code}", "X" + num(x), "Y" + num(y), "Z" + num(z), "R" + num(r)]
+                    if code == "G83":
+                        parts.append("Q" + num(q))
+                    parts.append("F" + num(f))
+                    w.block(" ".join(parts))
+                    cycle = (code, z, r, q, f)
+                else:
+                    w.block(f"X{num(x)} Y{num(y)}")
+                continue
             w.move(code, x, y, z, f)
             if brushes and code == "G1" and not brush_down:          # @line of the post: brushes down after the first cutting move
                 w.block("M96 (BRUSHES DOWN)")
                 brush_down = True
+        if cycle:
+            w.block("G80")                                           # the canned cycle is cancelled
         # @end_of_job
-        if job.smoothing:
+        if job.smoothing and not drilling:
             w.block("G05.1 Q0 (AICC/AIAPC HIGH SPEED MODE OFF)")
         w.safe_position()
         if brush_down:

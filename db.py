@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS cam_tools (
 );
 ALTER TABLE nest_runs ADD COLUMN IF NOT EXISTS options JSONB;
 CREATE TABLE IF NOT EXISTS app_migrations (name TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS app_settings (name TEXT PRIMARY KEY, value JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS nesto_tools (
     number INT PRIMARY KEY,
     tool_type TEXT NOT NULL DEFAULT 'END MILL',
@@ -311,6 +312,25 @@ def rename_operation(op_id: int, name: str):
                              (row["run_id"], name, op_id)).fetchone():
             raise ValueError(f"This run already has an operation called {name}.")
         c.execute("UPDATE cam_operations SET name=%s WHERE id=%s", (name, op_id))
+
+
+def get_app_setting(name: str):
+    """A setting of the whole app (not of a project): its value, or None."""
+    with connect() as c:
+        row = c.execute("SELECT value FROM app_settings WHERE name=%s", (name,)).fetchone()
+        return row["value"] if row else None
+
+
+def save_app_setting(name: str, value):
+    with connect() as c:
+        c.execute("INSERT INTO app_settings(name, value) VALUES (%s,%s) ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value",
+                  (name, json.dumps(value)))
+
+
+def delete_autocam_operations(run_id: int, sheet_no: int) -> int:
+    """Delete the operations that AutoCam made for this sheet of the run (the operations made by hand stay). Returns how many."""
+    with connect() as c:
+        return c.execute("DELETE FROM cam_operations WHERE run_id=%s AND settings->>'autocam_sheet' = %s", (run_id, str(int(sheet_no)))).rowcount
 
 
 def delete_operation(op_id: int):

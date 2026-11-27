@@ -26,7 +26,9 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
         st.error(f"Could not read the tools: {e}")
         return
     data, lv = get_data(db, pid), get_levels(db, pid, thk)
-    sheet_no = int((db.get_cam(pid) or {}).get("camming", {}).get("sheet", 1))
+    cam_set = (db.get_cam(pid) or {}).get("camming", {})
+    sheet_no = int(cam_set.get("sheet", 1))
+    only, drill = cam_set.get("contours"), cam_set.get("drill")          # an operation made by AutoCam cuts only some contours (or drills them)
     meta = meta or {}
     margin, spacing = float(meta.get("margin", 0.0)), float(meta.get("spacing", 0.0))
 
@@ -36,6 +38,8 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
             ("Spin (step 3)", f"{data['rpm']:g} rpm {data['direction']}"),
             ("Clearance level / safety distance (step 4)", f"{lv['clearance']:g} / {lv['safety']:g}"),
             ("Upper level / profile depth (step 4)", f"{lv['upper']:g} / {lv['depth']:g}")]
+    if only is not None:
+        rows.insert(1, ("Contours (AutoCam)", f"{len(only)} {'holes drilled' if drill is not None else 'contours of the sheet'}"))
     st.dataframe(pd.DataFrame(rows, columns=["Information", "Value"]), hide_index=True, width="content")
     with st.expander("What the steps do not say (assumed by this G-code)"):
         for a in gcode_cam.ASSUMPTIONS:
@@ -49,7 +53,7 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
     if not result:
         st.info("Nest first: the G-code is made from the sheets of the current run.")
         return
-    for w in gcode_cam.warnings(tool, lv):
+    for w in gcode_cam.warnings(tool, lv, drilling=drill is not None):
         st.warning(w)
     if not 1 <= sheet_no <= len(result):
         st.error(f"The sheet of this operation (sheet {sheet_no}) is not in this run. Choose a sheet in step 1.")
@@ -59,7 +63,7 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
         st.warning(f"{len(held)} part(s) are in the hold area and are not machined: {', '.join(held)}")
     sheet = result[sheet_no - 1]
     order_ids = saved_order(db, pid, sheet_no)
-    plan, groups, _t, _job = gcode_cam.build(sheet, tool, data, lv, thk, margin, spacing, order_ids)
+    plan, groups, _t, _job = gcode_cam.build(sheet, tool, data, lv, thk, margin, spacing, order_ids, only, drill)
     for w in plan.warnings:
         st.warning(w)
     if not plan.contours:
@@ -69,7 +73,7 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
     length = sum(cam._ring_length(c.pts) for c in plan.contours)
     minutes = cam.estimate_minutes(groups)
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Holes", sum(1 for c in plan.contours if c.kind == "inner"), help="The holes of the parts on this sheet.")
+    m1.metric("Holes", sum(1 for c in plan.contours if c.kind == "inner"), help="The holes of this operation." if only is not None else "The holes of the parts on this sheet.")
     m2.metric("Contours", sum(1 for c in plan.contours if c.kind == "outer"), help="The outlines of the parts on this sheet.")
     m3.metric("Cutting length", f"{length:,.0f}", help="One pass around every hole and outline (the tool centre path), in mm.")
     m4.metric("Estimated time", cam.duration_text(minutes))
@@ -79,7 +83,7 @@ def step_gcode(db, pid, result, operation: str, project: str = "", meta: dict | 
     plt.close(fig)
 
     name = f"{file_stem(project)}-Run{run_id}-Sheet{sheet_no}-{file_stem(operation)}.{ext}"      # project - run - sheet - operation
-    gtext = gcode_cam.text(name, sheet, sheet_no, tool, data, lv, thk, project, run_id, margin, spacing, operation, order_ids)
+    gtext = gcode_cam.text(name, sheet, sheet_no, tool, data, lv, thk, project, run_id, margin, spacing, operation, order_ids, only, drill)
     shown = gtext.replace("\r\n", "\n")                       # the file has CR LF line ends; the page shows normal lines
     with st.expander(f"G-code of {name} ({len(shown.splitlines()):,} lines)", expanded=False):      # hidden until it is opened
         st.code(shown, language=None, height=600)               # the whole text, in a box that scrolls
