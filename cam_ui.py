@@ -72,8 +72,11 @@ def _preview(sheet: dict, plan: cam.Plan):
         ax.plot(xs, ys, color="#2563eb" if c.kind == "inner" else "#dc2626", lw=0.9)
         ax.plot([xs[0]], [ys[0]], "o", color="#16a34a", ms=3)
     ax.set_aspect("equal")
-    ax.set_xlim(-0.02 * sheet["width"], sheet["width"] * 1.02)
-    ax.set_ylim(-0.02 * sheet["height"], sheet["height"] * 1.02)
+    xs_all = [0.0, sheet["width"]] + [x for c in plan.contours for x, _ in c.pts]       # the sheet and every toolpath are in the picture
+    ys_all = [0.0, sheet["height"]] + [y for c in plan.contours for _, y in c.pts]
+    pad = 0.02 * max(sheet["width"], sheet["height"])
+    ax.set_xlim(min(xs_all) - pad, max(xs_all) + pad)
+    ax.set_ylim(min(ys_all) - pad, max(ys_all) + pad)
     return fig
 
 
