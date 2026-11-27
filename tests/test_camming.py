@@ -370,6 +370,7 @@ def test_a_new_tool_asks_for_its_type_first_and_a_drill_has_its_own_parameters()
         next(b for b in at.button if b.key == "tools_type_ok").click().run()
         keys = {n.key for n in at.number_input}
         assert "tl_point_angle" in keys and "tl_chamfer" not in keys           # a drill has the angle (A), not the chamfer
+        assert not [x for x in at.text_input if x.key == "tl_holder"]          # a tool record has no holder
         assert at.number_input(key="tl_point_angle").value == 118.0 and at.number_input(key="tl_diameter").value == 6.0
         assert at.selectbox(key="tl_tool_type").value == "DRILL" and at.selectbox(key="tl_tool_type").disabled   # fixed after the choice
         at.text_input(key="tl_name").set_value('1/4" DRILL')
