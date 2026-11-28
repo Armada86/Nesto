@@ -29,6 +29,26 @@ def validate(d: dict) -> list[str]:
     return p
 
 
+def save_data(db, pid) -> list[str]:
+    """Save the values of the boxes of this step with the operation. Returns what is wrong (nothing is saved then); [] when it is saved
+    or the step was not drawn (nothing to save)."""
+    ss = st.session_state
+    if any(PREFIX + k not in ss for k in DEFAULTS):
+        return []
+    d = {k: ss[PREFIX + k] for k in DEFAULTS}
+    d = {**d, **{k: float(d[k]) for k in DEFAULTS if k != "direction"}}
+    problems = validate(d)
+    if problems:
+        return problems
+    try:
+        cam = db.get_cam(pid) or {}
+        cam["camming"] = {**cam.get("camming", {}), "data": d}
+        db.save_cam(pid, cam)
+    except Exception as e:  # noqa: BLE001
+        return [f"Could not save: {e}"]
+    return []
+
+
 def step_data(db, pid):
     st.caption("The cutting data used for the toolpaths of this operation. It is saved with the operation.")
     ss = st.session_state
@@ -41,34 +61,23 @@ def step_data(db, pid):
         ss.setdefault(PREFIX + k, v)
 
     def _save():
-        d = {k: ss[PREFIX + k] for k in DEFAULTS}
-        d = {**d, **{k: float(d[k]) for k in DEFAULTS if k != "direction"}}
-        problems = validate(d)
-        if problems:
-            ss.data_problems = problems
-            return
-        try:
-            cam = db.get_cam(pid) or {}
-            cam["camming"] = {**cam.get("camming", {}), "data": d}
-            db.save_cam(pid, cam)
-        except Exception as e:  # noqa: BLE001
-            ss.data_problems = [f"Could not save: {e}"]
-            return
-        ss.data_problems = []
-        ss.data_msg = "Cutting data saved with the operation."
+        problems = save_data(db, pid)
+        ss.data_problems = problems
+        if not problems:
+            ss.data_msg = "Cutting data saved with the operation."
 
     msg = ss.pop("data_msg", None)
     if msg:
         st.toast(msg, icon=":material/check_circle:")
     col, _ = st.columns([1, 3])                              # one narrow list on the left
-    with col, st.form("data_form", border=False):           # nothing is sent until Save data: typing never reruns the page
-        st.number_input("Feed XY [mm/min]", min_value=0.0, step=50.0, format="%.0f", key=PREFIX + "feed_xy",
+    with col:    # typing does not make the page react (on_change="ignore"); the numbers are read when a Save button is pressed
+        st.number_input("Feed XY [mm/min]", min_value=0.0, step=50.0, format="%.0f", key=PREFIX + "feed_xy", on_change="ignore",
                         help="Cutting feed rate in the XY plane.")
-        st.number_input("Feed Z [mm/min]", min_value=0.0, step=10.0, format="%.0f", key=PREFIX + "feed_z",
+        st.number_input("Feed Z [mm/min]", min_value=0.0, step=10.0, format="%.0f", key=PREFIX + "feed_z", on_change="ignore",
                         help="Feed rate of the plunge in Z.")
-        st.number_input("Spin rate [rpm]", min_value=0.0, max_value=MAX_RPM, step=100.0, format="%.0f", key=PREFIX + "rpm",
+        st.number_input("Spin rate [rpm]", min_value=0.0, max_value=MAX_RPM, step=100.0, format="%.0f", key=PREFIX + "rpm", on_change="ignore",
                         help=f"Spindle speed. The spindle of the machine goes up to {MAX_RPM:g} rpm.")
-        st.radio("Spin direction", ["CW", "CCW"], horizontal=True, key=PREFIX + "direction")
+        st.radio("Spin direction", ["CW", "CCW"], horizontal=True, key=PREFIX + "direction", on_change="ignore")
         for p in ss.get("data_problems", []):
             st.error(p)
-        st.form_submit_button("Save", type="primary", on_click=_save, key="data_save")
+        st.button("Save", type="primary", on_click=_save, key="data_save")

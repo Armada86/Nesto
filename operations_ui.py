@@ -73,53 +73,35 @@ def moved_order(ids: list, sel, kind: str) -> list:
     return new
 
 
-@st.fragment
-def ops_order_editor(db, run_id, ops: list):
-    """The order of the operations of the run: click a row to select an operation (only this part of the page reacts), move it with the
-    buttons (the whole page is drawn again with the new order)."""
-    ss = st.session_state
-    ids = [o["id"] for o in ops]
-    ver = ss.setdefault("ops_move_ver", 0)                   # a new table key after every move: the table is drawn again, the row highlighted
-    state = ss.get(f"ops_ord_tbl_{ver}")
-    rows = tuple(state["selection"]["rows"]) if state else ()
-    if rows != ss.get("ops_ord_prev", ()):
-        ss.ops_ord_prev = rows
-        if rows and rows[0] < len(ids):
-            ss.ops_move_sel = ids[rows[0]]
-    if ss.get("ops_move_sel") not in ids:
-        ss.ops_move_sel = None
-    sel = ss.ops_move_sel
-    st.caption("Click a row to select an operation, then move it with the buttons. The order is saved at once.")
-    with st.container(key="ops_order_btns"):
-        b1, b2, b3, b4 = st.columns(4)
-    pressed = None
-    for col, kind, label in ((b1, "up", "▲ Up"), (b2, "down", "▼ Down"), (b3, "first", "⤒ First"), (b4, "last", "⤓ Last")):
-        if col.button(label, key=f"ops_move_{kind}", width="stretch", disabled=sel is None):
-            pressed = kind
-    if pressed:
-        try:
-            db.set_operation_order(run_id, moved_order(ids, sel, pressed))
-        except Exception as e:  # noqa: BLE001
-            st.error(f"Could not change the order: {e}")
-            return
-        ss.ops_move_ver += 1
-        ss.ops_ord_prev = ()
-        ss.ops_sel, ss.ops_prev_rows = None, ()                # nothing is open any more: the rows of the list have other operations now
-        ss.ops_ver = ss.get("ops_ver", 0) + 1
-        st.rerun()                                           # the whole page: the list of the operations above has a new order
-    df = pd.DataFrame([{"No.": i, "Name": o["name"], "Sheet": (o["settings"] or {}).get("sheet", 1),
-                        "Tool": (f"T{o['settings']['tool']}" if (o["settings"] or {}).get("tool") else "")} for i, o in enumerate(ops, 1)])
-    hi = ids.index(sel) if sel in ids else -1
-    styled = df.style.apply(lambda r: ["background-color: #cfe9f7; color: #0f3d57; font-weight: 600"] * len(r) if r.name == hi else [""] * len(r), axis=1)
-    st.dataframe(styled, hide_index=True, width="content", on_select="rerun", selection_mode="single-row", key=f"ops_ord_tbl_{ver}")
-
-
 def _open_cam_options():
     st.session_state.cam_options_open = True
 
 
 def _open_autocam():
     st.session_state.autocam_open = True
+
+
+def save_operation(db, op: dict, result) -> list[str]:
+    """The Save of an open operation: the values of all its steps (levels, data, geometry) are written with the operation. Returns what is
+    wrong ([] = everything is saved). The tool is saved when it is chosen, so there is nothing to save in that step."""
+    from camming_ui import save_geometry
+    from data_ui import save_data
+    from levels_ui import save_levels
+    odb, oid = OpDB(db, op["id"]), op["id"]
+    problems = save_levels(odb, oid) + save_data(odb, oid)          # the levels first: they follow the thickness that is saved last
+    if problems:
+        return problems
+    return save_geometry(odb, oid, result)
+
+
+def forget_edits():
+    """Drop what was typed in the steps of the operation that was open and not saved: the next operation (or this one again) is read
+    from what is saved."""
+    ss = st.session_state
+    for k in ("data_loaded_pid", "levels_loaded_pid", "camming_loaded_pid", "geo_work_base"):
+        ss[k] = None
+    for k in [k for k in ss if str(k).startswith(("dt_", "lv_", "geo_pick_")) or k in ("camming_thickness", "camming_sheet")]:
+        del ss[k]
 
 
 def operations_tab(db, pid, result, project: str = "", meta: dict | None = None, run_id=None):
@@ -131,16 +113,25 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
                   help="Settings for all CAM operations: the tool library and the cutting data.")
         st.info("Nest first, or load a run: the operations belong to a stored run.")
         return
-    if ss.get("ops_run") != run_id:                       # another run: nothing is open
-        ss.ops_run, ss.ops_sel, ss.ops_prev_rows, ss.ops_ver, ss.ops_msg = run_id, None, (), ss.get("ops_ver", 0) + 1, None
+    if ss.get("ops_run") != run_id:                       # another run: nothing is selected, open or being reordered
+        ss.ops_run, ss.ops_sel, ss.ops_open, ss.ops_reorder = run_id, None, None, False
+        ss.ops_prev_rows, ss.ops_ver, ss.ops_msg = (), ss.get("ops_ver", 0) + 1, None
     try:
         ops = [dict(r) for r in db.list_operations(run_id)]
     except Exception as e:  # noqa: BLE001
         st.error(f"Could not read the operations: {e}")
         return
     by_id = {o["id"]: o for o in ops}
-    if ss.get("ops_sel") not in by_id:
-        ss.ops_sel = None
+    ids = [o["id"] for o in ops]
+    for k in ("ops_sel", "ops_open"):
+        if ss.get(k) not in by_id:
+            ss[k] = None
+    if ss.get("ops_reorder") and (len(ops) < 2 or sorted(ss.get("ops_work") or []) != sorted(ids)):
+        ss.ops_reorder = False                             # the operations changed under the reordering: start again
+
+    def _clear_table():
+        ss.ops_ver = ss.get("ops_ver", 0) + 1
+        ss.ops_prev_rows = ()
 
     def _create():
         name = (ss.get("ops_new_name") or "").strip()
@@ -165,9 +156,9 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
         ss.ops_error = None
         ss.ops_new_name = ""
         ss.ops_creating = False
-        ss.ops_sel = new_id
-        ss.ops_ver += 1
-        ss.ops_prev_rows = ()
+        forget_edits()
+        ss.ops_sel, ss.ops_open = None, new_id               # the new operation is opened
+        _clear_table()
 
     def _start_create():
         ss.ops_creating = True
@@ -177,10 +168,28 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
         ss.ops_creating = False
         ss.ops_error = None
 
-    def _close():
-        ss.ops_sel = None
-        ss.ops_ver += 1
-        ss.ops_prev_rows = ()
+    def _open():
+        forget_edits()                                         # what is shown is what is saved
+        ss.ops_open, ss.ops_sel = ss.ops_sel, None
+        ss.ops_save_problems = []
+        _clear_table()
+
+    def _discard():                                            # close the operation without saving what was changed
+        forget_edits()
+        ss.ops_open = None
+        ss.ops_save_problems = []
+        _clear_table()
+
+    def _save_close():
+        problems = save_operation(db, by_id[ss.ops_open], result)
+        if problems:
+            ss.ops_save_problems = problems                    # the operation stays open
+            return
+        ss.ops_msg = f"Operation {by_id[ss.ops_open]['name']} saved."
+        forget_edits()
+        ss.ops_open = None
+        ss.ops_save_problems = []
+        _clear_table()
 
     def _rename():
         name = (ss.get("ops_rename") or "").strip()
@@ -199,16 +208,43 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
         except Exception as e:  # noqa: BLE001
             ss.ops_error = f"Could not delete: {e}"
             return
-        _close()
+        ss.ops_sel = None
+        _clear_table()
 
-    st.caption("An operation is one machining job (one sheet of this run). Create it, give it a name, then open it to define its "
-               "five steps. The G-code file gets the name of the operation.")
-    opened = ss.get("ops_sel") is not None
-    creating = bool(ss.get("ops_creating")) and not opened
+    def _start_reorder():
+        ss.ops_reorder, ss.ops_work, ss.ops_error = True, list(ids), None
+        _clear_table()
+
+    def _move(kind):
+        ss.ops_work = moved_order(ss.ops_work, ss.ops_sel, kind)
+        _clear_table()
+
+    def _save_order():
+        try:
+            db.set_operation_order(run_id, ss.ops_work)
+        except Exception as e:  # noqa: BLE001
+            ss.ops_error = f"Could not change the order: {e}"
+            return
+        ss.ops_reorder = False
+        ss.ops_msg = "The order of the operations is saved."
+        _clear_table()
+
+    def _cancel_order():
+        ss.ops_reorder = False
+        _clear_table()
+
+    msg = ss.pop("ops_msg", None)
+    if msg:
+        st.toast(msg, icon=":material/check_circle:")
+    st.caption("An operation is one machining job (one sheet of this run). Create it, give it a name, select it in the list and open it to "
+               "define its five steps. The G-code file gets the name of the operation.")
+    opened, reordering = ss.get("ops_open") is not None, bool(ss.get("ops_reorder"))
+    creating = bool(ss.get("ops_creating")) and not opened and not reordering
     ss.ops_creating = creating
     cbtn, abtn, obtn, _ = st.columns([1.9, 1.5, 1.6, 3.0])
-    cbtn.button("➕ Create operation", on_click=_start_create, key="ops_new", type="primary", width="stretch", disabled=opened or creating,
-                help="Close the open operation first." if opened else None)
+    cbtn.button("➕ Create operation", on_click=_start_create, key="ops_new", type="primary", width="stretch",
+                disabled=opened or creating or reordering,
+                help="Save or discard the open operation first." if opened else None)
     abtn.button("🤖 AutoCam", on_click=_open_autocam, key="autocam_btn", width="stretch",
                 help="Finds the holes and outlines of a sheet, chooses the tools, makes the operations and the G-code by itself.")
     obtn.button("⚙ CAM options", on_click=_open_cam_options, key="cam_options_btn", width="stretch",
@@ -227,36 +263,67 @@ def operations_tab(db, pid, result, project: str = "", meta: dict | None = None,
         st.info("No operations in this run yet.")
         return
     st.markdown("**Operations of this run**")
-    df = pd.DataFrame([{"No.": i, "Name": o["name"], "Sheet": (o["settings"] or {}).get("sheet", 1),
-                        "Tool": (f"T{o['settings']['tool']}" if (o["settings"] or {}).get("tool") else "")} for i, o in enumerate(ops, 1)])
-    tleft, _ = st.columns([3, 5])                          # the table is as wide as the three buttons below it, whatever the names
+    order = list(ss.ops_work) if reordering else ids
+    shown = [by_id[i] for i in order]
+    df = pd.DataFrame([{"No.": n, "Name": o["name"], "Sheet": (o["settings"] or {}).get("sheet", 1),
+                        "Tool": (f"T{o['settings']['tool']}" if (o["settings"] or {}).get("tool") else "")} for n, o in enumerate(shown, 1)])
+    tleft, _ = st.columns([5, 4])                          # the table is as wide as the buttons below it, whatever the names
     cfg = {"No.": st.column_config.NumberColumn(width=45), "Name": st.column_config.TextColumn(width=180),
            "Sheet": st.column_config.NumberColumn(width=55), "Tool": st.column_config.TextColumn(width=50)}     # long names are cut
-    ev = tleft.dataframe(df, hide_index=True, width="stretch", column_config=cfg, on_select="rerun", selection_mode="single-row",
-                         key=f"ops_table_{ss.ops_ver}")
-    rows = tuple(ev.selection.rows)
-    if rows != ss.ops_prev_rows:
-        ss.ops_prev_rows = rows
-        ss.ops_sel = ops[rows[0]]["id"] if rows else None
-        ss.ops_error = None
-        ss.ops_creating = False
-        st.rerun()
-    if len(ops) > 1:
-        with st.expander("Order of the operations (move an operation up or down)"):
-            ops_order_editor(db, run_id, ops)
-    if ss.ops_sel is None:
-        st.caption("Click an operation in the list to open it.")
+
+    def _highlight(hi):
+        return df.style.apply(lambda r: ["background-color: #cfe9f7; color: #0f3d57; font-weight: 600"] * len(r) if r.name == hi else [""] * len(r), axis=1)
+
+    if opened:                                             # the table only shows which operation is open
+        tleft.dataframe(_highlight(order.index(ss.ops_open) if ss.ops_open in order else -1), hide_index=True, width="stretch", column_config=cfg)
+    else:                                                  # ONE table: select an operation; the buttons below say what to do with it
+        data = _highlight(order.index(ss.ops_sel)) if (reordering and ss.ops_sel in order) else df
+        ev = tleft.dataframe(data, hide_index=True, width="stretch", column_config=cfg, on_select="rerun", selection_mode="single-row",
+                             key=f"ops_table_{ss.ops_ver}")
+        rows = tuple(ev.selection.rows)
+        if rows != ss.ops_prev_rows:
+            ss.ops_prev_rows = rows
+            if rows or not reordering:                     # (while reordering the chosen operation stays chosen when a click clears the row)
+                ss.ops_sel = order[rows[0]] if rows else None
+            ss.ops_error = None
+            ss.ops_creating = False
+            st.rerun()
+    bleft, _ = st.columns([5, 4])                          # right under the table, the same width as the table
+    sel = ss.ops_sel
+    if opened:
+        with bleft.container(key="ops_btns"):
+            b1, b2 = st.columns(2)
+        b1.button("Save", on_click=_save_close, key="ops_save", type="primary", width="stretch",
+                  help="Saves everything of this operation (its steps) and closes it.")
+        b2.button("Discard", on_click=_discard, key="ops_discard", width="stretch", help="Closes the operation without saving what you changed.")
+        for p in ss.get("ops_save_problems", []):
+            st.error(p)
+        op = by_id[ss.ops_open]
+        st.subheader(f"Operation: {op['name']}")
+        operation_view(db, op, result, project, meta, run_id)
         return
-    op = by_id[ss.ops_sel]
-    bleft, _ = st.columns([3, 5])                          # right under the table, the same width as the table
-    with bleft.container(key="ops_btns"):                  # (the phone keeps the three buttons side by side)
-        b1, b2, b3 = st.columns(3)
-    b1.button("Close", on_click=_close, key="ops_close", width="stretch")
-    with b2.popover("Rename", width="stretch"):
-        st.text_input("New name", value=op["name"], key="ops_rename")
+    if reordering:
+        with bleft.container(key="ops_order_btns"):
+            m1, m2, m3, m4 = st.columns(4)
+        for col, kind, label in ((m1, "up", "▲ Up"), (m2, "down", "▼ Down"), (m3, "first", "⤒ First"), (m4, "last", "⤓ Last")):
+            col.button(label, on_click=_move, args=(kind,), key=f"ops_move_{kind}", width="stretch", disabled=sel is None)
+        with bleft.container(key="ops_btns"):
+            s1, s2 = st.columns(2)
+        s1.button("Save", on_click=_save_order, key="ops_order_save", type="primary", width="stretch", help="Saves the new order of the operations.")
+        s2.button("Cancel", on_click=_cancel_order, key="ops_order_cancel", width="stretch", help="Keeps the order as it was.")
+        st.caption("Click an operation in the list, move it with the buttons, then Save." if sel is None else
+                   f"Selected: **{by_id[sel]['name']}**. Move it with the buttons, then Save.")
+        return
+    with bleft.container(key="ops_btns"):                  # (the phone keeps the buttons side by side)
+        b1, b2, b3, b4 = st.columns(4)
+    b1.button("Open", on_click=_open, key="ops_open_btn", type="primary", width="stretch", disabled=sel is None)
+    with b2.popover("Rename", width="stretch", disabled=sel is None):
+        st.text_input("New name", value=by_id[sel]["name"] if sel else "", key="ops_rename")
         st.button("Rename", on_click=_rename, key="ops_do_rename")
-    with b3.popover("Delete", width="stretch"):
-        st.write(f"Delete operation **{op['name']}** completely?")
+    with b3.popover("Delete", width="stretch", disabled=sel is None):
+        st.write(f"Delete operation **{by_id[sel]['name'] if sel else ''}** completely?")
         st.button("Yes, delete", on_click=_delete, key="ops_do_delete")
-    st.subheader(f"Operation: {op['name']}")
-    operation_view(db, op, result, project, meta, run_id)
+    b4.button("Reorder", on_click=_start_reorder, key="ops_reorder_btn", width="stretch", disabled=len(ops) < 2,
+              help="Change the order of the operations of this run.")
+    st.caption("Select an operation in the list, then press Open, Rename, Delete or Reorder." if sel is None else
+               f"Selected: **{by_id[sel]['name']}**.")

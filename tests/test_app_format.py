@@ -207,7 +207,7 @@ def test_nestocam_tab_sees_a_run_that_is_loaded_in_the_same_script_run(fake_db):
     assert any(m.label == "Outlines" and m.value == "1" for m in at.metric)    # the geometry of the sheet of the operation
     assert any(s.value == "Run 7" for s in at.subheader)                # the loaded run's number above the run numbers
     assert [o["name"] for o in fake_db.list_operations(7)] == ["sheet_01_Milling"]
-    next(b for b in at.button if b.key == "ops_close").click().run()
+    next(b for b in at.button if b.key == "ops_discard").click().run()
     assert not next(b for b in at.button if b.key == "ops_new").disabled
     next(b for b in at.button if b.key == "ops_new").click().run()
     at.text_input(key="ops_new_name").set_value("SHEET_01_milling")            # the same name (any capitals) twice in a run: refused
@@ -387,12 +387,8 @@ def test_a_new_operation_does_not_inherit_the_contours_of_an_autocam_operation(f
     assert s["thickness"] == 12.0 and s["data"]["feed_xy"] == 2500.0 and s["data"]["rpm"] == 10000.0      # the thickness stays, the data are the milling defaults
 
 
-def test_the_operations_of_a_run_can_be_reordered(fake_db):
+def _fresh_run_app(fake_db, names=()):
     from streamlit.testing.v1 import AppTest
-    import operations_ui
-    assert operations_ui.moved_order([1, 2, 3, 4], 3, "up") == [1, 3, 2, 4] and operations_ui.moved_order([1, 2, 3, 4], 3, "down") == [1, 2, 4, 3]
-    assert operations_ui.moved_order([1, 2, 3, 4], 3, "first") == [3, 1, 2, 4] and operations_ui.moved_order([1, 2, 3, 4], 1, "last") == [2, 3, 4, 1]
-    assert operations_ui.moved_order([1, 2, 3], 1, "up") == [1, 2, 3] and operations_ui.moved_order([1, 2, 3], 9, "up") == [1, 2, 3]
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["pid"] = 1
     at.session_state["pending_settings"] = {"effort_label": "Quick"}
@@ -401,17 +397,68 @@ def test_the_operations_of_a_run_can_be_reordered(fake_db):
                                   "result": [{"width": 1000.0, "height": 600.0, "placements": [
                                       {"part": "a", "x": 10.0, "y": 10.0, "w": 300.0, "h": 200.0, "rotated": False}]}]}
     next(b for b in at.button if b.label == "Load run").click().run()
-    assert not any(b.key == "ops_move_up" for b in at.button)                    # one operation (or none): nothing to reorder
-    for name in ("first", "second", "third"):
-        fake_db.create_operation(7, name, {"sheet": 1})
+    for name in names:
+        fake_db.create_operation(7, name, {"sheet": 1, "thickness": 18.0})
     at.run()
-    assert not at.exception and [o["name"] for o in fake_db.list_operations(7)] == ["first", "second", "third"]
-    assert next(b for b in at.button if b.key == "ops_move_up").disabled         # nothing selected yet
-    at.session_state[f"ops_ord_tbl_{at.session_state['ops_move_ver']}"] = {"selection": {"rows": [2], "columns": []}}      # click the third row
+    return at
+
+
+def _select_op(at, row):
+    at.session_state[f"ops_table_{at.session_state['ops_ver']}"] = {"selection": {"rows": [row], "columns": []}}      # a click on a row
     at.run()
+
+
+def test_one_table_of_operations_select_then_open_rename_delete_or_reorder(fake_db):
+    import operations_ui
+    assert operations_ui.moved_order([1, 2, 3, 4], 3, "up") == [1, 3, 2, 4] and operations_ui.moved_order([1, 2, 3, 4], 3, "down") == [1, 2, 4, 3]
+    assert operations_ui.moved_order([1, 2, 3, 4], 3, "first") == [3, 1, 2, 4] and operations_ui.moved_order([1, 2, 3, 4], 1, "last") == [2, 3, 4, 1]
+    assert operations_ui.moved_order([1, 2, 3], 1, "up") == [1, 2, 3] and operations_ui.moved_order([1, 2, 3], 9, "up") == [1, 2, 3]
+    at = _fresh_run_app(fake_db, ("first", "second", "third"))
+    assert not at.exception
+    assert [b.key for b in at.button if str(b.key).startswith("ops_") and b.key in ("ops_open_btn", "ops_reorder_btn")] == ["ops_open_btn", "ops_reorder_btn"]
+    assert next(b for b in at.button if b.key == "ops_open_btn").disabled           # nothing selected: nothing can be opened or reordered... 
+    assert not any(t.label == "1 · Geometry" for t in at.tabs)                      # and nothing is open
+    _select_op(at, 1)                                                               # selecting does not open
+    assert not any(t.label == "1 · Geometry" for t in at.tabs) and not next(b for b in at.button if b.key == "ops_open_btn").disabled
+    # --- reorder: the same table, Up / Down / First / Last, Save or Cancel
+    next(b for b in at.button if b.key == "ops_reorder_btn").click().run()
+    assert not at.exception and not any(b.key == "ops_open_btn" for b in at.button)
+    assert [b.key for b in at.button if str(b.key).startswith("ops_move_")] == ["ops_move_up", "ops_move_down", "ops_move_first", "ops_move_last"]
+    next(b for b in at.button if b.key == "ops_move_first").click().run()           # "second" is the selected one
+    assert [o["name"] for o in fake_db.list_operations(7)] == ["first", "second", "third"]      # nothing is saved before Save
+    next(b for b in at.button if b.key == "ops_order_cancel").click().run()
+    assert [o["name"] for o in fake_db.list_operations(7)] == ["first", "second", "third"] and any(b.key == "ops_open_btn" for b in at.button)
+    _select_op(at, 2)                                                               # the third
+    next(b for b in at.button if b.key == "ops_reorder_btn").click().run()
     next(b for b in at.button if b.key == "ops_move_up").click().run()
-    assert not at.exception and [o["name"] for o in fake_db.list_operations(7)] == ["first", "third", "second"]
-    next(b for b in at.button if b.key == "ops_move_first").click().run()        # the moved operation stays selected
-    assert [o["name"] for o in fake_db.list_operations(7)] == ["third", "first", "second"]
-    next(b for b in at.button if b.key == "ops_move_last").click().run()
+    next(b for b in at.button if b.key == "ops_move_first").click().run()
     assert [o["name"] for o in fake_db.list_operations(7)] == ["first", "second", "third"]
+    next(b for b in at.button if b.key == "ops_order_save").click().run()
+    assert [o["name"] for o in fake_db.list_operations(7)] == ["third", "first", "second"]
+    # --- open, then Discard
+    _select_op(at, 1)
+    next(b for b in at.button if b.key == "ops_open_btn").click().run()
+    assert [t.label for t in at.tabs][-5:] == ["1 · Geometry", "2 · Tools", "3 · Data", "4 · Levels", "5 · Generate G-code"]
+    assert any(b.key == "ops_save" for b in at.button) and any(b.key == "ops_discard" for b in at.button)
+    assert not any(b.key == "ops_open_btn" for b in at.button)
+    at.number_input(key="dt_feed_xy").set_value(1234.0)
+    next(b for b in at.button if b.key == "ops_discard").click().run()
+    assert not any(t.label == "1 · Geometry" for t in at.tabs)
+    assert "data" not in fake_db.get_operation(1)["settings"] or fake_db.get_operation(1)["settings"]["data"].get("feed_xy") != 1234.0   # not saved
+    # --- open again, change several steps, Save: all of them are stored and the operation closes
+    _select_op(at, 1)
+    next(b for b in at.button if b.key == "ops_open_btn").click().run()
+    assert at.number_input(key="dt_feed_xy").value != 1234.0                        # what was discarded did not come back
+    at.number_input(key="dt_feed_xy").set_value(1800.0)
+    at.number_input(key="lv_clearance").set_value(50.0)
+    at.number_input(key="camming_thickness").set_value(15.0)
+    next(b for b in at.button if b.key == "ops_save").click().run()
+    assert not at.exception and not any(t.label == "1 · Geometry" for t in at.tabs)
+    s = fake_db.get_operation(1)["settings"]
+    assert s["data"]["feed_xy"] == 1800.0 and s["levels"]["clearance"] == 50.0 and s["thickness"] == 15.0
+    # --- a wrong value: nothing is saved and the operation stays open with the message
+    _select_op(at, 1)
+    next(b for b in at.button if b.key == "ops_open_btn").click().run()
+    at.number_input(key="dt_feed_xy").set_value(0.0)
+    next(b for b in at.button if b.key == "ops_save").click().run()
+    assert any(t.label == "1 · Geometry" for t in at.tabs) and at.error and fake_db.get_operation(1)["settings"]["data"]["feed_xy"] == 1800.0

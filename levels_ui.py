@@ -44,6 +44,30 @@ def validate(lv: dict) -> list[str]:
     return p
 
 
+def save_levels(db, pid) -> list[str]:
+    """Save the values of the boxes of this step with the operation. Returns what is wrong (nothing is saved then); [] when it is saved
+    or the step was not drawn (nothing to save)."""
+    ss = st.session_state
+    if any(PREFIX + k not in ss for k in ("clearance", "safety", "upper", "depth")):
+        return []
+    thk = thickness_of(db, pid)
+    lv = {"clearance": float(ss[PREFIX + "clearance"]), "safety": float(ss[PREFIX + "safety"]),
+          "upper": float(ss[PREFIX + "upper"]), "depth": float(ss[PREFIX + "depth"])}
+    problems = validate(lv)
+    if problems:
+        return problems
+    try:
+        cam = db.get_cam(pid) or {}
+        cam["camming"] = {**cam.get("camming", {}), "levels": {
+            "clearance": lv["clearance"], "safety": lv["safety"],
+            "upper": None if lv["upper"] == thk else lv["upper"],           # None: always the geometry value
+            "depth": None if lv["depth"] == lv["upper"] else lv["depth"]}}  # None: the whole upper level
+        db.save_cam(pid, cam)
+    except Exception as e:  # noqa: BLE001
+        return [f"Could not save: {e}"]
+    return []
+
+
 def step_levels(db, pid):
     ss = st.session_state
     thk = thickness_of(db, pid)
@@ -64,24 +88,10 @@ def step_levels(db, pid):
             ss[PREFIX + k] = lv0[k]
 
     def _save():
-        lv = {"clearance": float(ss[PREFIX + "clearance"]), "safety": float(ss[PREFIX + "safety"]),
-              "upper": float(ss[PREFIX + "upper"]), "depth": float(ss[PREFIX + "depth"])}
-        problems = validate(lv)
-        if problems:
-            ss.levels_problems = problems
-            return
-        try:
-            cam = db.get_cam(pid) or {}
-            cam["camming"] = {**cam.get("camming", {}), "levels": {
-                "clearance": lv["clearance"], "safety": lv["safety"],
-                "upper": None if lv["upper"] == thk else lv["upper"],           # None: always the geometry value
-                "depth": None if lv["depth"] == lv["upper"] else lv["depth"]}}  # None: the whole upper level
-            db.save_cam(pid, cam)
-        except Exception as e:  # noqa: BLE001
-            ss.levels_problems = [f"Could not save: {e}"]
-            return
-        ss.levels_problems = []
-        ss.levels_msg = "Levels saved with the operation."
+        problems = save_levels(db, pid)
+        ss.levels_problems = problems
+        if not problems:
+            ss.levels_msg = "Levels saved with the operation."
 
     st.caption("The Z levels of the toolpaths of this operation (Z = 0 is the bottom of the parts). They are saved with the operation.")
     msg = ss.pop("levels_msg", None)
@@ -92,20 +102,20 @@ def step_levels(db, pid):
              f"Feed Z speed starts at Z = {u + s_:g} (upper level + safety distance)",
              f"Top of the part. The default is the material thickness of the Geometry step ({thk:g})",
              f"The tool cuts down to Z = {u - d:g} (upper level − profile depth)" + ("  ·  below Z = 0, the bottom of the parts" if u - d < 0 else "")]
-    with st.form("levels_form", border=False):             # nothing is sent until Save levels: typing never reruns the page
-        rows_box = st.container(key="lv_rows")              # (the phone keeps each box and its explanation side by side)
-        for i, (label, key, step, hlp) in enumerate((
-                ("Clearance level", "clearance", 1.0, "The Z level where the tool moves in rapid mode, above the parts, to go to another location."),
-                ("Safety distance", "safety", 0.5, "The distance above the top of the part where the tool slows down from the rapid move to the feed Z speed."),
-                ("Upper level", "upper", 0.5, "The top of the part. By default it is the material thickness of the Geometry step."),
-                ("Profile depth", "depth", 0.5, "How far the tool goes into the material, measured down from the upper level. "
-                                                "The upper level itself cuts the parts through to Z = 0."))):
-            with rows_box:
-                col, note = st.columns([1, 3])
-            col.number_input(label, min_value=0.0, step=step, format="%.2f", key=PREFIX + key, help=hlp)
-            note.markdown(f"<div style='padding-top:2.1rem'>{notes[i]}</div>", unsafe_allow_html=True)    # level with the box, not its label
-        for p in ss.get("levels_problems", []):
-            st.error(p)
-        st.form_submit_button("Save", type="primary", on_click=_save, key="levels_save")
+    # typing does not make the page react (on_change="ignore"); the numbers are read when a Save button is pressed
+    rows_box = st.container(key="lv_rows")              # (the phone keeps each box and its explanation side by side)
+    for i, (label, key, step, hlp) in enumerate((
+            ("Clearance level", "clearance", 1.0, "The Z level where the tool moves in rapid mode, above the parts, to go to another location."),
+            ("Safety distance", "safety", 0.5, "The distance above the top of the part where the tool slows down from the rapid move to the feed Z speed."),
+            ("Upper level", "upper", 0.5, "The top of the part. By default it is the material thickness of the Geometry step."),
+            ("Profile depth", "depth", 0.5, "How far the tool goes into the material, measured down from the upper level. "
+                                            "The upper level itself cuts the parts through to Z = 0."))):
+        with rows_box:
+            col, note = st.columns([1, 3])
+        col.number_input(label, min_value=0.0, step=step, format="%.2f", key=PREFIX + key, help=hlp, on_change="ignore")
+        note.markdown(f"<div style='padding-top:2.1rem'>{notes[i]}</div>", unsafe_allow_html=True)    # level with the box, not its label
+    for p in ss.get("levels_problems", []):
+        st.error(p)
+    st.button("Save", type="primary", on_click=_save, key="levels_save")
     if abs(u - thk) > 1e-9:
         st.caption(f"The upper level differs from the geometry value ({thk:g}). Type {thk:g} to use the geometry value again.")
