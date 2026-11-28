@@ -264,6 +264,49 @@ def _saved(db, pid) -> dict:
         return {}
 
 
+def save_geometry_values(db, pid, sheet_no=None, ch=None) -> str | None:
+    """Save the thickness, the sheet and the cutting order (the working copy of the order editor) with the operation. None when it is
+    saved, else what went wrong."""
+    ss_ = st.session_state
+    try:
+        cam_ = db.get_cam(pid) or {}
+        c_ = {**cam_.get("camming", {}), "thickness": float(ss_.camming_thickness)}
+        if sheet_no is not None:
+            if int(c_.get("sheet", 1)) != int(sheet_no):          # another sheet: its contours are others, the selection is dropped
+                for k_ in ("contours", "kind", "drill", "order", "order_sheet"):
+                    c_.pop(k_, None)
+            c_["sheet"] = int(sheet_no)
+            base, work = ss_.get("geo_work_base"), ss_.get("geo_work")
+            if work is not None and base and base[0] == pid and base[1] == sheet_no:
+                if list(work) == default_order(ch):           # the default order is not stored
+                    c_.pop("order", None)
+                    c_.pop("order_sheet", None)
+                else:
+                    c_["order"], c_["order_sheet"] = list(work), int(sheet_no)
+        cam_["camming"] = c_
+        db.save_cam(pid, cam_)
+    except Exception as e:  # noqa: BLE001
+        return f"Could not save: {e}"
+    return None
+
+
+def save_geometry(db, pid, result) -> list[str]:
+    """Save the whole step 1 of an operation from outside the page (the Save of the operation): [] when saved or nothing was drawn."""
+    ss_ = st.session_state
+    if "camming_thickness" not in ss_:
+        return []
+    sheet_no, ch = None, None
+    if result and 1 <= int(ss_.get("camming_sheet", 0) or 0) <= len(result):
+        sheet_no = int(ss_.camming_sheet)
+        ch = chains(result[sheet_no - 1])
+        saved = _saved(db, pid)
+        only = saved.get("contours") if int(saved.get("sheet", 1)) == sheet_no else None
+        if only is not None:
+            ch = [c for c in ch if c["id"] in set(only)]
+    err = save_geometry_values(db, pid, sheet_no, ch)
+    return [err] if err else []
+
+
 def step_geometry(db, pid, result):
     st.caption("The geometry is the **bottom outline of every part**: the outside contour of each part and the contour of each "
                "of its holes, all at **Z = 0, the bottom of the material**. The work coordinate system is at the lower left corner "
@@ -282,27 +325,11 @@ def step_geometry(db, pid, result):
 
     def _save_all(sheet_no=None, ch=None):
         """The one Save of this page: the thickness, the sheet and the cutting order (the working copy of the order editor)."""
-        ss_ = st.session_state
-        try:
-            cam_ = db.get_cam(pid) or {}
-            c_ = {**cam_.get("camming", {}), "thickness": float(ss_.camming_thickness)}
-            if sheet_no is not None:
-                if int(c_.get("sheet", 1)) != int(sheet_no):          # another sheet: its contours are others, the selection is dropped
-                    for k_ in ("contours", "kind", "drill", "order", "order_sheet"):
-                        c_.pop(k_, None)
-                c_["sheet"] = int(sheet_no)
-                base, work = ss_.get("geo_work_base"), ss_.get("geo_work")
-                if work is not None and base and base[0] == pid and base[1] == sheet_no:
-                    if list(work) == default_order(ch):           # the default order is not stored
-                        c_.pop("order", None)
-                        c_.pop("order_sheet", None)
-                    else:
-                        c_["order"], c_["order_sheet"] = list(work), int(sheet_no)
-            cam_["camming"] = c_
-            db.save_cam(pid, cam_)
-            ss_.camming_saved_msg = "Saved with the operation."
-        except Exception as e:  # noqa: BLE001
-            ss_.camming_save_error = f"Could not save: {e}"
+        err = save_geometry_values(db, pid, sheet_no, ch)
+        if err:
+            st.session_state.camming_save_error = err
+        else:
+            st.session_state.camming_saved_msg = "Saved with the operation."
 
     msg = st.session_state.pop("camming_saved_msg", None)
     if msg:
